@@ -125,8 +125,9 @@ class AbstractMesh:
         # Check/ correct winding and make sure it's a solid
         self.ensure_closed()
 
-        self.data_update()
-        self.metadata_update()
+        # todo:
+        # self.data_update()
+        # self.metadata_update()
 
     def _calculate_vertex2faces(self):
         """Do a full reset of the vertex2faces backward mapping array."""
@@ -328,6 +329,36 @@ class AbstractMesh:
 
 if __name__ == "__main__":
     import pygfx as gfx
+
+    # The geometries with sharp corners like cubes and all hedrons are not closed
+    # because we deliberately don't share vertices, so that the normals don't interpolate
+    # and make the edges look weird.
+    #
+    # Some other geometries, like the sphere and torus knot, also seems open thought, let's fix that!
+
     # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
-    geo = gfx.sphere_geometry(1)
-    m = AbstractMesh(geo.positions.data, geo.indices.data)
+    # geo = gfx.sphere_geometry(1)
+    # geo = gfx.geometries.tetrahedron_geometry()
+    # m = AbstractMesh(geo.positions.data, geo.indices.data)
+
+    positions = np.array(
+        [
+            [1, 1, 1],
+            [-1, -1, 1],
+            [-1, 1, -1],
+            [1, -1, -1],
+        ],
+        dtype=np.float32,
+    )
+
+    indices = np.array(
+        [
+            [2, 0, 1],
+            [0, 2, 3],
+            [1, 0, 3],
+            [2, 1, 3],
+        ],
+        dtype=np.int32,
+    )
+    m = AbstractMesh(positions, indices)
+
