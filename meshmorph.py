@@ -20,17 +20,17 @@
 import time
 
 import numpy as np
-
+import maybe_pylinalg
+import maybe_pygfx
 
 # We assume meshes with triangles (not quads) for now
 vertices_per_face = 3
 
 
 class AbstractMesh:
-    """
-    """
-    def __init__(self, vertices, faces, oversize_factor=1.5):
+    """ """
 
+    def __init__(self, vertices, faces, oversize_factor=1.5):
         # In this method we first initialize all used attributes. This
         # serves mostly as internal docs.
 
@@ -72,15 +72,21 @@ class AbstractMesh:
         # Delegate initialization
         self.set_data(vertices, faces, oversize_factor)
 
-
     def set_data(self, vertices, faces, oversize_factor=1.5):
-        """Set the (new) vertex and face data.
-        """
+        """Set the (new) vertex and face data."""
 
         # Check incoming arrays
-        if not (isinstance(vertices, np.ndarray) and vertices.ndim == 2 and vertices.shape[1] == 3):
+        if not (
+            isinstance(vertices, np.ndarray)
+            and vertices.ndim == 2
+            and vertices.shape[1] == 3
+        ):
             raise TypeError("Vertices must be a Nx3 array")
-        if not (isinstance(faces, np.ndarray) and faces.ndim == 2 and vertices.shape[1] == vertices_per_face):
+        if not (
+            isinstance(faces, np.ndarray)
+            and faces.ndim == 2
+            and vertices.shape[1] == vertices_per_face
+        ):
             raise TypeError("Faces must be a Nx3 array")
 
         oversize_factor = max(1, oversize_factor or 1.5)
@@ -102,16 +108,16 @@ class AbstractMesh:
         self._faces = np.empty((self._nfaces_slots, vertices_per_face), np.int32)
 
         # Copy the data
-        self._vertices[1:self._nvertices+1,:] = vertices
-        self._faces[0:self._nfaces,:] = faces + 1
+        self._vertices[1 : self._nvertices + 1, :] = vertices
+        self._faces[0 : self._nfaces, :] = faces + 1
 
         # Nullify the free slots
-        self._vertices[0,:] = 0
-        self._vertices[self._nvertices+1:,:] = np.NaN
-        self._faces[self._nfaces:,:] = 0
+        self._vertices[0, :] = 0
+        self._vertices[self._nvertices + 1 :, :] = np.NaN
+        self._faces[self._nfaces :, :] = 0
 
         # Collect the free slots
-        self._free_vertices = set(range(self._nvertices+1, self._nvertices_slots))
+        self._free_vertices = set(range(self._nvertices + 1, self._nvertices_slots))
         self._free_faces = set(range(self._nfaces, self._nfaces_slots))
 
         # Update self._vertex2faces (the reverse mapping)
@@ -155,7 +161,7 @@ class AbstractMesh:
             vertex2faces[face[2]].append(fi)
 
     def ensure_closed(self):
-        """ Ensure that the mesh is closed, that all faces have the
+        """Ensure that the mesh is closed, that all faces have the
         same winding, and that the winding is correct (by checking that
         the volume is positive).
 
@@ -167,13 +173,12 @@ class AbstractMesh:
         faces = self._faces
 
         # Collect faces to check
-        valid_face_indices, = np.where(faces[:,0 ] >0)
+        (valid_face_indices,) = np.where(faces[:, 0] > 0)
         faces_to_check = set(valid_face_indices)
 
         reversed_faces = []
 
         while len(faces_to_check) > 0:
-
             # Create new front - once for each connected component in the mesh
             vi_next = faces_to_check.pop()
             was_in_front = {vi_next}
@@ -195,10 +200,16 @@ class AbstractMesh:
                                 if fi not in was_in_front:
                                     front.append(fi)
                                     was_in_front.add(fi)
-                                if ((vi1 == vj1 and vi2 == vj2) or (vi1 == vj2 and vi2 == vj3) or
-                                                                   (vi1 == vj3 and vi2 == vj1)):
+                                if (
+                                    (vi1 == vj1 and vi2 == vj2)
+                                    or (vi1 == vj2 and vi2 == vj3)
+                                    or (vi1 == vj3 and vi2 == vj1)
+                                ):
                                     reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = faces[fi, 2], faces[fi, 1]
+                                    faces[fi, 1], faces[fi, 2] = (
+                                        faces[fi, 2],
+                                        faces[fi, 1],
+                                    )
                         elif vi2 in matching_vertices and vi3 in matching_vertices:
                             neighbour_per_edge[1] += 1
                             if fi in faces_to_check:
@@ -206,10 +217,16 @@ class AbstractMesh:
                                 if fi not in was_in_front:
                                     front.append(fi)
                                     was_in_front.add(fi)
-                                if ((vi2 == vj1 and vi3 == vj2) or (vi2 == vj2 and vi3 == vj3) or
-                                                                   (vi2 == vj3 and vi3 == vj1)):
+                                if (
+                                    (vi2 == vj1 and vi3 == vj2)
+                                    or (vi2 == vj2 and vi3 == vj3)
+                                    or (vi2 == vj3 and vi3 == vj1)
+                                ):
                                     reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = faces[fi, 2], faces[fi, 1]
+                                    faces[fi, 1], faces[fi, 2] = (
+                                        faces[fi, 2],
+                                        faces[fi, 1],
+                                    )
                         elif vi3 in matching_vertices and vi1 in matching_vertices:
                             neighbour_per_edge[2] += 1
                             if fi in faces_to_check:
@@ -217,16 +234,30 @@ class AbstractMesh:
                                 if fi not in was_in_front:
                                     front.append(fi)
                                     was_in_front.add(fi)
-                                if ((vi3 == vj1 and vi1 == vj2) or (vi3 == vj2 and vi1 == vj3) or
-                                                                   (vi3 == vj3 and vi1 == vj1)):
+                                if (
+                                    (vi3 == vj1 and vi1 == vj2)
+                                    or (vi3 == vj2 and vi1 == vj3)
+                                    or (vi3 == vj3 and vi1 == vj1)
+                                ):
                                     reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = faces[fi, 2], faces[fi, 1]
+                                    faces[fi, 1], faces[fi, 2] = (
+                                        faces[fi, 2],
+                                        faces[fi, 1],
+                                    )
 
                 # Now that we checked all neighbours, check if we have a neighbour on each edge.
                 # If this is the case for all faces, we know that the mesh is closed. The mesh
                 # can still have weird crossovers or parts sticking out though (e.g. a Klein bottle).
-                if not (neighbour_per_edge[0] == 1 and neighbour_per_edge[1] == 1 and neighbour_per_edge[2] == 1):
-                    if neighbour_per_edge[0] == 0 or neighbour_per_edge[1] == 0 or neighbour_per_edge[2] == 0:
+                if not (
+                    neighbour_per_edge[0] == 1
+                    and neighbour_per_edge[1] == 1
+                    and neighbour_per_edge[2] == 1
+                ):
+                    if (
+                        neighbour_per_edge[0] == 0
+                        or neighbour_per_edge[1] == 0
+                        or neighbour_per_edge[2] == 0
+                    ):
                         msg = f"There is a hole in the mesh at face {fi_check} {neighbour_per_edge}"
                     else:
                         msg = f"Too many neighbour faces for face {fi_check} {neighbour_per_edge}"
@@ -239,7 +270,7 @@ class AbstractMesh:
         cur_vol = self.get_volume()
         if cur_vol < 0:
             # Reverse all
-            faces[:,1], faces[:,2] = faces[:,2], faces[:,1]
+            faces[:, 1], faces[:, 2] = faces[:, 2], faces[:, 1]
             # How many did we really change
             nfaces_changed = self._nfaces - len(reversed_faces)
             if nfaces_changed >= 0.75 * self._nfaces:
@@ -256,49 +287,15 @@ class AbstractMesh:
             return len(reversed_faces)
 
     def get_volume(self):
-        """ Calculate the volume of the mesh. You probably want to run ensure_closed()
+        """Calculate the volume of the mesh. You probably want to run ensure_closed()
         on untrusted data when using this.
         """
-        def volume_of_triangle(vi1, vi2, vi3, offset=0):
-            # https://stackoverflow.com/a/1568551
-            # todo: double-check this on e.g. a sphere, create two spheres, volume should double
-            p1 = vertices[vi1]
-            p2 = vertices[vi2]
-            p3 = vertices[vi3]
-
-            p1x, p1y, p1z = p1[:, 0], p1[:, 1], p1[:, 2]
-            p2x, p2y, p2z = p2[:, 0], p2[:, 1], p2[:, 2]
-            p3x, p3y, p3z = p3[:, 0], p3[:, 1], p3[:, 2]
-            v321 = p3x * p2y * p1z
-            v231 = p2x * p3y * p1z
-            v312 = p3x * p1y * p2z
-            v132 = p1x * p3y * p2z
-            v213 = p2x * p1y * p3z
-            v123 = p1x * p2y * p3z
-            # return (1.0 / 6.0) * (-v321 + v231 + v312 - v132 - v213 + v123)  # CCW
-            return - (1.0 / 6.0) * (-v321 + v231 + v312 - v132 - v213 + v123)  # CW
-
-        vertices = self._vertices
-        faces = self._faces
-
-        valid_face_indices, = np.where(faces[:,0 ] >0)
-        valid_faces = faces[valid_face_indices]
-
-        vol1 = volume_of_triangle(valid_faces[:,0], valid_faces[:,1], valid_faces[:,2]).sum()
-
-        # Check integrity
-        # vol2 = volume_of_triangle(valid_faces[:,0], valid_faces[:,1], valid_faces[:,2], 10).sum()
-        # err_per = (abs(vol1) - abs(vol2)) / max(abs(vol1) + abs(vol2), 0.000000001)
-        # if err_per > 0.1:
-        #     raise RuntimeError("Cannot calculate volume, the mesh looks not to be closed!")
-        # elif err_per > 0.001:
-        #     print("WARNING: maybe the mesh is not completely closed?")
-
-        return vol1
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        valid_faces = self._faces[valid_face_indices]
+        return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
 
     def get_neighbour_vertices(self, vi):
-        """ Get a list of vertex indices that neighbour the given vertex index.
-        """
+        """Get a list of vertex indices that neighbour the given vertex index."""
         faces = self._faces
         vertices = self._vertices
         face_indices = self._vertex2faces[vi]
@@ -311,8 +308,7 @@ class AbstractMesh:
         # return np.array(neighbour_vertices, np.int32)
 
     def get_neighbour_faces(self, fi):
-        """ Get a list of face indices that neighbour the given face index.
-        """
+        """Get a list of face indices that neighbour the given face index."""
         faces = self._faces
         vertices = self._vertices
         vertex2faces = self._vertex2faces
@@ -339,26 +335,26 @@ if __name__ == "__main__":
     # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
     # geo = gfx.sphere_geometry(1)
     # geo = gfx.geometries.tetrahedron_geometry()
-    # m = AbstractMesh(geo.positions.data, geo.indices.data)
+    geo = maybe_pygfx.solid_sphere_geometry(1)
+    m = AbstractMesh(geo.positions.data, geo.indices.data)
 
-    positions = np.array(
-        [
-            [1, 1, 1],
-            [-1, -1, 1],
-            [-1, 1, -1],
-            [1, -1, -1],
-        ],
-        dtype=np.float32,
-    )
-
-    indices = np.array(
-        [
-            [2, 0, 1],
-            [0, 2, 3],
-            [1, 0, 3],
-            [2, 1, 3],
-        ],
-        dtype=np.int32,
-    )
-    m = AbstractMesh(positions, indices)
-
+    # positions = np.array(
+    #     [
+    #         [1, 1, 1],
+    #         [-1, -1, 1],
+    #         [-1, 1, -1],
+    #         [1, -1, -1],
+    #     ],
+    #     dtype=np.float32,
+    # )
+    #
+    # indices = np.array(
+    #     [
+    #         [2, 0, 1],
+    #         [0, 2, 3],
+    #         [1, 0, 3],
+    #         [2, 1, 3],
+    #     ],
+    #     dtype=np.int32,
+    # )
+    # m = AbstractMesh(positions, indices)
