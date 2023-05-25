@@ -18,6 +18,7 @@
 # Vertex indices are denoted with vi, face indices with fi.
 
 import time
+import warnings  # todo: use warnings or logger?
 
 import numpy as np
 import maybe_pylinalg
@@ -27,8 +28,12 @@ import maybe_pygfx
 vertices_per_face = 3
 
 
+# todo: better name
 class AbstractMesh:
-    """ """
+    """
+    A mesh object representing a closed mesh, plus utilities to work with such as mesh.
+    Implemented in a generic way ... though not sure how yet :)
+    """
 
     def __init__(self, vertices, faces, oversize_factor=1.5):
         # In this method we first initialize all used attributes. This
@@ -73,7 +78,14 @@ class AbstractMesh:
         self.set_data(vertices, faces, oversize_factor)
 
     def set_data(self, vertices, faces, oversize_factor=1.5):
-        """Set the (new) vertex and face data."""
+        """Set the (new) vertex and face data.
+
+        The data is copied and the internal data structure is build up.
+        The winding of faces is automatically corrected where needed, and a warning
+        is shown if this was the case. The mesh is also validated for being closed.
+        If the mesh is not closed, a warning is shown for each offending face,
+        and the ``is_closed`` property is set to False.
+        """
 
         # Check incoming arrays
         if not (
@@ -128,12 +140,27 @@ class AbstractMesh:
         self._dirty_colors.add("reset")
         self._dirty_faces.add("reset")
 
-        # Check/ correct winding and make sure it's a solid
-        self.ensure_closed()
+        # Check/ correct winding and check whether it's a solid
+        self._check_closed()
 
         # todo:
         # self.data_update()
         # self.metadata_update()
+
+    @property
+    def is_closed(self):
+        """Whether the mesh is closed.
+
+        If this tool is used in a GUI, you can use this flag to show a
+        warning symbol. If this value is False, a warning with more
+        info is shown in the console.
+        """
+        return len(self._original_unclosed_faces) == 0
+
+    @property
+    def component_count(self):
+        """The number of sub-meshes (connected components) this meshs consists of."""
+        return self._component_count
 
     def _calculate_vertex2faces(self):
         """Do a full reset of the vertex2faces backward mapping array."""
@@ -160,28 +187,35 @@ class AbstractMesh:
             vertex2faces[face[1]].append(fi)
             vertex2faces[face[2]].append(fi)
 
-    def ensure_closed(self):
-        """Ensure that the mesh is closed, that all faces have the
-        same winding, and that the winding is correct (by checking that
-        the volume is positive).
+    def _check_closed(self):
+        """Check that the mesh is closed.
 
-        Returns the number of faces that were changed to correct winding.
-        Raises an error if the mesh is not a solid geometry (surely
-        there is a proper mathematical term for this?).
+        This method also autocorrects the winding of indidual faces,
+        as well as of a whole sub-mesh (connected component) so that their
+        volumes are positive.
+
+        This method reports its findings by showing a warning and by setting
+        a private attribute (which can e.g. be checked in tests and debugging).
         """
 
         faces = self._faces
 
         # Collect faces to check
-        (valid_face_indices,) = np.where(faces[:, 0] > 0)
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         faces_to_check = set(valid_face_indices)
 
-        reversed_faces = []
+        # Keep track of issues
+        component_count = 0
+        total_reversed_count = 0
+        unclosed_case1 = []
+        unclosed_case2 = []
 
         while len(faces_to_check) > 0:
             # Create new front - once for each connected component in the mesh
+            component_count += 1
             vi_next = faces_to_check.pop()
-            was_in_front = {vi_next}
+            faces_in_this_component = {vi_next}
+            reversed_faces = []
             front = [vi_next]
 
             # Walk along the front
@@ -197,9 +231,9 @@ class AbstractMesh:
                             neighbour_per_edge[0] += 1
                             if fi in faces_to_check:
                                 faces_to_check.remove(fi)
-                                if fi not in was_in_front:
+                                if fi not in faces_in_this_component:
                                     front.append(fi)
-                                    was_in_front.add(fi)
+                                    faces_in_this_component.add(fi)
                                 if (
                                     (vi1 == vj1 and vi2 == vj2)
                                     or (vi1 == vj2 and vi2 == vj3)
@@ -214,9 +248,9 @@ class AbstractMesh:
                             neighbour_per_edge[1] += 1
                             if fi in faces_to_check:
                                 faces_to_check.remove(fi)
-                                if fi not in was_in_front:
+                                if fi not in faces_in_this_component:
                                     front.append(fi)
-                                    was_in_front.add(fi)
+                                    faces_in_this_component.add(fi)
                                 if (
                                     (vi2 == vj1 and vi3 == vj2)
                                     or (vi2 == vj2 and vi3 == vj3)
@@ -231,9 +265,9 @@ class AbstractMesh:
                             neighbour_per_edge[2] += 1
                             if fi in faces_to_check:
                                 faces_to_check.remove(fi)
-                                if fi not in was_in_front:
+                                if fi not in faces_in_this_component:
                                     front.append(fi)
-                                    was_in_front.add(fi)
+                                    faces_in_this_component.add(fi)
                                 if (
                                     (vi3 == vj1 and vi1 == vj2)
                                     or (vi3 == vj2 and vi1 == vj3)
@@ -258,41 +292,64 @@ class AbstractMesh:
                         or neighbour_per_edge[1] == 0
                         or neighbour_per_edge[2] == 0
                     ):
-                        msg = f"There is a hole in the mesh at face {fi_check} {neighbour_per_edge}"
+                        unclosed_case1.append((fi_check, neighbour_per_edge))
                     else:
-                        msg = f"Too many neighbour faces for face {fi_check} {neighbour_per_edge}"
-                    print(msg)
-                    # raise ValueError(msg)
+                        unclosed_case2.append((fi_check, neighbour_per_edge))
 
-        # todo: the below check should really be done to each connected component within the mesh.
-        # For now we assume that the mesh is one single object.
+            # We've now found one connected component (there may be more)
+            faces_in_this_component = list(faces_in_this_component)
+            cfaces = self._faces[faces_in_this_component]
+            volume = maybe_pylinalg.volume_of_closed_mesh(self._vertices, cfaces)
 
-        cur_vol = self.get_volume()
-        if cur_vol < 0:
-            # Reverse all
-            faces[:, 1], faces[:, 2] = faces[:, 2], faces[:, 1]
-            # How many did we really change
-            nfaces_changed = self._nfaces - len(reversed_faces)
-            if nfaces_changed >= 0.75 * self._nfaces:
-                print(f"Mesh seems to have wrong winding - reversed!")
-            # Mark reversed faces as changed for GPU
-            self._dirty_faces.add("reset")
-            return nfaces_changed
-        else:
-            # Mark reversed faces as changed for GPU
-            for fi in reversed_faces:
-                self._dirty_faces.add(fi)
-                for i in range(3):
-                    self._dirty_vertices.update(faces[fi].flat)  # also for normals
-            return len(reversed_faces)
+            if volume < 0:
+                # Reverse the whole component
+                cfaces[:, 1], cfaces[:, 2] = cfaces[:, 2].copy(), cfaces[:, 1].copy()
+                self._faces[faces_in_this_component] = cfaces
+                total_reversed_count += len(faces_in_this_component) - len(
+                    reversed_faces
+                )
+                self._dirty_faces.update(faces_in_this_component)
+            else:
+                # Mark reversed faces as changed for GPU
+                total_reversed_count += len(reversed_faces)
+                self._dirty_faces.update(reversed_faces)
+
+        self._component_count = component_count
+
+        # Report on winding - all is well, we corrected it!
+        self._n_reversed_faces = total_reversed_count
+        if total_reversed_count > 0:
+            warnings.warn(
+                f"Auto-corrected the winding of {total_reversed_count} faces."
+            )
+
+        # Report on the mesh not being closed - this is a problem!
+        # todo: how bad is this problem again? Should we abort or still allow e.g. morphing the mesh?
+        self._original_unclosed_faces = {fi for fi, _ in unclosed_case1} | {
+            fi for fi, _ in unclosed_case2
+        }
+        if unclosed_case1:
+            lines = [
+                "    - {fi} ({neighbour_per_edge})"
+                for fi, neighbour_per_edge in unclosed_case1
+            ]
+            warnings.warn(f"There is a hole in the mesh at faces:\n" + "\n".join(lines))
+        if unclosed_case2:
+            lines = [
+                "    - {fi} ({neighbour_per_edge})"
+                for fi, neighbour_per_edge in unclosed_case2
+            ]
+            warnings.warn(f"Too many neighbour faces at faces:\n" + "\n".join(lines))
 
     def get_volume(self):
-        """Calculate the volume of the mesh. You probably want to run ensure_closed()
-        on untrusted data when using this.
-        """
+        """Calculate the volume of the mesh."""
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         valid_faces = self._faces[valid_face_indices]
         return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
+
+    def split(self):
+        """Return a list of Mesh objects, one for each connected component."""
+        raise NotImplementedError()
 
     def get_neighbour_vertices(self, vi):
         """Get a list of vertex indices that neighbour the given vertex index."""
