@@ -5,6 +5,34 @@ import pygfx as gfx
 # todo: why not make all polyhedrons in gfx solid, and use flat-shading to show their sharp edges?
 
 
+def solid_tetrahedon():
+    """The smallest/simplest possible mesh that contains a volume.
+    It is a closed orientable manifold.
+
+    """
+    vertices = np.array(
+        [
+            [-1, 0, -1 / 2**0.5],
+            [+1, 0, -1 / 2**0.5],
+            [0, -1, 1 / 2**0.5],
+            [0, +1, 1 / 2**0.5],
+        ],
+        dtype=np.float32,
+    )
+    vertices /= np.linalg.norm(vertices, axis=1)[..., None]
+
+    faces = np.array(
+        [
+            [2, 0, 1],
+            [0, 2, 3],
+            [1, 0, 3],
+            [2, 1, 3],
+        ],
+        dtype=np.int32,
+    )
+    return vertices, faces
+
+
 # todo: solid / closed / something else?
 def solid_sphere_geometry(
     radius=1.0, max_edge_length=None, recursive_subdivisions=None
@@ -22,6 +50,9 @@ def solid_sphere_geometry(
     distributed evenly over the surface, which means less vertices are
     needed to create a rounder surface. The downside is that one cannot
     easily apply a 2D texture map to this geometry.
+
+    The resulting mesh is an orientable 2-manifold without boundaries, and is regular: it consists of triangles
+    of equal size, and each triangle has the same number of incident faces.
 
     Parameters
     ----------

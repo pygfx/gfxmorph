@@ -21,9 +21,7 @@ def volume_of_triangle(p1, p2, p3):
     v213 = p2x * p1y * p3z
     v123 = p1x * p2y * p3z
     result = (1.0 / 6.0) * (-v321 + v231 + v312 - v132 - v213 + v123)
-    if result.shape == (1,):
-        result = float(result)
-    return result
+    return float(result) if result.shape == (1,) else result
 
 
 def volume_of_closed_mesh(vertices, faces):
@@ -47,4 +45,4 @@ def volume_of_closed_mesh(vertices, faces):
     volumes = volume_of_triangle(
         vertices[faces[:, 0]], vertices[faces[:, 1]], vertices[faces[:, 2]]
     )
-    return volumes.sum()
+    return volumes if isinstance(volumes, float) else volumes.sum()

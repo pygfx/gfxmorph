@@ -19,6 +19,7 @@
 
 import time
 import warnings  # todo: use warnings or logger?
+import queue
 
 import numpy as np
 import maybe_pylinalg
@@ -77,6 +78,39 @@ class AbstractMesh:
         # Delegate initialization
         self.set_data(vertices, faces, oversize_factor)
 
+    @property
+    def is_closed(self):
+        """Whether the mesh is closed.
+
+        If this tool is used in a GUI, you can use this flag to show a
+        warning symbol. If this value is False, a warning with more
+        info is shown in the console.
+        """
+        return len(self._original_unclosed_faces) == 0
+
+    @property
+    def component_count(self):
+        """The number of sub-meshes (connected components) this meshs consists of."""
+        return self._component_count
+
+    @property
+    def metadata(self):
+        """A dict with metadata about the mesh."""
+        arrays = self._faces, self._vertices, self._colors, self._normals
+        nb = sum([a.nbytes for a in arrays if a is not None])
+
+        return {
+            "is_closed": self.is_closed,
+            "components": self._component_count,
+            "vertices": self._nvertices,
+            "faces": self._nfaces,
+            "free_vertices": len(self._free_vertices),
+            "free_faces": len(self._free_faces),
+            "approx_mem": f"{nb/2**20:0.2f} MiB"
+            if nb > 2**20
+            else f"{nb/2**10:0.2f} KiB",
+        }
+
     def set_data(self, vertices, faces, oversize_factor=1.5):
         """Set the (new) vertex and face data.
 
@@ -88,6 +122,8 @@ class AbstractMesh:
         """
 
         # Check incoming arrays
+        vertices = np.asarray(vertices)
+        faces = np.asarray(faces)
         if not (
             isinstance(vertices, np.ndarray)
             and vertices.ndim == 2
@@ -100,6 +136,11 @@ class AbstractMesh:
             and vertices.shape[1] == vertices_per_face
         ):
             raise TypeError("Faces must be a Nx3 array")
+
+        # We want to be able to assume that there is at least one face, and 3 valid vertices
+        # (or 4 faces and 4 vertices for a closed mesh)
+        if not faces.size or not vertices.size:
+            raise ValueError("The mesh must have more nonzero faces and vertices.")
 
         oversize_factor = max(1, oversize_factor or 1.5)
 
@@ -147,21 +188,6 @@ class AbstractMesh:
         # self.data_update()
         # self.metadata_update()
 
-    @property
-    def is_closed(self):
-        """Whether the mesh is closed.
-
-        If this tool is used in a GUI, you can use this flag to show a
-        warning symbol. If this value is False, a warning with more
-        info is shown in the console.
-        """
-        return len(self._original_unclosed_faces) == 0
-
-    @property
-    def component_count(self):
-        """The number of sub-meshes (connected components) this meshs consists of."""
-        return self._component_count
-
     def _calculate_vertex2faces(self):
         """Do a full reset of the vertex2faces backward mapping array."""
         faces = self._faces
@@ -187,6 +213,21 @@ class AbstractMesh:
             vertex2faces[face[1]].append(fi)
             vertex2faces[face[2]].append(fi)
 
+    @property
+    def edges(self):
+        """Return all edges of this mesh as pairs of vertex indices
+
+        Returns
+        -------
+        ndarray, [n_faces, 3, 2]
+            pairs of vertex-indices specifying an edge.
+            the ith edge is the edge opposite from the ith vertex of the face
+
+        """
+        array = self.faces[:, [[1, 2], [2, 0], [0, 1]]]
+        array.setflags(write=False)
+        return array
+
     def _check_closed(self):
         """Check that the mesh is closed.
 
@@ -198,6 +239,7 @@ class AbstractMesh:
         a private attribute (which can e.g. be checked in tests and debugging).
         """
 
+        # todo: if holes are detected, we can check the vertices at these locations for duplicates, and we can merge those duplicates to create a closed mesh from a "stitched" one.
         faces = self._faces
 
         # Collect faces to check
@@ -216,11 +258,12 @@ class AbstractMesh:
             vi_next = faces_to_check.pop()
             faces_in_this_component = {vi_next}
             reversed_faces = []
-            front = [vi_next]
+            front = queue.deque()
+            front.append(vi_next)
 
             # Walk along the front
             while len(front) > 0:
-                fi_check = front.pop(0)
+                fi_check = front.popleft()
                 vi1, vi2, vi3 = faces[fi_check]
                 neighbour_per_edge = [0, 0, 0]
                 for fi in self.get_neighbour_faces(fi_check):
@@ -329,17 +372,21 @@ class AbstractMesh:
             fi for fi, _ in unclosed_case2
         }
         if unclosed_case1:
-            lines = [
-                "    - {fi} ({neighbour_per_edge})"
-                for fi, neighbour_per_edge in unclosed_case1
-            ]
-            warnings.warn(f"There is a hole in the mesh at faces:\n" + "\n".join(lines))
+            lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case1]
+            n = len(unclosed_case1)
+            warnings.warn(
+                f"There is a hole in the mesh at {n} faces:\n" + "\n".join(lines)
+            )
         if unclosed_case2:
-            lines = [
-                "    - {fi} ({neighbour_per_edge})"
-                for fi, neighbour_per_edge in unclosed_case2
-            ]
-            warnings.warn(f"Too many neighbour faces at faces:\n" + "\n".join(lines))
+            lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case2]
+            n = len(unclosed_case2)
+            warnings.warn(
+                f"Too many neighbour faces at {n} faces:\n" + "\n".join(lines)
+            )
+
+    def validate_internals(self):
+        raise NotImplementedError()
+        # todo: xx
 
     def get_volume(self):
         """Calculate the volume of the mesh."""
@@ -349,7 +396,11 @@ class AbstractMesh:
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""
+        # I don't think we need this for our purpose, but this class is capable
+        # of doing something like this, so it could be a nice util.
         raise NotImplementedError()
+
+    # %% Walk over the surface
 
     def get_neighbour_vertices(self, vi):
         """Get a list of vertex indices that neighbour the given vertex index."""
@@ -378,6 +429,40 @@ class AbstractMesh:
         # todo: is it worth converting to array?
         return neighbour_faces
         # return np.array(neighbour_faces, np.int32)
+
+    def get_closest_vertex(self, ref_pos):
+        """Get the vertex index closest to the given 3D point, and its distance."""
+        ref_pos = np.asarray(ref_pos, np.float32)
+        if ref_pos.shape != (3,):
+            raise ValueError("ref_pos must be a position (3 values).")
+
+        distances = np.linalg.norm(self._vertices - ref_pos, axis=1)
+        vi = np.nanargmin(distances)
+        return vi, distances[vi]
+
+    def select_vertices_over_surface(self, ref_vertex, max_distance):
+        """Given a reference vertex, select more nearby vertices (over the surface).
+        Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
+        """
+        vertices = self._vertices
+        vi0 = int(ref_vertex)
+        p0 = vertices[vi0]
+        # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
+        selected_vertices = {vi0}
+        vertices2check = [(vi0, 0)]
+        while len(vertices2check) > 0:
+            vi1, cumdist = vertices2check.pop(0)
+            p1 = vertices[vi1]
+            for vi2 in self.get_neighbour_vertices(vi1):
+                if vi2 not in selected_vertices:
+                    p2 = vertices[vi2]
+                    sdist = cumdist + np.linalg.norm(p2 - p1)
+                    if sdist < max_distance:
+                        adist = np.linalg.norm(p2 - p0)
+                        # selected_vertices[vi2] = dict(pos=[xn, yn, zn], color=color, sdist=sdist, adist=adist)
+                        selected_vertices.add(vi2)
+                        vertices2check.append((vi2, sdist))
+        return selected_vertices
 
 
 if __name__ == "__main__":
