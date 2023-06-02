@@ -12,14 +12,14 @@ import meshmorph
 
 
 # Set to 1 to perform these tests on skcg, as a validation check
-USE_SKCG = 1
+USE_SKCG = 0
 
 if USE_SKCG:
     import skcg
 
     MeshClass = skcg.Mesh
 else:
-    MeshClass = meshmorph.MeshClass
+    MeshClass = meshmorph.AbstractMesh
 
 
 # %% Utils
@@ -39,37 +39,82 @@ def get_tetrahedron():
         [1, 0, 3],
         [2, 1, 3],
     ]
-    return vertices, faces
+    return vertices, faces, True
 
 
 def get_sphere():
     geo = maybe_pygfx.solid_sphere_geometry()
-    return geo.positions.data.tolist(), geo.indices.data.tolist()
+    return geo.positions.data.tolist(), geo.indices.data.tolist(), True
 
 
 def get_knot():
     geo = gfx.geometries.torus_knot_geometry(stitch=True)
-    return geo.positions.data.tolist(), geo.indices.data.tolist()
+    return geo.positions.data.tolist(), geo.indices.data.tolist(), True
+
+
+def get_quad():
+    vertices = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = [
+        [0, 2, 1],
+        [0, 3, 2],
+    ]
+    return vertices, faces, False
+
+
+def get_fan():
+    vertices = [
+        [0, 0, 0],
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = [
+        [0, 2, 1],
+        [0, 3, 2],
+        [0, 4, 3],
+        [0, 1, 4],
+    ]
+    return vertices, faces, False
+
+
+def get_strip():
+    # A strip of 3 triangles
+    vertices, faces, _ = get_fan()
+    faces.pop(-1)
+    return vertices, faces, False
 
 
 def iter_test_meshes():
-
+    print("  tetrahedron")
     yield get_tetrahedron()
+    print("  sphere")
     yield get_sphere()
+    print("  knot")
     yield get_knot()
+    print("  quad")
+    yield get_quad()
+    print("  fan")
+    yield get_fan()
+    print("  strip")
+    yield get_strip()
 
 
 def test_raw_meshes():
-
     count = 0
-    for vertices, faces in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         count += 1
         m = MeshClass(vertices, faces)
         assert m.is_manifold
-        assert m.is_closed
+        assert m.is_closed == is_closed
         assert m.is_oriented
 
-    assert count == 3
+    assert count == 6
 
 
 # %% Test for meshes that are simply ... wrong
@@ -79,14 +124,20 @@ def test_invalid_faces():
     """Test to check that faces must have valid indices for the vertices"""
     # Copied from skcg
     with pytest.raises(ValueError):
-        MeshClass([[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]], [[0, 1, 9999]])
+        MeshClass(
+            [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]], [[0, 1, 9999]]
+        )
 
     with pytest.raises(ValueError):
         MeshClass([[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]], [[0, 1, -1]])
 
 
-
 # %% Test is_manifold
+
+
+def test_a_single_triangle():
+    """A single triangle is always manifold"""
+    # todo: implement this
 
 
 def test_corrupt_mesh11():
@@ -94,11 +145,14 @@ def test_corrupt_mesh11():
 
     # Note: the extra_face is actually in the tetrahedron, but in a different order
 
-    for vertices, faces in iter_test_meshes():
+    for vertices, faces, _ in iter_test_meshes():
+        # Cannot do this on quad and tetrahedron
+        if len(vertices) <= 4:
+            continue
 
-        extra_face = [1, 2, 3]
-        assert faces[0] in faces
-        assert extra_face not in faces
+        extra_face = faces[1].copy()
+        extra_face[1] = len(vertices) - 1
+        assert not any(set(face) == set(extra_face) for face in faces)
         faces.append(extra_face)
 
         m = MeshClass(vertices, faces)
@@ -111,8 +165,7 @@ def test_corrupt_mesh11():
 def test_corrupt_mesh12():
     """Add a duplicate face to the mesh. Some edges will now have 3 faces."""
 
-    for vertices, faces in iter_test_meshes():
-
+    for vertices, faces, _ in iter_test_meshes():
         faces.append(faces[0])
 
         m = MeshClass(vertices, faces)
@@ -125,8 +178,7 @@ def test_corrupt_mesh12():
 def test_corrupt_mesh13():
     """Add one face to the mesh, using one extra vertex. One edge will now have 3 faces."""
 
-    for vertices, faces in iter_test_meshes():
-
+    for vertices, faces, _ in iter_test_meshes():
         vertices.append([1, 2, 3])
         faces.append([faces[0][0], faces[0][1], len(vertices) - 1])
 
@@ -144,8 +196,7 @@ def test_corrupt_mesh14():
     # implementation is very slow. I have changed my local version of
     # skcg to turn the test on.
 
-    for vertices, faces in iter_test_meshes():
-
+    for vertices, faces, _ in iter_test_meshes():
         vertices.append([1, 2, 3])
         vertices.append([2, 3, 4])
         faces.append([faces[0][0], len(vertices) - 2, len(vertices) - 1])
@@ -158,11 +209,33 @@ def test_corrupt_mesh14():
 
 
 def test_corrupt_mesh15():
+    """Add one face to the mesh, using one extra vertex, connected via two vertices (no edges)."""
+
+    # Note: similar case as the previous one.
+
+    for vertices, faces, _ in iter_test_meshes():
+        # Cannot do this on quad and tetrahedron
+        if len(vertices) <= 4:
+            continue
+
+        vertices.append([1, 2, 3])
+        extra_vi = 3 if len(vertices) == 6 else 10
+        extra_face = [1, extra_vi, len(vertices) - 1]
+        assert not any(len(set(face).intersection(extra_face)) > 1 for face in faces)
+        faces.append(extra_face)
+
+        m = MeshClass(vertices, faces)
+
+        assert not m.is_manifold
+        assert not m.is_closed
+        assert not m.is_oriented
+
+
+def test_corrupt_mesh16():
     """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
 
-    for vertices, faces in iter_test_meshes():
-
-        faces[2][0] = faces[2][1]
+    for vertices, faces, _ in iter_test_meshes():
+        faces[1][0] = faces[1][1]
 
         m = MeshClass(vertices, faces)
 
@@ -177,9 +250,12 @@ def test_corrupt_mesh15():
 def test_corrupt_mesh21():
     """Remove a face, opening up the mesh."""
 
-    for vertices, faces in iter_test_meshes():
+    for vertices, faces, _ in iter_test_meshes():
+        # Does not work for quad and strip
+        if len(faces) <= 3:
+            continue
 
-        faces.pop(2)
+        faces.pop(1)
 
         m = MeshClass(vertices, faces)
 
@@ -241,8 +317,12 @@ def test_corrupt_mesh24():
 def test_corrupt_mesh31():
     """Change the winding of one face."""
 
-    for face_idx in [0, 1, 2, -3, -2, -1]:
-        for vertices, faces in iter_test_meshes():
+    for face_idx in [0, 1, 2, 11, 29, -3, -2, -1]:
+        for vertices, faces, is_closed in iter_test_meshes():
+            # For some face indices, the mesh has too little faces
+            face_idx = face_idx if face_idx >= 0 else len(faces) + face_idx
+            if face_idx >= len(faces):
+                continue
 
             face = faces[face_idx]
             faces[face_idx] = face[0], face[2], face[1]
@@ -250,15 +330,25 @@ def test_corrupt_mesh31():
             m = MeshClass(vertices, faces)
 
             assert m.is_manifold
-            assert m.is_closed
+            assert m.is_closed == is_closed
             assert not m.is_oriented
 
 
 def test_corrupt_mesh32():
     """Change the winding of two adjacent faces."""
 
-    for face_idx1 in [0, 1, 2, -3, -2, -1]:
-        for vertices, faces in iter_test_meshes():
+    for face_idx1 in [0, 1, 2, 11, 29, -3, -2, -1]:
+        for vertices, faces, is_closed in iter_test_meshes():
+            ori_faces = [face.copy() for face in faces]
+
+            # If we reverse all faces, it will still be oriented
+            if len(faces) <= 2:
+                continue
+
+            # For some face indices, the mesh has too little faces
+            face_idx1 = face_idx1 if face_idx1 >= 0 else len(faces) + face_idx1
+            if face_idx1 >= len(faces):
+                continue
 
             face1 = faces[face_idx1]
             faces[face_idx1] = face1[0], face1[2], face1[1]
@@ -276,7 +366,7 @@ def test_corrupt_mesh32():
             m = MeshClass(vertices, faces)
 
             assert m.is_manifold
-            assert m.is_closed
+            assert m.is_closed == is_closed
             assert not m.is_oriented
 
 

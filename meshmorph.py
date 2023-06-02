@@ -79,6 +79,20 @@ class AbstractMesh:
         self.set_data(vertices, faces, oversize_factor)
 
     @property
+    def is_manifold(self):
+        """Whether the mesh is manifold.
+
+        The mesh being manifold means that:
+
+        * Each edge is part of 1 or 2 faces.
+        * All faces are connected by edges (not by just a vertex).
+        * The faces incident to a vertex form a closed or an open fan (implied by the above two).
+        """
+        return self._check_manifold_nr2()
+        # return self._is_manifold
+        # return not self._original_unclosed_faces
+
+    @property
     def is_closed(self):
         """Whether the mesh is closed.
 
@@ -86,7 +100,18 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        return len(self._original_unclosed_faces) == 0
+        return self.is_manifold and len(self._original_unclosed_faces) == 0
+
+    @property
+    def is_oriented(self):
+        """Whether the mesh is orientable.
+
+        The mesh being orientable means that the face orientation (i.e. winding) is
+        consistent - each two neighbouring faces have the same orientation.
+        """
+        return self.is_manifold and self._is_oriented
+
+    # is_ccw / is_inside_out
 
     @property
     def component_count(self):
@@ -140,7 +165,13 @@ class AbstractMesh:
         # We want to be able to assume that there is at least one face, and 3 valid vertices
         # (or 4 faces and 4 vertices for a closed mesh)
         if not faces.size or not vertices.size:
-            raise ValueError("The mesh must have more nonzero faces and vertices.")
+            raise ValueError("The mesh must have nonzero faces and vertices.")
+
+        # Check sanity of the faces
+        if faces.min() < 0 or faces.max() >= vertices.shape[0]:
+            raise ValueError(
+                "The faces array containes indices that are out of bounds."
+            )
 
         oversize_factor = max(1, oversize_factor or 1.5)
 
@@ -228,6 +259,70 @@ class AbstractMesh:
         array.setflags(write=False)
         return array
 
+    def _check_manifold_nr2(self):
+        fliebertjes = 0
+        flobbertes = 0
+        isopen = 0
+
+        # todo: this selection could be done beforehand, of if we split components first, we may already have lists available?
+        for vi1 in range(len(self._vertices)):
+            if np.isnan(self._vertices[vi1][0]):
+                continue
+
+            # all_vertex_indices = []
+            # vertex_indices_per_face = []
+            vertex_counts = {}
+            for fi in self._vertex2faces[vi1]:
+                vii = set(self._faces[fi])
+                vii.remove(vi1)
+                # all_vertex_indices.extend(vii)
+                for vi in vii:
+                    # vertex_counts[vi] = vertex_counts.get(vi, 0) + 1
+                    vertex_counts.setdefault(vi, []).append(fi)
+                # vertex_indices_per_face.append(vii)
+
+            # If this is the outer vertex on a triangle on the egde, we don't
+            # need to check this further
+            if len(vertex_counts) == 2:
+                continue
+
+            for vi2, fii in vertex_counts.items():
+                if len(fii) == 2:
+                    pass  # ok!
+                elif len(fii) > 2:
+                    fliebertjes += 1  # Bad!
+                elif len(fii) == 1:
+                    isopen += 1
+                    # Might be an edge, or could be a flobbertje
+                    fi = fii[0]
+                    vii = set(self._faces[fi])
+                    if len(vii) != 3:
+                        flobbertes += 1
+                        continue
+                        # todo: a degenerate triangle, should we remove that from top instead?
+
+                    vii.remove(vi1)
+                    vii.remove(vi2)
+                    vi = vii.pop()
+                    if len(vertex_counts[vi]) == 1:
+                        flobbertes += 1
+
+            # unique_ids, counts = np.unique(all_vertex_indices, return_counts=True)
+            # if (counts > 2).any():
+            #     fliebertjes += 1
+            # elif (counts==1).sum() > 0:
+            #     isopen += 1
+            #     if (counts==1).sum() > 2:
+            #         flobbertes += 1
+
+        return fliebertjes == 0 and flobbertes == 0
+
+        # for vii in vertex_indices_per_face:
+        #     xx = sum(vertex_counts[vi] for vi in vii)
+        #     if xx == 0:
+        #         self._is_manifold = False
+        #     elif xx == 2:
+
     def _check_closed(self):
         """Check that the mesh is closed.
 
@@ -252,6 +347,8 @@ class AbstractMesh:
         unclosed_case1 = []
         unclosed_case2 = []
 
+        self._is_oriented = self._is_manifold = True
+
         while len(faces_to_check) > 0:
             # Create new front - once for each connected component in the mesh
             component_count += 1
@@ -269,7 +366,10 @@ class AbstractMesh:
                 for fi in self.get_neighbour_faces(fi_check):
                     vj1, vj2, vj3 = faces[fi]
                     matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
-                    if len(matching_vertices) >= 2:
+                    if len(matching_vertices) == 3:
+                        self._is_manifold = False
+                    elif len(matching_vertices) == 2:
+                        # todo: we now know that we have two matches, so we can write these three if-s better, I think
                         if vi1 in matching_vertices and vi2 in matching_vertices:
                             neighbour_per_edge[0] += 1
                             if fi in faces_to_check:
@@ -337,7 +437,10 @@ class AbstractMesh:
                     ):
                         unclosed_case1.append((fi_check, neighbour_per_edge))
                     else:
+                        self._is_manifold = False
                         unclosed_case2.append((fi_check, neighbour_per_edge))
+
+            self._is_oriented = not reversed_faces
 
             # We've now found one connected component (there may be more)
             faces_in_this_component = list(faces_in_this_component)
@@ -361,10 +464,10 @@ class AbstractMesh:
 
         # Report on winding - all is well, we corrected it!
         self._n_reversed_faces = total_reversed_count
-        if total_reversed_count > 0:
-            warnings.warn(
-                f"Auto-corrected the winding of {total_reversed_count} faces."
-            )
+        # if total_reversed_count > 0:
+        #     warnings.warn(
+        #         f"Auto-corrected the winding of {total_reversed_count} faces."
+        #     )
 
         # Report on the mesh not being closed - this is a problem!
         # todo: how bad is this problem again? Should we abort or still allow e.g. morphing the mesh?
@@ -374,15 +477,15 @@ class AbstractMesh:
         if unclosed_case1:
             lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case1]
             n = len(unclosed_case1)
-            warnings.warn(
-                f"There is a hole in the mesh at {n} faces:\n" + "\n".join(lines)
-            )
+            # warnings.warn(
+            #     f"There is a hole in the mesh at {n} faces:\n" + "\n".join(lines)
+            # )
         if unclosed_case2:
             lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case2]
             n = len(unclosed_case2)
-            warnings.warn(
-                f"Too many neighbour faces at {n} faces:\n" + "\n".join(lines)
-            )
+            # warnings.warn(
+            #     f"Too many neighbour faces at {n} faces:\n" + "\n".join(lines)
+            # )
 
     def validate_internals(self):
         raise NotImplementedError()
@@ -390,14 +493,22 @@ class AbstractMesh:
 
     def get_volume(self):
         """Calculate the volume of the mesh."""
+        # todo: checkout skcg's computed_interior_volume
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         valid_faces = self._faces[valid_face_indices]
         return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
+
+    def get_area(self):
+        # see skcg computed_surface_area
+        raise NotImplementedError()
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""
         # I don't think we need this for our purpose, but this class is capable
         # of doing something like this, so it could be a nice util.
+        raise NotImplementedError()
+
+    def merge(self, other):
         raise NotImplementedError()
 
     # %% Walk over the surface
@@ -417,6 +528,9 @@ class AbstractMesh:
 
     def get_neighbour_faces(self, fi):
         """Get a list of face indices that neighbour the given face index."""
+
+        # todo: should this only include faces that share an edge (not just a vertex)
+
         faces = self._faces
         vertices = self._vertices
         vertex2faces = self._vertex2faces
