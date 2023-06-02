@@ -100,7 +100,8 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        return self.is_manifold and len(self._original_unclosed_faces) == 0
+        return self.is_manifold and not self._is_open
+        # return self.is_manifold and len(self._original_unclosed_faces) == 0
 
     @property
     def is_oriented(self):
@@ -259,6 +260,36 @@ class AbstractMesh:
         array.setflags(write=False)
         return array
 
+    def _check_manifold_nr1(self):
+        """ This is a (probably) much faster way to check that the mesh is edge-manifold.
+        It does not guarantee proper manifoldness though, since there can still be faces
+        that are attached via a single vertex.
+
+        """
+        # only check that each edge is incident to 1 or 2 faces
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+
+        array = self._faces[valid_face_indices,:][:,[[0, 1], [1, 2], [2, 0]]]
+        # array = self._faces[:,[[1, 2], [2, 0], [0, 1]]]
+
+        # Should have 90 edges
+
+        all_edges = array.reshape(-1, 2)
+
+        all_edges.sort(axis=1)
+
+        uniques, counts = np.unique(all_edges, return_counts=True, axis=0)
+
+        # todo: I think we can also check that for all edges of which there were 2, that they were (before sorting) in opposing order.
+        # if they were not, the winding is inconsistent, and the mesh is not oriented.
+        # That we we can may avoid the more expensive algorithm in '_check_closed' (which name should change!)
+        # and only apply that when we want to auto-correct the winding.
+
+        # Only thing to tackle is whether we can collect connected components in a fast way?
+        LOOK AT THIS NEXT
+
+        return np.all(counts <= 2)
+
     def _check_manifold_nr2(self):
         fliebertjes = 0
         flobbertes = 0
@@ -284,6 +315,7 @@ class AbstractMesh:
             # If this is the outer vertex on a triangle on the egde, we don't
             # need to check this further
             if len(vertex_counts) == 2:
+                isopen += 1
                 continue
 
             for vi2, fii in vertex_counts.items():
@@ -307,6 +339,10 @@ class AbstractMesh:
                     if len(vertex_counts[vi]) == 1:
                         flobbertes += 1
 
+            # todo: the below check is not enough to detect all of the above, but it can detect fans, and if it does that considerably
+            # faster then we could do that first, and only to the slower check if its not a fan.
+            # That way we may get reasonable fast code for closed meshes, while being somewhat slower along the edges of open meshes.
+
             # unique_ids, counts = np.unique(all_vertex_indices, return_counts=True)
             # if (counts > 2).any():
             #     fliebertjes += 1
@@ -315,6 +351,7 @@ class AbstractMesh:
             #     if (counts==1).sum() > 2:
             #         flobbertes += 1
 
+        self._is_open = isopen
         return fliebertjes == 0 and flobbertes == 0
 
         # for vii in vertex_indices_per_face:
@@ -333,6 +370,8 @@ class AbstractMesh:
         This method reports its findings by showing a warning and by setting
         a private attribute (which can e.g. be checked in tests and debugging).
         """
+
+        # todo: the _check_manifold_nr2 checks manifoldness and closeness, so in here we can restrict to the winding (detecting and fixing) and detecting connected components.
 
         # todo: if holes are detected, we can check the vertices at these locations for duplicates, and we can merge those duplicates to create a closed mesh from a "stitched" one.
         faces = self._faces

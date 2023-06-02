@@ -48,7 +48,9 @@ def get_sphere():
 
 
 def get_knot():
-    geo = gfx.geometries.torus_knot_geometry(stitch=True)
+    geo = gfx.geometries.torus_knot_geometry(
+        tubular_segments=16, radial_segments=5, stitch=True
+    )
     return geo.positions.data.tolist(), geo.indices.data.tolist(), True
 
 
@@ -91,21 +93,19 @@ def get_strip():
 
 
 def iter_test_meshes():
-    print("  tetrahedron")
-    yield get_tetrahedron()
-    print("  sphere")
-    yield get_sphere()
-    print("  knot")
-    yield get_knot()
-    print("  quad")
-    yield get_quad()
-    print("  fan")
-    yield get_fan()
-    print("  strip")
-    yield get_strip()
+    yield get_tetrahedron()  # 4 vertices, 4 faces
+    yield get_sphere()  # 32 vertices, 60 faces
+    yield get_knot()  # 80 vertices, 160 faces
+    yield get_quad()  # 4 vertices, 2 faces
+    yield get_fan()  # 5 vertices, 4 faces
+    yield get_strip()  # 5 vertices, 3 faces
+
+
+# %% Some basic tests first
 
 
 def test_raw_meshes():
+    """Test that the raw meshes, unchanged, are what we expect them to be."""
     count = 0
     for vertices, faces, is_closed in iter_test_meshes():
         count += 1
@@ -117,7 +117,23 @@ def test_raw_meshes():
     assert count == 6
 
 
-# %% Test for meshes that are simply ... wrong
+def test_a_single_triangle():
+    """A single triangle is an open oriented manifold."""
+
+    vertices = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [+1, +1, 0],
+    ]
+    faces = [
+        [0, 2, 1],
+    ]
+
+    m = MeshClass(vertices, faces)
+
+    assert m.is_manifold
+    assert not m.is_closed
+    assert m.is_oriented
 
 
 def test_invalid_faces():
@@ -133,11 +149,6 @@ def test_invalid_faces():
 
 
 # %% Test is_manifold
-
-
-def test_a_single_triangle():
-    """A single triangle is always manifold"""
-    # todo: implement this
 
 
 def test_corrupt_mesh11():
