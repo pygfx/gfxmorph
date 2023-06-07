@@ -43,7 +43,7 @@ def get_tetrahedron():
 
 
 def get_sphere():
-    geo = maybe_pygfx.solid_sphere_geometry()
+    geo = maybe_pygfx.smooth_sphere_geometry()
     return geo.positions.data.tolist(), geo.indices.data.tolist(), True
 
 
