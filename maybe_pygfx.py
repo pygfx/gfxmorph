@@ -33,11 +33,95 @@ def solid_tetrahedon():
     return vertices, faces
 
 
-# todo: solid / closed / something else?
-def solid_sphere_geometry(
+def subdivide_faces(vertices, faces):
+    """ Subdivide a mesh.
+
+    This function subdivides the given faces, by dividing each triangle
+    into 4 new triangles, as in the image below:
+
+             /\
+            /__\
+           /\  /\
+          /__\/__\
+
+    The returned arrays must be processed by the caller. This is
+    intentional, because it depends on the use-case how this is best
+    done. E.g. the new vertices may be re-positioned a bit, or perhaps
+    the subdivision was applied on a subset of the total faces, and
+    merging the result requires some special indexing.
+
+    Returns
+    -------
+        new_vertices : ndarray
+            The new vertices that lie in the middle of the edges of the
+            original faces. It is the responsibility of the caller to
+            ``row_stack`` these to the original vertices.
+        new_faces : ndarray
+            The new faces. These should replace the given faces.
+    """
+
+    # First collect unique edges. We will create one new vertex in
+    # the middle of each edge.
+    edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+    all_edges = edges.reshape(-1, 2)
+    all_edges.sort(axis=1)
+    unique_edges, reverse_index = np.unique(all_edges, axis=0, return_inverse=True)
+
+    # The most tricky step in this algorithm is finding the new
+    # indices (on the new faces) based on the edges on which these
+    # new vertices are placed. Using a Python dict (where the keys
+    # are edges, represented as tuples of 2 indices) works, but
+    # makes things slow.
+    #
+    # The trick: we use the reverse_index produced by `np.unique`
+    # to create a map that has the same shape as the faces array,
+    # but the indices along axis 1 represent edges instead of
+    # vertices.
+    indices_to_new_vertices = np.arange(len(unique_edges), dtype=np.int32) + len(
+        vertices
+    )
+    face_edges_to_new_indices = indices_to_new_vertices[reverse_index]
+    face_edges_to_new_indices.shape = -1, 3
+
+    # Create new vertices on the middle of the edges.
+    new_vertices = 0.5 * (vertices[unique_edges[:, 0]] + vertices[unique_edges[:, 1]])
+
+    # We replace each triangle with 4 new triangles, like this.
+    #
+    #      v2
+    #      /\
+    #  e2 /__\ e1
+    #    /\  /\
+    #   /__\/__\
+    # v0   e0   v1
+    #
+    smaller_faces = [
+        # face 1
+        faces[:, 0],
+        face_edges_to_new_indices[:, 0],
+        face_edges_to_new_indices[:, 2],
+        # face 2
+        faces[:, 1],
+        face_edges_to_new_indices[:, 1],
+        face_edges_to_new_indices[:, 0],
+        # face 3
+        faces[:, 2],
+        face_edges_to_new_indices[:, 2],
+        face_edges_to_new_indices[:, 1],
+        # face 4
+        face_edges_to_new_indices[:, 0],
+        face_edges_to_new_indices[:, 1],
+        face_edges_to_new_indices[:, 2],
+    ]
+    new_faces = np.column_stack(smaller_faces).reshape(-1, 3)
+
+    return new_vertices, new_faces
+
+
+def smooth_sphere_geometry(
     radius=1.0, max_edge_length=None, recursive_subdivisions=None
 ):
-    """Generate a solid sphere.
+    """Generate a sphere consisting of homogenous triangles.
 
     Creates a sphere that has its center in the local origin. The sphere
     consists of 60 regular triangular faces and 32 vertices (a Pentakis
@@ -45,14 +129,12 @@ def solid_sphere_geometry(
     a smoother surface.
 
     This geometry differs from the `sphere_geometry` in that it's
-    solid/closed. This means that it consists of a single contiguous
-    surface that encloses the space inside. The faces are also
-    distributed evenly over the surface, which means less vertices are
-    needed to create a rounder surface. The downside is that one cannot
-    easily apply a 2D texture map to this geometry.
-
-    The resulting mesh is an orientable 2-manifold without boundaries, and is regular: it consists of triangles
-    of equal size, and each triangle has the same number of incident faces.
+    mathematically closed; it consists of a single contiguous surface
+    that encloses the space inside. The faces are also distributed
+    evenly over the surface, all edges have the same length, and each
+    triangle has the same number of incident faces. This means less
+    vertices are needed to create a smoother surface. The downside is
+    that one cannot easily apply a 2D texture map to this geometry.
 
     Parameters
     ----------
@@ -70,7 +152,8 @@ def solid_sphere_geometry(
     Returns
     -------
     sphere : Geometry
-        A geometry object that represents a sphere.
+        A geometry object that represents a sphere. Mathematically, the
+        mesh is an orientable closed manifold.
 
     """
 
@@ -132,64 +215,9 @@ def solid_sphere_geometry(
     else:
         subdivisions = 0
 
-    # Calculate number of faces and vertices
+    # Calculate number of faces and vertices. Mostly to validate the result.
     nfaces = 60 * 4**subdivisions
     nvertices = nfaces // 2 + 2  # weird, but true
-
-    # Allocate arrays
-    vertices = np.empty((nvertices, 3), np.float32)
-    faces = np.empty((nfaces, 3), np.int32)
-
-    # These keep track while fillting the above arrays
-    vertex_index = 0
-    face_index = 0
-
-    # A dict to enable faces to reuse vertices
-    index_map = {}
-
-    def add_vertex(xyz):
-        nonlocal vertex_index
-        vertices[vertex_index] = xyz
-        vertex_index += 1
-
-    def add_face(i1, i2, i3):
-        nonlocal face_index
-        faces[face_index] = i1, i2, i3
-        face_index += 1
-
-    def define_face(ia, ib, ic, div=subdivisions):
-        a, b, c = vertices[ia], vertices[ib], vertices[ic]
-        if div <= 0:
-            # Store faces here
-            add_face(ia, ib, ic)
-        else:
-            # Create new vertices (or reuse them)
-            # new point on edge a-b
-            key_ab = min(ia, ib), max(ia, ib)
-            iab = index_map.get(key_ab, None)
-            if iab is None:
-                index_map[key_ab] = iab = vertex_index
-                ab = (a + b) * 0.5
-                add_vertex(ab / np.linalg.norm(ab))
-            # new point on edge b-c
-            key_bc = min(ib, ic), max(ib, ic)
-            ibc = index_map.get(key_bc, None)
-            if ibc is None:
-                index_map[key_bc] = ibc = vertex_index
-                bc = (b + c) * 0.5
-                add_vertex(bc / np.linalg.norm(bc))
-            # new point on edge c-a
-            key_ca = min(ic, ia), max(ic, ia)
-            ica = index_map.get(key_ca, None)
-            if ica is None:
-                index_map[key_ca] = ica = vertex_index
-                ca = (c + a) * 0.5
-                add_vertex(ca / np.linalg.norm(ca))
-            # Recurse to define the faces
-            define_face(ia, iab, ica, div - 1)
-            define_face(ib, ibc, iab, div - 1)
-            define_face(ic, ica, ibc, div - 1)
-            define_face(iab, ibc, ica, div - 1)
 
     C0 = 0.927050983124842272306880251548  # == 3 * (5**0.5 - 1) / 4
     C1 = 1.33058699733550141141687582919  # == 9 * (9 + 5**0.5) / 76
@@ -197,120 +225,149 @@ def solid_sphere_geometry(
     C3 = 2.427050983124842272306880251548  # == 3 * (1 + 5**0.5) / 4
 
     # Add vertices of the Pentakis Dodecahedron
-    add_vertex((0.0, C0, C3))
-    add_vertex((0.0, C0, -C3))
-    add_vertex((0.0, -C0, C3))
-    add_vertex((0.0, -C0, -C3))
-    add_vertex((C3, 0.0, C0))
-    add_vertex((C3, 0.0, -C0))
-    add_vertex((-C3, 0.0, C0))
-    add_vertex((-C3, 0.0, -C0))
-    add_vertex((C0, C3, 0.0))
-    add_vertex((C0, -C3, 0.0))
-    add_vertex((-C0, C3, 0.0))
-    add_vertex((-C0, -C3, 0.0))
-    add_vertex((C1, 0.0, C2))
-    add_vertex((C1, 0.0, -C2))
-    add_vertex((-C1, 0.0, C2))
-    add_vertex((-C1, 0.0, -C2))
-    add_vertex((C2, C1, 0.0))
-    add_vertex((C2, -C1, 0.0))
-    add_vertex((-C2, C1, 0.0))
-    add_vertex((-C2, -C1, 0.0))
-    add_vertex((0.0, C2, C1))
-    add_vertex((0.0, C2, -C1))
-    add_vertex((0.0, -C2, C1))
-    add_vertex((0.0, -C2, -C1))
-    add_vertex((1.5, 1.5, 1.5))
-    add_vertex((1.5, 1.5, -1.5))
-    add_vertex((1.5, -1.5, 1.5))
-    add_vertex((1.5, -1.5, -1.5))
-    add_vertex((-1.5, 1.5, 1.5))
-    add_vertex((-1.5, 1.5, -1.5))
-    add_vertex((-1.5, -1.5, 1.5))
-    add_vertex((-1.5, -1.5, -1.5))
+    vertices = np.array(
+        [
+            (0.0, C0, C3),
+            (0.0, C0, -C3),
+            (0.0, -C0, C3),
+            (0.0, -C0, -C3),
+            (C3, 0.0, C0),
+            (C3, 0.0, -C0),
+            (-C3, 0.0, C0),
+            (-C3, 0.0, -C0),
+            (C0, C3, 0.0),
+            (C0, -C3, 0.0),
+            (-C0, C3, 0.0),
+            (-C0, -C3, 0.0),
+            (C1, 0.0, C2),
+            (C1, 0.0, -C2),
+            (-C1, 0.0, C2),
+            (-C1, 0.0, -C2),
+            (C2, C1, 0.0),
+            (C2, -C1, 0.0),
+            (-C2, C1, 0.0),
+            (-C2, -C1, 0.0),
+            (0.0, C2, C1),
+            (0.0, C2, -C1),
+            (0.0, -C2, C1),
+            (0.0, -C2, -C1),
+            (1.5, 1.5, 1.5),
+            (1.5, 1.5, -1.5),
+            (1.5, -1.5, 1.5),
+            (1.5, -1.5, -1.5),
+            (-1.5, 1.5, 1.5),
+            (-1.5, 1.5, -1.5),
+            (-1.5, -1.5, 1.5),
+            (-1.5, -1.5, -1.5),
+        ],
+        np.float32,
+    )
 
     # The vertices are not on the unit sphere, they seem to not even
     # be exactly on the same sphere. So we push them to the unit sphere.
-    lengths = np.linalg.norm(vertices[:vertex_index], axis=1)
-    vertices[:vertex_index, 0] /= lengths
-    vertices[:vertex_index, 1] /= lengths
-    vertices[:vertex_index, 2] /= lengths
+    lengths = np.linalg.norm(vertices, axis=1)
+    vertices[:, 0] /= lengths
+    vertices[:, 1] /= lengths
+    vertices[:, 2] /= lengths
 
     # Apply the faces of the Pentakis Dodecahedron.
     # Except that these may recurse to create sub-faces.
-    define_face(12, 0, 2)
-    define_face(12, 2, 26)
-    define_face(12, 26, 4)
-    define_face(12, 4, 24)
-    define_face(12, 24, 0)
-    define_face(13, 3, 1)
-    define_face(13, 1, 25)
-    define_face(13, 25, 5)
-    define_face(13, 5, 27)
-    define_face(13, 27, 3)
-    define_face(14, 2, 0)
-    define_face(14, 0, 28)
-    define_face(14, 28, 6)
-    define_face(14, 6, 30)
-    define_face(14, 30, 2)
-    define_face(15, 1, 3)
-    define_face(15, 3, 31)
-    define_face(15, 31, 7)
-    define_face(15, 7, 29)
-    define_face(15, 29, 1)
-    define_face(16, 4, 5)
-    define_face(16, 5, 25)
-    define_face(16, 25, 8)
-    define_face(16, 8, 24)
-    define_face(16, 24, 4)
-    define_face(17, 5, 4)
-    define_face(17, 4, 26)
-    define_face(17, 26, 9)
-    define_face(17, 9, 27)
-    define_face(17, 27, 5)
-    define_face(18, 7, 6)
-    define_face(18, 6, 28)
-    define_face(18, 28, 10)
-    define_face(18, 10, 29)
-    define_face(18, 29, 7)
-    define_face(19, 6, 7)
-    define_face(19, 7, 31)
-    define_face(19, 31, 11)
-    define_face(19, 11, 30)
-    define_face(19, 30, 6)
-    define_face(20, 8, 10)
-    define_face(20, 10, 28)
-    define_face(20, 28, 0)
-    define_face(20, 0, 24)
-    define_face(20, 24, 8)
-    define_face(21, 10, 8)
-    define_face(21, 8, 25)
-    define_face(21, 25, 1)
-    define_face(21, 1, 29)
-    define_face(21, 29, 10)
-    define_face(22, 11, 9)
-    define_face(22, 9, 26)
-    define_face(22, 26, 2)
-    define_face(22, 2, 30)
-    define_face(22, 30, 11)
-    define_face(23, 9, 11)
-    define_face(23, 11, 31)
-    define_face(23, 31, 3)
-    define_face(23, 3, 27)
-    define_face(23, 27, 9)
+    faces = np.array(
+        [
+            (12, 0, 2),
+            (12, 2, 26),
+            (12, 26, 4),
+            (12, 4, 24),
+            (12, 24, 0),
+            (13, 3, 1),
+            (13, 1, 25),
+            (13, 25, 5),
+            (13, 5, 27),
+            (13, 27, 3),
+            (14, 2, 0),
+            (14, 0, 28),
+            (14, 28, 6),
+            (14, 6, 30),
+            (14, 30, 2),
+            (15, 1, 3),
+            (15, 3, 31),
+            (15, 31, 7),
+            (15, 7, 29),
+            (15, 29, 1),
+            (16, 4, 5),
+            (16, 5, 25),
+            (16, 25, 8),
+            (16, 8, 24),
+            (16, 24, 4),
+            (17, 5, 4),
+            (17, 4, 26),
+            (17, 26, 9),
+            (17, 9, 27),
+            (17, 27, 5),
+            (18, 7, 6),
+            (18, 6, 28),
+            (18, 28, 10),
+            (18, 10, 29),
+            (18, 29, 7),
+            (19, 6, 7),
+            (19, 7, 31),
+            (19, 31, 11),
+            (19, 11, 30),
+            (19, 30, 6),
+            (20, 8, 10),
+            (20, 10, 28),
+            (20, 28, 0),
+            (20, 0, 24),
+            (20, 24, 8),
+            (21, 10, 8),
+            (21, 8, 25),
+            (21, 25, 1),
+            (21, 1, 29),
+            (21, 29, 10),
+            (22, 11, 9),
+            (22, 9, 26),
+            (22, 26, 2),
+            (22, 2, 30),
+            (22, 30, 11),
+            (23, 9, 11),
+            (23, 11, 31),
+            (23, 31, 3),
+            (23, 3, 27),
+            (23, 27, 9),
+        ],
+        np.int32,
+    )
+
+    for _ in range(subdivisions):
+        # Subdivide!
+        new_vertices, new_faces = subdivide_faces(vertices, faces)
+
+        # Process new vertices
+        lengths = np.linalg.norm(new_vertices, axis=1)
+        new_vertices[:, 0] /= lengths
+        new_vertices[:, 1] /= lengths
+        new_vertices[:, 2] /= lengths
+        vertices = np.row_stack([vertices, new_vertices])
+
+        # The faces are simply replaced
+        faces = new_faces
 
     # Double-check that the expected numbers match the real ones
-    assert nfaces == face_index
-    assert nvertices == vertex_index
+    assert nfaces == len(faces)
+    assert nvertices == len(vertices)
 
     # Return as a geometry
     return gfx.Geometry(positions=vertices * radius, indices=faces, normals=vertices)
 
 
 if __name__ == "__main__":
+    import time
+
+    t0 = time.perf_counter()
+    geo = smooth_sphere_geometry(100, 1)
+    print(time.perf_counter() - t0)
     m = gfx.Mesh(
-        solid_sphere_geometry(1, None, 2),
+        geo,
         gfx.MeshPhongMaterial(wireframe=False, wireframe_thickness=3),
     )
     m.material.side = "FRONT"
