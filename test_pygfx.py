@@ -6,17 +6,17 @@ from maybe_pylinalg import volume_of_closed_mesh
 
 
 def test_smooth_sphere_geometry():
-    # recursive_subdivisions
+    # subdivisions
 
     g = smooth_sphere_geometry(1)
     assert g.indices.data.shape == (60, 3)
     assert g.positions.data.shape == (32, 3)
 
-    g = smooth_sphere_geometry(1, recursive_subdivisions=1)
+    g = smooth_sphere_geometry(1, subdivisions=1)
     assert g.indices.data.shape == (60 * 4, 3)
     assert g.positions.data.shape == (60 * 4 / 2 + 2, 3)
 
-    g = smooth_sphere_geometry(1, recursive_subdivisions=2)
+    g = smooth_sphere_geometry(1, subdivisions=2)
     assert g.indices.data.shape == (60 * 16, 3)
     assert g.positions.data.shape == (60 * 16 / 2 + 2, 3)
 

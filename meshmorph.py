@@ -79,6 +79,11 @@ class AbstractMesh:
         self.set_data(vertices, faces, oversize_factor)
 
     @property
+    def is_edge_manifold(self):
+        is_edge_manifold, _ = self._check_edge_manifold_and_oriented()
+        return is_edge_manifold
+
+    @property
     def is_manifold(self):
         """Whether the mesh is manifold.
 
@@ -88,7 +93,9 @@ class AbstractMesh:
         * All faces are connected by edges (not by just a vertex).
         * The faces incident to a vertex form a closed or an open fan (implied by the above two).
         """
-        return self._check_manifold_nr2()
+        is_manifold = self._check_manifold_nr2()
+        # assert is_manifold == self.is_edge_manifold
+        return is_manifold
         # return self._is_manifold
         # return not self._original_unclosed_faces
 
@@ -100,7 +107,7 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        return self.is_manifold and not self._is_open
+        return self.is_manifold and self._is_closed
         # return self.is_manifold and len(self._original_unclosed_faces) == 0
 
     @property
@@ -110,7 +117,9 @@ class AbstractMesh:
         The mesh being orientable means that the face orientation (i.e. winding) is
         consistent - each two neighbouring faces have the same orientation.
         """
-        return self.is_manifold and self._is_oriented
+        # return self.is_manifold and self._is_oriented
+        _, is_oriented = self._check_edge_manifold_and_oriented()
+        return self.is_manifold and is_oriented
 
     # is_ccw / is_inside_out
 
@@ -214,7 +223,7 @@ class AbstractMesh:
         self._dirty_faces.add("reset")
 
         # Check/ correct winding and check whether it's a solid
-        self._check_closed()
+        # self._fix_stuff()
 
         # todo:
         # self.data_update()
@@ -260,8 +269,8 @@ class AbstractMesh:
         array.setflags(write=False)
         return array
 
-    def _check_manifold_nr1(self):
-        """ This is a (probably) much faster way to check that the mesh is edge-manifold.
+    def check_edgemanifold_closed_oriented(self):
+        """This is a (probably) much faster way to check that the mesh is edge-manifold.
         It does not guarantee proper manifoldness though, since there can still be faces
         that are attached via a single vertex.
 
@@ -269,28 +278,31 @@ class AbstractMesh:
         # only check that each edge is incident to 1 or 2 faces
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
 
-        array = self._faces[valid_face_indices,:][:,[[0, 1], [1, 2], [2, 0]]]
+        array = self._faces[valid_face_indices, :][:, [[0, 1], [1, 2], [2, 0]]]
         # array = self._faces[:,[[1, 2], [2, 0], [0, 1]]]
 
-        # Should have 90 edges
+        edges_raw = array.reshape(-1, 2)
 
-        all_edges = array.reshape(-1, 2)
+        edges_sorted = np.sort(edges_raw, axis=1)
 
-        all_edges.sort(axis=1)
+        _, counts_raw = np.unique(edges_raw, axis=0, return_counts=True)
+        _, counts_sorted = np.unique(edges_sorted, axis=0, return_counts=True)
 
-        uniques, counts = np.unique(all_edges, return_counts=True, axis=0)
+        # The mesh is edge-manifold if edges are shared at most by 2 faces.
+        is_edge_manifold = bool(counts_sorted.max() <= 2)
 
-        # todo: I think we can also check that for all edges of which there were 2, that they were (before sorting) in opposing order.
-        # if they were not, the winding is inconsistent, and the mesh is not oriented.
-        # That we we can may avoid the more expensive algorithm in '_check_closed' (which name should change!)
-        # and only apply that when we want to auto-correct the winding.
+        # The mesh is closed if it has no edges incident to just once face
+        is_closed = counts_sorted.min() == 2
 
-        # Only thing to tackle is whether we can collect connected components in a fast way?
-        LOOK AT THIS NEXT
+        # If neighbouring faces have consistent winding, their edges are in
+        # opposing directions, so the unsorted edges should have no duplicates.
+        is_oriented = counts_raw.max() == 1
 
-        return np.all(counts <= 2)
+        return is_edge_manifold, is_closed, is_oriented
 
-    def _check_manifold_nr2(self):
+    def check_manifold_closed(self):
+        """Does a proper check that the mesh is manifold, and also whether its closed."""
+
         fliebertjes = 0
         flobbertes = 0
         isopen = 0
@@ -351,8 +363,10 @@ class AbstractMesh:
             #     if (counts==1).sum() > 2:
             #         flobbertes += 1
 
-        self._is_open = isopen
-        return fliebertjes == 0 and flobbertes == 0
+        is_manifold = fliebertjes == 0 and flobbertes == 0
+        is_closed = isopen == 0
+
+        self._is_closed = isopen
 
         # for vii in vertex_indices_per_face:
         #     xx = sum(vertex_counts[vi] for vi in vii)
@@ -360,7 +374,39 @@ class AbstractMesh:
         #         self._is_manifold = False
         #     elif xx == 2:
 
-    def _check_closed(self):
+    def _spit_components(self):
+        """Split the mesh in one or more connected components."""
+
+        faces = self._faces
+
+        # Collect faces to check
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        faces_to_check = set(valid_face_indices)
+
+        components = []
+
+        while len(faces_to_check) > 0:
+            # Create new front - once for each connected component in the mesh
+            vi_next = faces_to_check.pop()
+            faces_in_this_component = {vi_next}
+            front = queue.deque()
+            front.append(vi_next)
+
+            # Walk along the front
+            while len(front) > 0:
+                fi_check = front.popleft()
+                for fi in self.get_neighbour_faces(fi_check):
+                    if fi in faces_to_check:
+                        faces_to_check.remove(fi)
+                        front.append(fi)
+                        faces_in_this_component.add(fi)
+
+            # We've now found one connected component (there may be more)
+            components.append(list(faces_in_this_component))
+
+        return len(components)
+
+    def _fix_stuff(self):
         """Check that the mesh is closed.
 
         This method also autocorrects the winding of indidual faces,
@@ -627,11 +673,30 @@ if __name__ == "__main__":
     #
     # Some other geometries, like the sphere and torus knot, also seems open thought, let's fix that!
 
+    def get_tetrahedron():
+        """A closed tetrahedron as simple list objects, so we can easily add stuff to create corrupt meshes."""
+        vertices = [
+            [-1, 0, -1 / 2**0.5],
+            [+1, 0, -1 / 2**0.5],
+            [0, -1, 1 / 2**0.5],
+            [0, +1, 1 / 2**0.5],
+        ]
+        faces = [
+            [2, 0, 1],
+            [0, 2, 3],
+            [1, 0, 3],
+            [2, 1, 3],
+        ]
+        return vertices, faces, True
+
     # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
     # geo = gfx.sphere_geometry(1)
     # geo = gfx.geometries.tetrahedron_geometry()
-    geo = maybe_pygfx.solid_sphere_geometry(1)
-    m = AbstractMesh(geo.positions.data, geo.indices.data)
+    geo = maybe_pygfx.smooth_sphere_geometry(1)
+    # m = AbstractMesh(geo.positions.data, geo.indices.data)
+    m = AbstractMesh(*get_tetrahedron())
+
+    m._check_manifold_nr1()
 
     # positions = np.array(
     #     [

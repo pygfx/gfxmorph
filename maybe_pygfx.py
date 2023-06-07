@@ -118,9 +118,7 @@ def subdivide_faces(vertices, faces):
     return new_vertices, new_faces
 
 
-def smooth_sphere_geometry(
-    radius=1.0, max_edge_length=None, recursive_subdivisions=None
-):
+def smooth_sphere_geometry(radius=1.0, max_edge_length=None, subdivisions=None):
     """Generate a sphere consisting of homogenous triangles.
 
     Creates a sphere that has its center in the local origin. The sphere
@@ -142,12 +140,12 @@ def smooth_sphere_geometry(
         The radius of the sphere. Vertices are placed at this distance around
         the local origin.
     max_edge_length : float | None
-        If given and not None, it is used to calculate the `recursive_subdivisions`.
+        If given and not None, it is used to calculate the `subdivisions`.
         The faces will be recursively subdivided until the length of each edge
         is no more than this value (taking the given radius into account).
-    recursive_subdivisions : int | None
+    subdivisions : int | None
         The number of times to recursively subdivide the faces. The total number of faces
-        will be ``60 * 4 ** recursive_subdivisions``. Default 0.
+        will be ``60 * 4 ** subdivisions``. Default 0.
 
     Returns
     -------
@@ -195,9 +193,9 @@ def smooth_sphere_geometry(
         raise ValueError("Radius must be larger than zero.")
 
     # Determine the number of subdivisions
-    if max_edge_length is not None and recursive_subdivisions is not None:
+    if max_edge_length is not None and subdivisions is not None:
         raise ValueError(
-            "Either max_edge_length or recursive_subdivisions must be given, or none, but not both."
+            "Either max_edge_length or subdivisions must be given, or none, but not both."
         )
     elif max_edge_length is not None:
         if max_edge_length <= 0:
@@ -210,8 +208,8 @@ def smooth_sphere_geometry(
             b = 0.5 * (a + b)
             b /= np.linalg.norm(b)
             subdivisions += 1
-    elif recursive_subdivisions is not None:
-        subdivisions = max(0, int(recursive_subdivisions))
+    elif subdivisions is not None:
+        subdivisions = max(0, int(subdivisions))
     else:
         subdivisions = 0
 

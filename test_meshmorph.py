@@ -7,7 +7,7 @@ from meshmorph import AbstractMesh
 
 
 def test_abstract_mesh_basics():
-    geo = maybe_pygfx.smooth_sphere_geometry(1, recursive_subdivisions=3)
+    geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=3)
     vertices = geo.positions.data
     faces = geo.indices.data
 
@@ -65,7 +65,7 @@ def test_abstract_mesh_basics():
 
 def test_mesh_selection():
     # Create a mesh
-    geo = maybe_pygfx.smooth_sphere_geometry(1, recursive_subdivisions=1)
+    geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)
     vertices = geo.positions.data
     faces = geo.indices.data
     m = AbstractMesh(vertices, faces)
