@@ -101,10 +101,10 @@ With this, the benchmark becomes:
                   nfaces     245760     240000
 
                      NEW
-                    init      0.436      0.474
-     check_em_and_closed      0.410      0.412
-          check_oriented      0.406      0.368
-               check_fan      1.004      0.902
-         Spit components      0.556      0.504
-                  volume      0.013      0.011
+                    init      0.452      0.459
+     check_em_and_closed      0.160      0.155
+          check_oriented      0.160      0.149
+               check_fan      1.017      0.917
+         Spit components      0.542      0.514
+                  volume      0.012      0.012
                           4188604.0  1913898.5
