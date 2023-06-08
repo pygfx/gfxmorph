@@ -298,20 +298,21 @@ class AbstractMesh:
         # Select edges
         edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
         edges = edges.reshape(-1, 2)
-        edges.sort(axis=1)
+        edges.sort(axis=1)  # note, sorting!
 
         # This line is the performance bottleneck. It is not worth
         # combining this method with e.g. check_oriented, because this
         # line needs to be applied to different data, so the gain would
-        # be abour zero.
-        _, counts_sorted = np.unique(edges, axis=0, return_counts=True)
+        # be about zero.
+        edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+        _, edge_counts = np.unique(edges_blob, return_counts=True)
 
         # The mesh is edge-manifold if edges are shared at most by 2 faces.
-        is_edge_manifold = bool(counts_sorted.max() <= 2)
+        is_edge_manifold = bool(edge_counts.max() <= 2)
 
         # The mesh is closed if it has no edges incident to just once face.
-        # The following is equivalent to np.all(counts_sorted == 2)
-        is_closed = is_edge_manifold and bool(counts_sorted.min() == 2)
+        # The following is equivalent to np.all(edge_counts == 2)
+        is_closed = is_edge_manifold and bool(edge_counts.min() == 2)
 
         # Store and return
         self._mesh_props["is_edge_manifold"] = is_edge_manifold
@@ -325,12 +326,13 @@ class AbstractMesh:
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         faces = self._faces[valid_face_indices, :]
 
-        # Select edges, no sorting!
+        # Select edges. Note no sorting!
         edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
         edges = edges.reshape(-1, 2)
 
         # The magic line
-        _, edge_counts = np.unique(edges, axis=0, return_counts=True)
+        edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+        _, edge_counts = np.unique(edges_blob, return_counts=True)
 
         # If neighbouring faces have consistent winding, their edges
         # are in opposing directions, so the unsorted edges should have
