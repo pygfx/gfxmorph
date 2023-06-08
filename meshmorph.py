@@ -80,7 +80,7 @@ class AbstractMesh:
 
     @property
     def is_edge_manifold(self):
-        is_edge_manifold, _, _ = self.check_edgemanifold_closed_oriented()
+        is_edge_manifold, _ = self.check_edgemanifold_closed()
         return is_edge_manifold
 
     @property
@@ -274,24 +274,25 @@ class AbstractMesh:
         array.setflags(write=False)
         return array
 
-    def check_edgemanifold_closed_oriented(self):
+    def check_edgemanifold_closed(self):
         """This is a (probably) much faster way to check that the mesh is edge-manifold.
         It does not guarantee proper manifoldness though, since there can still be faces
         that are attached via a single vertex.
 
         """
+
         # only check that each edge is incident to 1 or 2 faces
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
 
         array = self._faces[valid_face_indices, :][:, [[0, 1], [1, 2], [2, 0]]]
-        # array = self._faces[:,[[1, 2], [2, 0], [0, 1]]]
+        edges = array.reshape(-1, 2)
+        edges.sort(axis=1)
 
-        edges_raw = array.reshape(-1, 2)
-
-        edges_sorted = np.sort(edges_raw, axis=1)
-
-        _, counts_raw = np.unique(edges_raw, axis=0, return_counts=True)
-        _, counts_sorted = np.unique(edges_sorted, axis=0, return_counts=True)
+        # This line is the performance bottleneck. It is not worth
+        # combining this method with e.g. check_oriented, because this
+        # line needs to be applied to different data, so the gain would
+        # be abour zero.
+        _, counts_sorted = np.unique(edges, axis=0, return_counts=True)
 
         # The mesh is edge-manifold if edges are shared at most by 2 faces.
         is_edge_manifold = bool(counts_sorted.max() <= 2)
@@ -299,11 +300,7 @@ class AbstractMesh:
         # The mesh is closed if it has no edges incident to just once face
         is_closed = counts_sorted.min() == 2
 
-        # If neighbouring faces have consistent winding, their edges are in
-        # opposing directions, so the unsorted edges should have no duplicates.
-        is_oriented = counts_raw.max() == 1
-
-        return is_edge_manifold, is_closed, is_oriented
+        return is_edge_manifold, is_closed
 
     def check_oriented(self):
         """Check that the mesh is oriented. Also implies edge-manifoldness."""
@@ -423,10 +420,14 @@ class AbstractMesh:
 
         return is_manifold, is_closed
 
-    def _split_components(self, face_indices=None, via_edges_only=True):
+    def _split_components(self, face_indices=None, *, via_edges_only=True):
         """Split the mesh in one or more connected components."""
 
-        faces = self._faces
+        # Performance notes:
+        # * Using a deque for the front increases performance a tiny bit.
+        # * Using set logic makes it a bit slower e.g.
+        #   `new_neighbour_faces = neighbour_faces.intersection(faces_to_check)`
+        # * Using a list for faces_in_this_component avoids having to cast to list later.
 
         # Collect faces to check
         if face_indices is None:
@@ -435,26 +436,30 @@ class AbstractMesh:
         else:
             faces_to_check = set(face_indices)
 
+        # List of components, with each component being a list of face indices.
         components = []
 
         while len(faces_to_check) > 0:
             # Create new front - once for each connected component in the mesh
             fi_next = faces_to_check.pop()
-            faces_in_this_component = {fi_next}
+            faces_in_this_component = [fi_next]
             front = queue.deque()
             front.append(fi_next)
 
-            # Walk along the front
-            while len(front) > 0:
+            # Walk along the front until we find no more neighbours
+            while front:
                 fi_check = front.popleft()
-                for fi in self.get_neighbour_faces(fi_check, via_edges_only):
+                neighbour_faces = self.get_neighbour_faces(
+                    fi_check, via_edges_only=via_edges_only
+                )
+                for fi in neighbour_faces:
                     if fi in faces_to_check:
                         faces_to_check.remove(fi)
                         front.append(fi)
-                        faces_in_this_component.add(fi)
+                        faces_in_this_component.append(fi)
 
-            # We've now found one connected component (there may be more)
-            components.append(list(faces_in_this_component))
+            # We've now found one connected component (there may be more).
+            components.append(faces_in_this_component)
 
         return components
 
@@ -466,10 +471,10 @@ class AbstractMesh:
         which violates thes rule that faces around a vertex must be a fan or half-open fan.
         """
 
-        components = self._split_components(None, Falseq)
+        components = self._split_components(None, via_edges_only=False)
 
         for component in components:
-            subcomponents = self._split_components(component, True)
+            subcomponents = self._split_components(component, via_edges_only=True)
             if len(subcomponents) > 1:
                 return False
 
@@ -683,34 +688,28 @@ class AbstractMesh:
         return neighbour_vertices
         # return np.array(neighbour_vertices, np.int32)
 
-    def get_neighbour_faces(self, fi, via_edges_only=False):
+    def get_neighbour_faces(self, fi, *, via_edges_only=False):
         """Get a list of face indices that neighbour the given face index."""
 
-        faces = self._faces
-        vertices = self._vertices
         vertex2faces = self._vertex2faces
 
         if via_edges_only:
             neighbour_faces1 = set()
             neighbour_faces2 = set()
-            for vi in faces[fi]:
+            for vi in self._faces[fi]:
                 for fi2 in vertex2faces[vi]:
                     if fi2 in neighbour_faces1:
                         neighbour_faces2.add(fi2)
                     else:
                         neighbour_faces1.add(fi2)
-
             neighbour_faces = neighbour_faces2
         else:
             neighbour_faces = set()
-            for vi in faces[fi]:
+            for vi in self._faces[fi]:
                 neighbour_faces.update(vertex2faces[vi])
 
         neighbour_faces.discard(fi)
-
-        # todo: is it worth converting to array?
         return neighbour_faces
-        # return np.array(neighbour_faces, np.int32)
 
     def get_closest_vertex(self, ref_pos):
         """Get the vertex index closest to the given 3D point, and its distance."""
