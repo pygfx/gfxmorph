@@ -72,3 +72,39 @@ Comments:
 * The volume calculation is quite a bit faster than the "integral of the divergence of a function over its domain".
 * The original `_fix_stuff` method was somewhat slow, we can indeed do things faster.
 * The new code has some overhead to select valid faces since we allocate extra free slots.
+
+
+### Optimizations and selecting algorithms
+
+I made a matrix of the `is_xx` tests that we want, what algorithm provide
+these info, and how fast these are. I used this to come up with a subset
+of methods to adopt. I then tried to optimize these some more.
+
+Methods:
+
+* `check_edge_manifold_and_closed()` vectorized code using `np.unique`.
+* `check_oriented()` similar algoritm using `np.unique`.
+* `check_only_connected_by_edges()` a neat trick to check the second condition
+  for manifoldness, which is relatively cheap if we split components anyway.
+  The splitting of components happens by walking over the surface.
+
+Not used/needed:
+
+* The original (very imperatve) code that checked and repaired multiple things.
+* The code that checks for face-fans at each vertex.
+
+With this, the benchmark becomes:
+
+                    MESH
+                    name     sphere       knot
+               nvertices     122882     120000
+                  nfaces     245760     240000
+
+                     NEW
+                    init      0.436      0.474
+     check_em_and_closed      0.410      0.412
+          check_oriented      0.406      0.368
+               check_fan      1.004      0.902
+         Spit components      0.556      0.504
+                  volume      0.013      0.011
+                          4188604.0  1913898.5

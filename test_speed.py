@@ -52,20 +52,20 @@ def benchmark():
             t.toc("init")
 
             t.tic()
-            m.check_edgemanifold_closed()
-            t.toc("check_em_closed")
+            m.check_edge_manifold_and_closed()
+            t.toc("check_em_and_closed")
 
             t.tic()
             m.check_oriented()
             t.toc("check_oriented")
 
             # t.tic()
-            # m.check_manifold_closed()
-            # t.toc("check_manifold_closed")
+            # m.check_manifold_closed_deprecated()
+            # t.toc("check m c (depr)")
 
             t.tic()
-            m.check_full_manifold()
-            t.toc("check_full_manifold")
+            m.check_only_connected_by_edges()
+            t.toc("check_fan")
 
             t.tic()
             m._split_components()

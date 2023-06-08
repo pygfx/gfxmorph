@@ -71,6 +71,9 @@ class AbstractMesh:
         self._dirty_faces = set()
 
         # todo: other attributes on the original that I'm not sure of ...
+        self._mesh_props = (
+            {}
+        )  # todo: this must be cleared whenever the topology has changed
         self._meta = {}
         self._gl_objects = None
         self._version_count = 0
@@ -80,8 +83,15 @@ class AbstractMesh:
 
     @property
     def is_edge_manifold(self):
-        is_edge_manifold, _ = self.check_edgemanifold_closed()
-        return is_edge_manifold
+        """Whether the mesh is edge_manifold.
+
+        This is another way of saying that each edge is part of either
+        1 or 2 faces. It is one of the two condition for a mesh to be
+        manifold. You could also call it weak-manifold, I suppose.
+        """
+        if "is_edge_manifold" not in self._mesh_props:
+            self.check_edge_manifold_and_closed()
+        return self._mesh_props["is_edge_manifold"]
 
     @property
     def is_manifold(self):
@@ -90,17 +100,11 @@ class AbstractMesh:
         The mesh being manifold means that:
 
         * Each edge is part of 1 or 2 faces.
-        * All faces are connected by edges (not by just a vertex).
-        * The faces incident to a vertex form a closed or an open fan (implied by the above two).
+        * The faces incident to a vertex form a closed or an open fan.
         """
-        return self.is_edge_manifold and self.check_full_manifold()
-
-        # is_manifold, is_closed = self.check_manifold_closed()
-        return is_manifold
-        # assert is_manifold == self.is_edge_manifold
-        return is_manifold
-        # return self._is_manifold
-        # return not self._original_unclosed_faces
+        if "is_only_connected_by_edges" not in self._mesh_props:
+            self.check_only_connected_by_edges()
+        return self.is_edge_manifold and self._mesh_props["is_only_connected_by_edges"]
 
     @property
     def is_closed(self):
@@ -110,9 +114,9 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        is_manifold, is_closed = self.check_manifold_closed()
-        return is_manifold and is_closed
-        # return self.is_manifold and len(self._original_unclosed_faces) == 0
+        if "is_closed" not in self._mesh_props:
+            self.check_edge_manifold_and_closed()
+        return self._mesh_props["is_closed"]
 
     @property
     def is_oriented(self):
@@ -121,17 +125,35 @@ class AbstractMesh:
         The mesh being orientable means that the face orientation (i.e. winding) is
         consistent - each two neighbouring faces have the same orientation.
         """
-        return self.check_oriented()
-        # return self.is_manifold and self._is_oriented
-        # _, is_oriented = self._check_edge_manifold_and_oriented()
-        # return self.is_manifold and is_oriented
-
-    # is_ccw / is_inside_out
+        # The way we calculate orientedness, also implies edge-manifoldness.
+        # todo: I think that a mesh can be edge_manifold, connected, but not manifold.
+        if "is_oriented" not in self._mesh_props:
+            self.check_oriented()
+        return self._mesh_props["is_oriented"]
 
     @property
-    def component_count(self):
-        """The number of sub-meshes (connected components) this meshs consists of."""
-        return self._component_count
+    def is_volumetric(self):
+        """Whether the mesh has a positive volume.
+
+        If not, the mesh is probably inside-out. CCW winding is assumed.
+        """
+        # todo: ...
+
+    @property
+    def edges(self):
+        """All edges of this mesh as pairs of vertex indices
+
+        Returns
+        -------
+        ndarray, [n_faces, 3, 2]
+            pairs of vertex-indices specifying an edge.
+            the ith edge is the edge opposite from the ith vertex of the face
+
+        """
+        # todo: only use valid faces, maybe per component?
+        array = self.faces[:, [[1, 2], [2, 0], [0, 1]]]
+        array.setflags(write=False)
+        return array
 
     @property
     def metadata(self):
@@ -150,6 +172,8 @@ class AbstractMesh:
             if nb > 2**20
             else f"{nb/2**10:0.2f} KiB",
         }
+
+    # %%
 
     def set_data(self, vertices, faces, oversize_factor=1.5):
         """Set the (new) vertex and face data.
@@ -259,33 +283,21 @@ class AbstractMesh:
             vertex2faces[face[1]].append(fi)
             vertex2faces[face[2]].append(fi)
 
-    @property
-    def edges(self):
-        """Return all edges of this mesh as pairs of vertex indices
+    def check_edge_manifold_and_closed(self):
+        """Check whether the mesh is edge-manifold, and whether it is closed.
 
-        Returns
-        -------
-        ndarray, [n_faces, 3, 2]
-            pairs of vertex-indices specifying an edge.
-            the ith edge is the edge opposite from the ith vertex of the face
-
-        """
-        array = self.faces[:, [[1, 2], [2, 0], [0, 1]]]
-        array.setflags(write=False)
-        return array
-
-    def check_edgemanifold_closed(self):
-        """This is a (probably) much faster way to check that the mesh is edge-manifold.
+        This is a (probably) much faster way to check that the mesh is edge-manifold.
         It does not guarantee proper manifoldness though, since there can still be faces
         that are attached via a single vertex.
-
         """
 
-        # only check that each edge is incident to 1 or 2 faces
+        # Select faces
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        faces = self._faces[valid_face_indices, :]
 
-        array = self._faces[valid_face_indices, :][:, [[0, 1], [1, 2], [2, 0]]]
-        edges = array.reshape(-1, 2)
+        # Select edges
+        edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+        edges = edges.reshape(-1, 2)
         edges.sort(axis=1)
 
         # This line is the performance bottleneck. It is not worth
@@ -297,18 +309,27 @@ class AbstractMesh:
         # The mesh is edge-manifold if edges are shared at most by 2 faces.
         is_edge_manifold = bool(counts_sorted.max() <= 2)
 
-        # The mesh is closed if it has no edges incident to just once face
-        is_closed = counts_sorted.min() == 2
+        # The mesh is closed if it has no edges incident to just once face.
+        # The following is equivalent to np.all(counts_sorted == 2)
+        is_closed = is_edge_manifold and bool(counts_sorted.min() == 2)
 
+        # Store and return
+        self._mesh_props["is_edge_manifold"] = is_edge_manifold
+        self._mesh_props["is_closed"] = is_closed
         return is_edge_manifold, is_closed
 
     def check_oriented(self):
-        """Check that the mesh is oriented. Also implies edge-manifoldness."""
-        # only check that each edge is incident to 1 or 2 faces
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        """Check whether  the mesh is oriented. Also implies edge-manifoldness."""
 
-        edges = self._faces[valid_face_indices, :][:, [[0, 1], [1, 2], [2, 0]]]
+        # Select faces
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        faces = self._faces[valid_face_indices, :]
+
+        # Select edges, no sorting!
+        edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
         edges = edges.reshape(-1, 2)
+
+        # The magic line
         _, edge_counts = np.unique(edges, axis=0, return_counts=True)
 
         # If neighbouring faces have consistent winding, their edges
@@ -318,10 +339,51 @@ class AbstractMesh:
         # the edges orientations would appear twice.
         is_oriented = edge_counts.max() == 1
 
+        # Store and return
+        self._mesh_props["is_oriented"] = is_oriented
         return is_oriented
 
-    def check_manifold_closed(self):
+    def check_only_connected_by_edges(self):
+        """Check whether the mesh is only connected by edges.
+
+        This helps checking for manifoldness. The second condition is:
+        the faces incident to a vertex form a closed or an open fan.
+        Another way to say this is that a group of connected faces can
+        only connect by sharing an edge. It cannot connect to another
+        group 1) via an edge that already has 2 faces, or 2) via only
+        a vertex. The case (1) is covered by every edge having either
+        1 or 2 faces. So we only have to check for the second failure.
+
+        We do this by splitting components using vertex-connectedness,
+        and then splitting each component using edge-connectedness. If
+        a component has sub-components, then these are connected via a
+        vertex, which violates thes rule (that faces around a vertex
+        must be a fan or half-open fan).
+        """
+
+        components = self._split_components(None, via_edges_only=False)
+        is_only_connected_by_edges = True
+
+        for component in components:
+            subcomponents = self._split_components(component, via_edges_only=True)
+            if len(subcomponents) > 1:
+                is_only_connected_by_edges = False
+                break
+
+        self._mesh_props["is_only_connected_by_edges"] = is_only_connected_by_edges
+        return is_only_connected_by_edges
+
+    def check_manifold_closed_deprecated(self):
         """Does a proper check that the mesh is manifold, and also whether its closed."""
+
+        # This algorithm checks the faces around each vertex. This
+        # allows checking all conditions for manifoldness, and also
+        # whether the mesh is closed. It's not even that slow. But using
+        # another combination of check-methods is faster to cover all
+        # mesh-properties. Leaving this for a bit, beacause we may use
+        # it to do repairs.
+
+        # todo: clean this up
 
         fliebertjes = 0
         flobbertes = 0
@@ -463,24 +525,7 @@ class AbstractMesh:
 
         return components
 
-    def check_full_manifold(self):
-        """
-        Check the second rule of manifold-ness by splitting components using
-        vertex-connectedness, and then splitting each component using edge-connectedness.
-        If a component has sub-components, then these are connected via a vertex,
-        which violates thes rule that faces around a vertex must be a fan or half-open fan.
-        """
-
-        components = self._split_components(None, via_edges_only=False)
-
-        for component in components:
-            subcomponents = self._split_components(component, via_edges_only=True)
-            if len(subcomponents) > 1:
-                return False
-
-        return True
-
-    def _fix_stuff(self):
+    def _fix_stuff_deprecated(self):
         """Check that the mesh is closed.
 
         This method also autocorrects the winding of indidual faces,
@@ -491,8 +536,14 @@ class AbstractMesh:
         a private attribute (which can e.g. be checked in tests and debugging).
         """
 
-        # todo: the _check_manifold_nr2 checks manifoldness and closeness, so in here we can restrict to the winding (detecting and fixing) and detecting connected components.
+        # This alogotitm is a port of what we did in Arbiter to check the mesh.
+        # This code can:
+        # * Check edge-manifoldness, closed, orientability.
+        # * Repair winding, repair meshes being inside-out.
+        # Leaving for a bit, because we may use some of it for doing repairs.
 
+        # todo: clean this up
+        # todo: the _check_manifold_nr2 checks manifoldness and closeness, so in here we can restrict to the winding (detecting and fixing) and detecting connected components.
         # todo: if holes are detected, we can check the vertices at these locations for duplicates, and we can merge those duplicates to create a closed mesh from a "stitched" one.
         faces = self._faces
 
@@ -651,10 +702,15 @@ class AbstractMesh:
         # todo: xx
 
     def get_volume(self):
-        """Calculate the volume of the mesh."""
-        # I also checked out skcg's computed_interior_volume, which
-        # uses Gauss' theorem of calculus, but that is considerably
-        # (~8x) slower.
+        """Calculate the volume of the mesh.
+
+        It is assumed that the mesh is closed. If not, the result does
+        not mean much. If the volume is negative, it is inside out.
+        """
+        # This code is surprisingly fast, over 10x faster than the other
+        # checks. I also checked out skcg's computed_interior_volume,
+        # which uses Gauss' theorem of calculus, but that is
+        # considerably (~8x) slower.
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         valid_faces = self._faces[valid_face_indices]
         return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
