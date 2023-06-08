@@ -80,7 +80,7 @@ class AbstractMesh:
 
     @property
     def is_edge_manifold(self):
-        is_edge_manifold, _ = self._check_edge_manifold_and_oriented()
+        is_edge_manifold, _, _ = self.check_edgemanifold_closed_oriented()
         return is_edge_manifold
 
     @property
@@ -93,7 +93,10 @@ class AbstractMesh:
         * All faces are connected by edges (not by just a vertex).
         * The faces incident to a vertex form a closed or an open fan (implied by the above two).
         """
-        is_manifold = self._check_manifold_nr2()
+        return self.is_edge_manifold and self.check_full_manifold()
+
+        # is_manifold, is_closed = self.check_manifold_closed()
+        return is_manifold
         # assert is_manifold == self.is_edge_manifold
         return is_manifold
         # return self._is_manifold
@@ -107,7 +110,8 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        return self.is_manifold and self._is_closed
+        is_manifold, is_closed = self.check_manifold_closed()
+        return is_manifold and is_closed
         # return self.is_manifold and len(self._original_unclosed_faces) == 0
 
     @property
@@ -117,9 +121,10 @@ class AbstractMesh:
         The mesh being orientable means that the face orientation (i.e. winding) is
         consistent - each two neighbouring faces have the same orientation.
         """
+        return self.check_oriented()
         # return self.is_manifold and self._is_oriented
-        _, is_oriented = self._check_edge_manifold_and_oriented()
-        return self.is_manifold and is_oriented
+        # _, is_oriented = self._check_edge_manifold_and_oriented()
+        # return self.is_manifold and is_oriented
 
     # is_ccw / is_inside_out
 
@@ -300,6 +305,24 @@ class AbstractMesh:
 
         return is_edge_manifold, is_closed, is_oriented
 
+    def check_oriented(self):
+        """Check that the mesh is oriented. Also implies edge-manifoldness."""
+        # only check that each edge is incident to 1 or 2 faces
+        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+
+        edges = self._faces[valid_face_indices, :][:, [[0, 1], [1, 2], [2, 0]]]
+        edges = edges.reshape(-1, 2)
+        _, edge_counts = np.unique(edges, axis=0, return_counts=True)
+
+        # If neighbouring faces have consistent winding, their edges
+        # are in opposing directions, so the unsorted edges should have
+        # no duplicates. Note that ths implies edge manifoldness,
+        # because if an edge is incident to more than 2 faces, one of
+        # the edges orientations would appear twice.
+        is_oriented = edge_counts.max() == 1
+
+        return is_oriented
+
     def check_manifold_closed(self):
         """Does a proper check that the mesh is manifold, and also whether its closed."""
 
@@ -313,22 +336,64 @@ class AbstractMesh:
                 continue
 
             # all_vertex_indices = []
+            # for fi in self._vertex2faces[vi1]:
+            #     vii = set(self._faces[fi])
+            #     vii.remove(vi1)
+            #     all_vertex_indices.extend(vii)
+            #
+            # # todo: the below check is not enough to detect all of the above, but it can detect fans, and if it does that considerably
+            # # faster then we could do that first, and only to the slower check if its not a fan.
+            # # That way we may get reasonable fast code for closed meshes, while being somewhat slower along the edges of open meshes.
+            # unique_ids, counts = np.unique(all_vertex_indices, return_counts=True)
+            # if (counts==2).all():
+            #     continue  # a fan, all is well!
+            #
+            # if (counts > 2).any():
+            #     fliebertjes += 1
+            #     continue  # fail, next!
+            #
+            # if (counts==1).any():
+            #     isopen += 1
+            #     if (counts==1).sum() > 2:
+            #         flobbertes += 1
+            #
+            # continue
+
+            # Fom the current vertex (vi1), we select all incident faces
+            # (all faces that use the vertex) and from that select all
+            # neighbouring vertices.
+            #
+            # Our goal is to check whether these faces form a closed or an open fan.
+            # There may not be fliebertjes (a face attached by an edge that is already
+            # incident to 2 other faces), or flobbertjes (a face that is attached by only
+            # a vertex.
+            #
+            #
+            #  v2     /|v3
+            #  |\    / |
+            #  | \  /  |
+            #  |  vi1  |
+            #  |/   \  |
+            #  v1    \ |
+            #         \|v4
+            #
+
             # vertex_indices_per_face = []
             vertex_counts = {}
             for fi in self._vertex2faces[vi1]:
                 vii = set(self._faces[fi])
                 vii.remove(vi1)
-                # all_vertex_indices.extend(vii)
                 for vi in vii:
                     # vertex_counts[vi] = vertex_counts.get(vi, 0) + 1
                     vertex_counts.setdefault(vi, []).append(fi)
                 # vertex_indices_per_face.append(vii)
 
-            # If this is the outer vertex on a triangle on the egde, we don't
-            # need to check this further
-            if len(vertex_counts) == 2:
-                isopen += 1
-                continue
+            # for vii in vertex_indices_per_face:
+            #     xx = sum(vertex_counts[vi] for vi in vii)
+            #     if xx == 0:
+            #         self._is_manifold = False
+            #     elif xx > 2:
+            #         self.
 
             for vi2, fii in vertex_counts.items():
                 if len(fii) == 2:
@@ -344,58 +409,45 @@ class AbstractMesh:
                         flobbertes += 1
                         continue
                         # todo: a degenerate triangle, should we remove that from top instead?
-
                     vii.remove(vi1)
                     vii.remove(vi2)
                     vi = vii.pop()
                     if len(vertex_counts[vi]) == 1:
-                        flobbertes += 1
-
-            # todo: the below check is not enough to detect all of the above, but it can detect fans, and if it does that considerably
-            # faster then we could do that first, and only to the slower check if its not a fan.
-            # That way we may get reasonable fast code for closed meshes, while being somewhat slower along the edges of open meshes.
-
-            # unique_ids, counts = np.unique(all_vertex_indices, return_counts=True)
-            # if (counts > 2).any():
-            #     fliebertjes += 1
-            # elif (counts==1).sum() > 0:
-            #     isopen += 1
-            #     if (counts==1).sum() > 2:
-            #         flobbertes += 1
+                        if len(vertex_counts) > 2:
+                            # If this is the outer vertex on a triangle on the egde, we don't
+                            # need to check this further
+                            flobbertes += 1
 
         is_manifold = fliebertjes == 0 and flobbertes == 0
         is_closed = isopen == 0
 
-        self._is_closed = isopen
+        return is_manifold, is_closed
 
-        # for vii in vertex_indices_per_face:
-        #     xx = sum(vertex_counts[vi] for vi in vii)
-        #     if xx == 0:
-        #         self._is_manifold = False
-        #     elif xx == 2:
-
-    def _spit_components(self):
+    def _split_components(self, face_indices=None, via_edges_only=True):
         """Split the mesh in one or more connected components."""
 
         faces = self._faces
 
         # Collect faces to check
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
-        faces_to_check = set(valid_face_indices)
+        if face_indices is None:
+            (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+            faces_to_check = set(valid_face_indices)
+        else:
+            faces_to_check = set(face_indices)
 
         components = []
 
         while len(faces_to_check) > 0:
             # Create new front - once for each connected component in the mesh
-            vi_next = faces_to_check.pop()
-            faces_in_this_component = {vi_next}
+            fi_next = faces_to_check.pop()
+            faces_in_this_component = {fi_next}
             front = queue.deque()
-            front.append(vi_next)
+            front.append(fi_next)
 
             # Walk along the front
             while len(front) > 0:
                 fi_check = front.popleft()
-                for fi in self.get_neighbour_faces(fi_check):
+                for fi in self.get_neighbour_faces(fi_check, via_edges_only):
                     if fi in faces_to_check:
                         faces_to_check.remove(fi)
                         front.append(fi)
@@ -404,7 +456,24 @@ class AbstractMesh:
             # We've now found one connected component (there may be more)
             components.append(list(faces_in_this_component))
 
-        return len(components)
+        return components
+
+    def check_full_manifold(self):
+        """
+        Check the second rule of manifold-ness by splitting components using
+        vertex-connectedness, and then splitting each component using edge-connectedness.
+        If a component has sub-components, then these are connected via a vertex,
+        which violates thes rule that faces around a vertex must be a fan or half-open fan.
+        """
+
+        components = self._split_components(None, Falseq)
+
+        for component in components:
+            subcomponents = self._split_components(component, True)
+            if len(subcomponents) > 1:
+                return False
+
+        return True
 
     def _fix_stuff(self):
         """Check that the mesh is closed.
@@ -578,13 +647,16 @@ class AbstractMesh:
 
     def get_volume(self):
         """Calculate the volume of the mesh."""
-        # todo: checkout skcg's computed_interior_volume
+        # I also checked out skcg's computed_interior_volume, which
+        # uses Gauss' theorem of calculus, but that is considerably
+        # (~8x) slower.
         (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
         valid_faces = self._faces[valid_face_indices]
         return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
 
-    def get_area(self):
+    def get_surface_area(self):
         # see skcg computed_surface_area
+        # Or simply calculate area of each triangle (vectorized)
         raise NotImplementedError()
 
     def split(self):
@@ -611,18 +683,29 @@ class AbstractMesh:
         return neighbour_vertices
         # return np.array(neighbour_vertices, np.int32)
 
-    def get_neighbour_faces(self, fi):
+    def get_neighbour_faces(self, fi, via_edges_only=False):
         """Get a list of face indices that neighbour the given face index."""
-
-        # todo: should this only include faces that share an edge (not just a vertex)
 
         faces = self._faces
         vertices = self._vertices
         vertex2faces = self._vertex2faces
 
-        neighbour_faces = set()
-        for vi in faces[fi]:
-            neighbour_faces.update(vertex2faces[vi])
+        if via_edges_only:
+            neighbour_faces1 = set()
+            neighbour_faces2 = set()
+            for vi in faces[fi]:
+                for fi2 in vertex2faces[vi]:
+                    if fi2 in neighbour_faces1:
+                        neighbour_faces2.add(fi2)
+                    else:
+                        neighbour_faces1.add(fi2)
+
+            neighbour_faces = neighbour_faces2
+        else:
+            neighbour_faces = set()
+            for vi in faces[fi]:
+                neighbour_faces.update(vertex2faces[vi])
+
         neighbour_faces.discard(fi)
 
         # todo: is it worth converting to array?

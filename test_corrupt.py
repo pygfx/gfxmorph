@@ -216,7 +216,9 @@ def test_corrupt_mesh14():
 
         assert not m.is_manifold
         assert not m.is_closed
-        assert not m.is_oriented
+        # A mesh that is edge-manifold but not full manifold can still be oriented!
+        # todo: I guess it's also closed?
+        assert m.is_oriented
 
 
 def test_corrupt_mesh15():
@@ -239,20 +241,33 @@ def test_corrupt_mesh15():
 
         assert not m.is_manifold
         assert not m.is_closed
-        assert not m.is_oriented
+        assert m.is_oriented
 
 
 def test_corrupt_mesh16():
     """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
-        faces[1][0] = faces[1][1]
+        faces[1][1] = faces[1][0]
 
         m = MeshClass(vertices, faces)
 
         assert not m.is_manifold
         assert not m.is_closed
         assert not m.is_oriented
+
+
+def test_corrupt_mesh17():
+    """Collapse a face, but at the edge, so its still edge-manifold."""
+
+    vertices, faces, _ = get_quad()
+    faces[1][0] = faces[1][1]
+
+    m = MeshClass(vertices, faces)
+
+    assert not m.is_manifold
+    assert not m.is_closed
+    assert m.is_oriented
 
 
 # %% Test is_closed

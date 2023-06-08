@@ -39,31 +39,42 @@ def benchmark():
 
     for name, vertices, faces in iter_big_meshes():
         t = Timer()
+        t.add_data("MESH", "")
         t.add_data("name", name)
         t.add_data("nvertices", len(vertices))
         t.add_data("nfaces", len(faces))
-        t.add_data("--", "--")
+        t.add_data("", "")
 
-        t.tic()
-        m = AbstractMesh(vertices, faces)
-        t.toc("init")
+        if True:
+            t.add_data("NEW", "")
+            t.tic()
+            m = AbstractMesh(vertices, faces)
+            t.toc("init")
 
-        t.tic()
-        m.check_edgemanifold_closed_oriented()
-        t.toc("check_em_c_o")
+            t.tic()
+            m.check_edgemanifold_closed_oriented()
+            t.toc("check_em_c_o")
 
-        t.tic()
-        m.check_manifold_closed()
-        t.toc("check_manifold_closed")
+            t.tic()
+            m.check_oriented()
+            t.toc("check_oriented")
 
-        t.tic()
-        m._spit_components()
-        t.toc("Spit components")
+            t.tic()
+            m.check_manifold_closed()
+            t.toc("check_manifold_closed")
 
-        t.tic()
-        v = m.get_volume()
-        t.toc("volume")
-        t.add_data("", v)
+            t.tic()
+            m.check_full_manifold()
+            t.toc("check_full_manifold")
+
+            t.tic()
+            m._split_components()
+            t.toc("Spit components")
+
+            t.tic()
+            v = m.get_volume()
+            t.toc("volume")
+            t.add_data("", v)
 
         t.add_data("--", "--")
 
@@ -71,36 +82,40 @@ def benchmark():
         # m._fix_stuff()
         # t.toc("_fix_stuff")
 
-        t.tic()
-        m2 = Mesh(vertices, faces)
-        t.toc("init")
+        if False:
+            t.add_data("", "")
+            t.add_data("SKCG", "")
 
-        t.tic()
-        m2.is_manifold
-        t.toc("is_manifold")
+            t.tic()
+            m2 = Mesh(vertices, faces)
+            t.toc("init")
 
-        t.tic()
-        # m2.is_really_manifold
-        t.toc("is_manifold full")
+            t.tic()
+            m2.is_manifold
+            t.toc("is_manifold")
 
-        t.tic()
-        m2.is_closed
-        t.toc("is_closed")
+            t.tic()
+            # m2.is_really_manifold
+            t.toc("is_manifold full")
 
-        t.tic()
-        m2.is_oriented
-        t.toc("is_oriented")
+            t.tic()
+            m2.is_closed
+            t.toc("is_closed")
 
-        m2 = Mesh(vertices, faces)
+            t.tic()
+            m2.is_oriented
+            t.toc("is_oriented")
 
-        t.tic()
-        m2.split_connected_components()
-        t.toc("Split components")
+            m2 = Mesh(vertices, faces)
 
-        t.tic()
-        v = m2.computed_interior_volume
-        t.toc("Volume")
-        t.add_data("", v)
+            t.tic()
+            m2.split_connected_components()
+            t.toc("Split components")
+
+            t.tic()
+            v = m2.computed_interior_volume
+            t.toc("Volume")
+            t.add_data("", v)
 
         columns.append(t.measurements)
 

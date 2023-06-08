@@ -71,3 +71,4 @@ Comments:
 * The (imperative) splitting of components is about 2x slower.
 * The volume calculation is quite a bit faster than the "integral of the divergence of a function over its domain".
 * The original `_fix_stuff` method was somewhat slow, we can indeed do things faster.
+* The new code has some overhead to select valid faces since we allocate extra free slots.
