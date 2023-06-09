@@ -235,7 +235,7 @@ class AbstractMesh:
         self._faces[0 : self._nfaces, :] = faces + 1
 
         # Nullify the free slots
-        self._vertices[0, :] = 0
+        self._vertices[0, :] = np.NaN
         self._vertices[self._nvertices + 1 :, :] = np.NaN
         self._faces[self._nfaces :, :] = 0
 

@@ -76,14 +76,21 @@ def benchmark():
             t.toc("volume")
             t.add_data("", v)
 
-        t.add_data("--", "--")
+            # t.tic()
+            # m._fix_stuff()
+            # t.toc("_fix_stuff")
 
-        # t.tic()
-        # m._fix_stuff()
-        # t.toc("_fix_stuff")
+            t.add_data("", "")
+
+            t.tic()
+            i, d = m.get_closest_vertex((0, 0, 0))
+            verts = m.select_vertices_over_surface(i, 65)
+            t.toc("Select vertices")
+            t.add_data("", len(verts))
 
         if False:
             t.add_data("", "")
+            t.add_data("--", "--")
             t.add_data("SKCG", "")
 
             t.tic()
