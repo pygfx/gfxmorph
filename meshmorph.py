@@ -363,6 +363,7 @@ class AbstractMesh:
         must be a fan or half-open fan).
         """
 
+        # todo: cache these components somewhere, maybe we should force the user to have one instance per component?
         components = self._split_components(None, via_edges_only=False)
         is_only_connected_by_edges = True
 
@@ -374,6 +375,54 @@ class AbstractMesh:
 
         self._mesh_props["is_only_connected_by_edges"] = is_only_connected_by_edges
         return is_only_connected_by_edges
+
+    def repair_manifold(self):
+        # Remove collapsed faces
+
+        valid_faces = self._faces[:, 0] > 0
+        collapsed_faces = np.array([len(set(f)) != len(f) for f in self._faces], bool)
+        (faces2remove,) = np.where(valid_faces & collapsed_faces)
+
+        if len(faces2remove):
+            self._faces[faces2remove] = 0, 0, 0
+            self._free_faces.update(faces2remove)
+            self._mesh_props = {}
+
+        # Remove duplicate faces
+
+        while True:
+            unique_faces, index, counts = np.unique(
+                np.sort(self._faces, axis=1),
+                axis=0,
+                return_index=True,
+                return_counts=True,
+            )
+            counts[unique_faces[:, 0] == 0] = 0
+            if counts.max() == 1:
+                break
+            faces2remove = index[counts > 1]
+
+            if len(faces2remove):
+                self._faces[faces2remove] = 0, 0, 0
+                self._free_faces.update(faces2remove)
+                self._mesh_props = {}
+
+        # todo: Remove non-manifold faces?
+
+    def repair_closed(self):
+        pass
+        # todo: we could detect duplicate vertices, and use it to stitch the faces together.
+
+    def repair_oriented(self):
+        pass
+        # todo: could use algorithm in _fix_stuff_deprecated,
+        # or maybe something smarter
+
+    def repair_volumetric(self):
+        if self.get_volume() < 0:
+            tmp = self._faces[:, 1].copy()
+            self._faces[:, 1] = self._faces[:, 2]
+            self._faces[:, 2] = tmp
 
     def check_manifold_closed_deprecated(self):
         """Does a proper check that the mesh is manifold, and also whether its closed."""

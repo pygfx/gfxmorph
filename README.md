@@ -44,7 +44,7 @@ faces!
                      NEW
                     init      0.440      0.457
             check_em_c_o      0.808      0.764
-   check_manifold_closed      1.356      1.286
+      check_m_and_closed      1.356      1.286
          Spit components      0.498      0.450
                   volume      0.012      0.012
               _fix_stuff      2.812      2.441
