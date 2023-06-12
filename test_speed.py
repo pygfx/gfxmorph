@@ -132,5 +132,14 @@ def benchmark():
         print(titles[0].rjust(24), *[x[1].rjust(10) for x in row])
 
 
+def benchmark_sphere():
+    t = Timer()
+    t.tic()
+    maybe_pygfx.smooth_sphere_geometry(100, subdivisions=7)
+    t.toc("Create smooth spere")
+    print(t.measurements)
+
+
 if __name__ == "__main__":
     benchmark()
+    # benchmark_sphere()

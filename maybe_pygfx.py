@@ -65,7 +65,12 @@ def subdivide_faces(vertices, faces):
     edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
     all_edges = edges.reshape(-1, 2)
     all_edges.sort(axis=1)
-    unique_edges, reverse_index = np.unique(all_edges, axis=0, return_inverse=True)
+
+    # Find unique edges. We use a trick to get a 25% performance boost
+    # unique_edges, reverse_index = np.unique(all_edges, axis=0, return_inverse=True)
+    all_edges_buf = np.frombuffer(all_edges, dtype=np.uint64)
+    unique_edges_buf, reverse_index = np.unique(all_edges_buf, axis=0, return_inverse=True)
+    unique_edges = np.frombuffer(unique_edges_buf, dtype=np.int32).reshape(-1, 2)
 
     # The most tricky step in this algorithm is finding the new
     # indices (on the new faces) based on the edges on which these
