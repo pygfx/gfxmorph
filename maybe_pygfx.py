@@ -68,8 +68,10 @@ def subdivide_faces(vertices, faces):
 
     # Find unique edges. We use a trick to get a 25% performance boost
     # unique_edges, reverse_index = np.unique(all_edges, axis=0, return_inverse=True)
-    all_edges_buf = np.frombuffer(all_edges, dtype=np.uint64)
-    unique_edges_buf, reverse_index = np.unique(all_edges_buf, axis=0, return_inverse=True)
+    all_edges_buf = np.frombuffer(all_edges, dtype="V8")
+    unique_edges_buf, reverse_index = np.unique(
+        all_edges_buf, axis=0, return_inverse=True
+    )
     unique_edges = np.frombuffer(unique_edges_buf, dtype=np.int32).reshape(-1, 2)
 
     # The most tricky step in this algorithm is finding the new
@@ -367,12 +369,12 @@ if __name__ == "__main__":
     import time
 
     t0 = time.perf_counter()
-    geo = smooth_sphere_geometry(100, 1)
+    geo = smooth_sphere_geometry(100, None, 1)
     print(time.perf_counter() - t0)
     m = gfx.Mesh(
         geo,
-        gfx.MeshPhongMaterial(wireframe=False, wireframe_thickness=3),
+        gfx.MeshPhongMaterial(wireframe=True, wireframe_thickness=3),
     )
-    m.material.side = "FRONT"
+    # m.material.side = "FRONT"
 
     gfx.show(m)

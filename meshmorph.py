@@ -26,7 +26,8 @@ import maybe_pylinalg
 import maybe_pygfx
 
 # We assume meshes with triangles (not quads) for now
-vertices_per_face = 3
+VERTICES_PER_FACE = 3
+VERTEX_OFFSET = 0
 
 
 # todo: better name
@@ -45,7 +46,7 @@ class AbstractMesh:
         self._nfaces = 0
 
         # The number of slots for the face and vertex arrays.
-        self._nvertices_slots = 0  # >= _nvertices + 1
+        self._nvertices_slots = 0  # >= _nvertices + VERTEX_OFFSET
         self._nfaces_slots = 0  # >= _nfaces
 
         # Array placeholders.
@@ -197,7 +198,7 @@ class AbstractMesh:
         if not (
             isinstance(faces, np.ndarray)
             and faces.ndim == 2
-            and vertices.shape[1] == vertices_per_face
+            and vertices.shape[1] == VERTICES_PER_FACE
         ):
             raise TypeError("Faces must be a Nx3 array")
 
@@ -217,50 +218,96 @@ class AbstractMesh:
         # Set counts
         self._nvertices = vertices.shape[0]
         self._nfaces = faces.shape[0]
-        self._nvertices_slots = int(oversize_factor * self._nvertices) + 1
-        self._nfaces_slots = int(oversize_factor * self._nfaces)
 
-        # Check-check, double-check
-        assert self._nvertices_slots >= self._nvertices + 1
-        assert self._nfaces_slots >= self._nfaces
+        self._free_vertices = set()
+        self._free_faces = set()
 
-        # Allocate arrays.
-        self._vertices = np.empty((self._nvertices_slots, 3), np.float32)
-        self._normals = np.empty((self._nvertices_slots, 3), np.float32)
-        self._colors = np.empty((self._nvertices_slots, 3), np.float32)
-        self._faces = np.empty((self._nfaces_slots, vertices_per_face), np.int32)
+        self._allocate_vertices(
+            int(oversize_factor * self._nvertices),
+            vertices,
+            np.zeros((len(vertices), 4), np.float32),
+        )
+        self._allocate_faces(
+            int(oversize_factor * self._nfaces),
+            faces + VERTEX_OFFSET,
+        )
 
-        # Copy the data
-        self._vertices[1 : self._nvertices + 1, :] = vertices
-        self._faces[0 : self._nfaces, :] = faces + 1
-
-        # Nullify the free slots
-        self._vertices[0, :] = np.NaN
-        self._vertices[self._nvertices + 1 :, :] = np.NaN
-        self._faces[self._nfaces :, :] = 0
-
-        # Collect the free slots
-        self._free_vertices = set(range(self._nvertices + 1, self._nvertices_slots))
-        self._free_faces = set(range(self._nfaces, self._nfaces_slots))
-
-        # Update self._vertex2faces (the reverse mapping)
         self._calculate_vertex2faces()
 
-        # Mark for full upload
+    def _allocate_vertices(self, n, current_vertices=None, current_colors=None):
+        # Note: the first vertex is reserved as a dummy that empty faces
+        # point to. We could also let empty faces be -1, but then the
+        # lookup may not be well-defined. By making it point to a valid
+        # vertex, we can control its value more reliably.
+        # todo: I think we can handle that in the shader, so we can simplify the core by removing the offset
+
+        if current_vertices is None:
+            current_vertices = self._vertices[1:]
+        if current_colors is None:
+            current_colors = self._colors[1:]
+
+        n += VERTEX_OFFSET
+
+        # Sanity check
+        assert n >= len(current_vertices)
+        # Allocate new arrays.
+        self._nvertices_slots = n
+        self._vertices = np.empty((n, 3), np.float32)
+        self._normals = np.empty((n, 3), np.float32)
+        self._colors = np.empty((n, 4), np.float32)
+        # Copy the data
+        self._vertices[
+            VERTEX_OFFSET : len(current_vertices) + VERTEX_OFFSET, :
+        ] = current_vertices
+        self._colors[
+            VERTEX_OFFSET : len(current_colors) + VERTEX_OFFSET, :
+        ] = current_colors
+        # Nullify the free slots
+        self._vertices[:VERTEX_OFFSET, :] = np.NaN
+        self._vertices[len(current_vertices) + VERTEX_OFFSET :, :] = np.NaN
+        # Collect the free slots
+        self._free_vertices.update(range(len(current_vertices) + VERTEX_OFFSET, n))
+        # Mark for update
         self._dirty_vertices.add("reset")
         self._dirty_colors.add("reset")
-        self._dirty_faces.add("reset")
-
-        # Check/ correct winding and check whether it's a solid
-        # self._fix_stuff()
-
-        # todo:
         # self.data_update()
-        # self.metadata_update()
+
+    def _allocate_faces(self, n, current_faces=None):
+        if current_faces is None:
+            current_faces = self._faces
+
+        # Sanity check
+        assert n >= len(current_faces)
+        # Allocate new array.
+        self._nfaces_slots = n
+        self._faces = np.empty((n, VERTICES_PER_FACE), np.int32)
+        # Copy the data
+        self._faces[0 : len(current_faces), :] = current_faces
+        # Nullify the free slots
+        self._faces[len(current_faces) :, :] = VERTEX_OFFSET - 1
+        # Collect the free slots
+        self._free_faces.update(range(len(current_faces), n))
+        # Mark for update
+        self._dirty_faces.add("reset")
+        # self.data_update()
 
     def _calculate_vertex2faces(self):
         """Do a full reset of the vertex2faces backward mapping array."""
         faces = self._faces
+
+        # A vectorized version by Korijn that is much faster, but assumes that
+        # there are no holes:
+        #
+        # fidx = np.arange(self._nfaces_slots * 3, dtype="i4") // 3
+        # ff = faces.reshape(-1)
+        #
+        # remap = np.argsort(ff)
+        # fidxr = fidx[remap]
+        # ffr = ff[remap]
+        # shifts = np.flatnonzero(ffr[1:] - ffr[:-1]) + 1
+        #
+        # def get_faces(vi):
+        #     return [i for i in fidxr[shifts[vi+1]:shifts[vi+2]]]
 
         # todo: what offers the best performance (at the right moment)?
         # - A python list with lists?
@@ -276,13 +323,55 @@ class AbstractMesh:
 
         for fi in range(self._nfaces_slots):
             face = faces[fi]
-            if face[0] == 0:
+            if face[0] < VERTEX_OFFSET:
                 continue  # empty slot
             # Loop unrolling helps performance a bit
             vertex2faces[face[0]].append(fi)
             vertex2faces[face[1]].append(fi)
             vertex2faces[face[2]].append(fi)
 
+    def _ensure_free_vertices(self, n, resize_factor=1.5):
+        """Make sure that there are at least n free slots for vertices.
+        If not, increase the total size of the array by resize_factor.
+        """
+        n = int(n)
+        assert n >= 1
+        assert resize_factor > 1
+
+        # todo: also reduce slots if below a certain treshold?
+        # To do this without remapping any indices (which we want to avoid, e.g. to keep undo working)
+        # we can only make the array as small as the largest index in use. But we can
+        # reorganize the array a bit (just a few moves) on each resample(), so that the arrays
+        # stay more or less tightly packed.
+
+        if len(self._free_vertices) < n:
+            nvertices_slots_new = max(
+                self._nvertices + n, int(self._nvertices_slots * resize_factor)
+            )
+            print(f"Re-allocating vertex array to {nvertices_slots_new} elements.")
+            self._allocate_vertices(nvertices_slots_new)
+
+    def _ensure_free_faces(self, n, resize_factor=1.5):
+        """Make sure that there are at least n free slots for faces.
+        If not, increase the total size of the array by resize_factor.
+        """
+        n = int(n)
+        assert n >= 1
+        assert resize_factor > 1
+
+        if len(self._free_faces) < n:
+            nfaces_slots_new = max(
+                self._nfaces + n, int(self._nfaces_slots * resize_factor)
+            )
+            print(f"Re-allocating faces array to {nfaces_slots_new} elements.")
+            self._allocate_faces(nfaces_slots_new)
+
+    def _get_free_vertices(self, n):
+        """Obtain a list of n fresh vertices for all your triangle-building needs!"""
+        self._ensure_free_vertices(n)
+        return [self._free_vertices.pop() for i in range(n)]
+
+    # %%
     def check_edge_manifold_and_closed(self):
         """Check whether the mesh is edge-manifold, and whether it is closed.
 
@@ -292,7 +381,7 @@ class AbstractMesh:
         """
 
         # Select faces
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
         faces = self._faces[valid_face_indices, :]
 
         # Select edges
@@ -323,7 +412,7 @@ class AbstractMesh:
         """Check whether  the mesh is oriented. Also implies edge-manifoldness."""
 
         # Select faces
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
         faces = self._faces[valid_face_indices, :]
 
         # Select edges. Note no sorting!
@@ -384,7 +473,11 @@ class AbstractMesh:
         (faces2remove,) = np.where(valid_faces & collapsed_faces)
 
         if len(faces2remove):
-            self._faces[faces2remove] = 0, 0, 0
+            self._faces[faces2remove] = (
+                VERTEX_OFFSET - 1,
+                VERTEX_OFFSET - 1,
+                VERTEX_OFFSET - 1,
+            )
             self._free_faces.update(faces2remove)
             self._mesh_props = {}
 
@@ -397,7 +490,7 @@ class AbstractMesh:
                 return_index=True,
                 return_counts=True,
             )
-            counts[unique_faces[:, 0] == 0] = 0
+            counts[unique_faces[:, 0] < VERTEX_OFFSET] = 0
             if counts.max() == 1:
                 break
             faces2remove = index[counts > 1]
@@ -408,15 +501,137 @@ class AbstractMesh:
                 self._mesh_props = {}
 
         # todo: Remove non-manifold faces?
+        # Remove vertex-connected faces
+        components = self._split_components(None, via_edges_only=False)
+        is_only_connected_by_edges = True
+
+        final_components = []
+        vertices2dedupe_per_component = []
+
+        for component in components:
+            subcomponents = self._split_components(component, via_edges_only=True)
+            index_offset = len(final_components)
+            final_components.extend(subcomponents)
+            while len(vertices2dedupe_per_component) < len(final_components):
+                vertices2dedupe_per_component.append(set())
+            if len(subcomponents) > 1:
+                for i1 in range(len(subcomponents)):
+                    for i2 in range(i1 + 1, len(subcomponents)):
+                        vii1 = set(self._faces[subcomponents[i1]].flat)
+                        vii2 = set(self._faces[subcomponents[i2]].flat)
+                        reused = vii1 & vii2
+                        vertices2dedupe_per_component[index_offset + i2].update(reused)
+
+        self._component_labels = -1 * np.ones((len(self._faces),), np.int32)
+        for i in range(len(final_components)):
+            self._component_labels[final_components[i]] = i
+
+        for i in range(len(final_components)):
+            component = final_components[i]
+            dedupe = vertices2dedupe_per_component[i]
+            for vi1 in dedupe:
+                vi2 = self._get_free_vertices(1)[0]
+                # todo: must only be applied for this ith component. Waiting to implement that because I want to try having faces views first.
+                self._faces[self._faces == vi1] = vi2
+                self._mesh_props = {}
 
     def repair_closed(self):
         pass
         # todo: we could detect duplicate vertices, and use it to stitch the faces together.
 
-    def repair_oriented(self):
+    def clean_small_components(self, min_faces=4):
         pass
-        # todo: could use algorithm in _fix_stuff_deprecated,
-        # or maybe something smarter
+
+    def repair_oriented(self):
+        """ """
+
+        # This implementation walks over the surface using a front. The
+        # algorithm is similar to the one for splitting the mesh in
+        # connected components, except it does more work at the deepest
+        # nesting.
+        #
+        # It starts out from one face, and reverses the neighboring
+        # faces if they don't match the winding of the current face.
+        # And so on. Faces that have been been processed cannot be
+        # reversed again. So the fix operates as a wave that flows over
+        # the mesh, with the first face defining the reference winding.
+        #
+        # The repair can only fail if the mesh is not manifold or when
+        # it is not orientable (i.e. a Mobius strip or Klein bottle).
+        #
+        # A vectorized implementation might also be possible, but I'm
+        # not sure if a closed form solution exists, so it might need
+        # to work iteratively? In any case, since this is a repair
+        # operation, performance is of less importance.
+
+        faces = self._faces
+
+        # Collect faces to check
+        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
+        faces_to_check = set(valid_face_indices)
+
+        component_count = 0
+        reversed_faces = []
+
+        while len(faces_to_check) > 0:
+            # Create new front - once for each connected component in the mesh
+            component_count += 1
+            vi_next = faces_to_check.pop()
+            front = queue.deque()
+            front.append(vi_next)
+
+            # Walk along the front
+            while len(front) > 0:
+                fi_check = front.popleft()
+                vi1, vi2, vi3 = faces[fi_check]
+                for fi in self.get_neighbour_faces(fi_check, via_edges_only=True):
+                    if fi in faces_to_check:
+                        faces_to_check.remove(fi)
+                        front.append(fi)
+
+                        vj1, vj2, vj3 = faces[fi]
+                        matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
+                        if len(matching_vertices) == 2:
+                            if vi3 not in matching_vertices:
+                                # vi1 in matching_vertices and vi2 in matching_vertices
+                                if (
+                                    (vi1 == vj1 and vi2 == vj2)
+                                    or (vi1 == vj2 and vi2 == vj3)
+                                    or (vi1 == vj3 and vi2 == vj1)
+                                ):
+                                    reversed_faces.append(fi)
+                                    faces[fi, 1], faces[fi, 2] = (
+                                        faces[fi, 2],
+                                        faces[fi, 1],
+                                    )
+                            elif vi1 not in matching_vertices:
+                                # vi2 in matching_vertices and vi3 in matching_vertices
+                                if fi in faces_to_check:
+                                    if (
+                                        (vi2 == vj1 and vi3 == vj2)
+                                        or (vi2 == vj2 and vi3 == vj3)
+                                        or (vi2 == vj3 and vi3 == vj1)
+                                    ):
+                                        reversed_faces.append(fi)
+                                        faces[fi, 1], faces[fi, 2] = (
+                                            faces[fi, 2],
+                                            faces[fi, 1],
+                                        )
+                            elif vi2 not in matching_vertices:
+                                # vi3 in matching_vertices and vi1 in matching_vertices
+                                if fi in faces_to_check:
+                                    if (
+                                        (vi3 == vj1 and vi1 == vj2)
+                                        or (vi3 == vj2 and vi1 == vj3)
+                                        or (vi3 == vj3 and vi1 == vj1)
+                                    ):
+                                        reversed_faces.append(fi)
+                                        faces[fi, 1], faces[fi, 2] = (
+                                            faces[fi, 2],
+                                            faces[fi, 1],
+                                        )
+
+            return len(reversed_faces)
 
     def repair_volumetric(self):
         if self.get_volume() < 0:
@@ -544,7 +759,7 @@ class AbstractMesh:
 
         # Collect faces to check
         if face_indices is None:
-            (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
+            (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
             faces_to_check = set(valid_face_indices)
         else:
             faces_to_check = set(face_indices)
@@ -885,7 +1100,7 @@ if __name__ == "__main__":
     # m = AbstractMesh(geo.positions.data, geo.indices.data)
     m = AbstractMesh(*get_tetrahedron())
 
-    m._check_manifold_nr1()
+    # m._check_manifold_nr1()
 
     # positions = np.array(
     #     [
