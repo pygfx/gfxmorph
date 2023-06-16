@@ -10,7 +10,7 @@ import pytest
 import maybe_pygfx
 import meshmorph
 
-from testutils import iter_test_meshes, get_quad
+from testutils import iter_test_meshes, get_quad, get_sphere
 
 
 # Set to 1 to perform these tests on skcg, as a validation check
@@ -171,6 +171,34 @@ def test_corrupt_mesh15():
 
 
 def test_corrupt_mesh16():
+    """Attach one part of the mesh to another part, using just one vertex."""
+
+    # Note: similar case as the previous one. I initially overlooked
+    # this use-case when I thought that the fan-requirement could be
+    # checked by comparing the result of splitting components with both
+    # edge- and vertex-connectedness. This is a single connected
+    # component that *also* has a one-vertex connection.
+
+    # Some hand-picked vertex pairs to connect
+    vertex_pairs = [
+        (12, 29),  # about opposite the sphere
+        (0, 21),  # one vertex in between
+    ]
+
+    for vi1, vi2 in vertex_pairs:
+        vertices, faces, _ = get_sphere()
+        faces = np.asarray(faces, np.int32)
+        faces[faces == vi2] = vi1
+
+        m = MeshClass(vertices, faces)
+
+        assert m.is_edge_manifold
+        assert not m.is_manifold
+        assert m.is_closed
+        assert m.is_oriented
+
+
+def test_corrupt_mesh17():
     """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
@@ -183,7 +211,7 @@ def test_corrupt_mesh16():
         assert not m.is_oriented
 
 
-def test_corrupt_mesh17():
+def test_corrupt_mesh18():
     """Collapse a face, but at the edge, so its still edge-manifold."""
 
     vertices, faces, _ = get_quad()
