@@ -30,57 +30,642 @@ VERTICES_PER_FACE = 3
 VERTEX_OFFSET = 0
 
 
+# %% Functional stuff
+
+
+def mesh_is_edge_manifold_and_closed(faces):
+    """Check whether the mesh is edge-manifold, and whether it is closed.
+
+    This is a (probably) much faster way to check that the mesh is edge-manifold.
+    It does not guarantee proper manifoldness though, since there can still be faces
+    that are attached via a single vertex.
+    """
+
+    # Select edges
+    edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+    edges = edges.reshape(-1, 2)
+    edges.sort(axis=1)  # note, sorting!
+
+    # This line is the performance bottleneck. It is not worth
+    # combining this method with e.g. check_oriented, because this
+    # line needs to be applied to different data, so the gain would
+    # be about zero.
+    edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+    _, edge_counts = np.unique(edges_blob, return_counts=True)
+
+    # The mesh is edge-manifold if edges are shared at most by 2 faces.
+    is_edge_manifold = bool(edge_counts.max() <= 2)
+
+    # The mesh is closed if it has no edges incident to just once face.
+    # The following is equivalent to np.all(edge_counts == 2)
+    is_closed = is_edge_manifold and bool(edge_counts.min() == 2)
+
+    return is_edge_manifold, is_closed
+
+
+def mesh_is_oriented(faces):
+    """Check whether  the mesh is oriented. Also implies edge-manifoldness."""
+
+    # Select edges. Note no sorting!
+    edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+    edges = edges.reshape(-1, 2)
+
+    # The magic line
+    edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+    _, edge_counts = np.unique(edges_blob, return_counts=True)
+
+    # If neighbouring faces have consistent winding, their edges
+    # are in opposing directions, so the unsorted edges should have
+    # no duplicates. Note that ths implies edge manifoldness,
+    # because if an edge is incident to more than 2 faces, one of
+    # the edges orientations would appear twice. The reverse is not
+    # necessarily true though: a mesh can be edge-manifold but not
+    # oriented.
+    is_oriented = edge_counts.max() == 1
+
+    return is_oriented
+
+
+def mesh_volume(vertices, faces):
+    """Calculate the volume of the mesh.
+
+    It is assumed that the mesh is closed. If not, the result does
+    not mean much. If the volume is negative, it is inside out.
+    """
+    # This code is surprisingly fast, over 10x faster than the other
+    # checks. I also checked out skcg's computed_interior_volume,
+    # which uses Gauss' theorem of calculus, but that is
+    # considerably (~8x) slower.
+    return maybe_pylinalg.volume_of_closed_mesh(vertices, faces)
+
+
+def mesh_surface_area(vertices, faces):
+    # see skcg computed_surface_area
+    # Or simply calculate area of each triangle (vectorized)
+    raise NotImplementedError()
+
+
+# def _calculate_vertex2faces(self):
+#     """Do a full reset of the vertex2faces backward mapping array."""
+#     faces = self._faces
+#
+#     # todo: what offers the best performance (at the right moment)?
+#     # - A python list with lists?
+#     # - A python list with arrays (would have to do an extra step here)?
+#     # - An array with lists?
+#     # - An array with arrays?
+#
+#     self._vertex2faces = vertex2faces = [[] for i in range(self._nvertices_slots)]
+#
+#     # self._vertex2faces = vertex2faces = np.empty(self._nvertices_slots, dtype=list)
+#     # for vi in range(1, self._nvertices_slots):
+#     #     vertex2faces[vi] = []
+#
+#     for fi in range(self._nfaces_slots):
+#         face = faces[fi]
+#         if face[0] < VERTEX_OFFSET:
+#             continue  # empty slot
+#         # Loop unrolling helps performance a bit
+#         vertex2faces[face[0]].append(fi)
+#         vertex2faces[face[1]].append(fi)
+#         vertex2faces[face[2]].append(fi)
+
+
+class ReverseFaceMap:
+    def __init__(self, faces):
+        faces = np.asarray(faces)
+        nfaces_slots = len(faces)
+        self.faces = faces  # meh
+
+        # fidx = np.arange(len(faces) * 3, dtype="i4") // 3
+        # ff = faces.reshape(-1)
+        #
+        # remap = np.argsort(ff)
+        # fidxr = fidx[remap]
+        # ffr = ff[remap]
+        # shifts = np.flatnonzero(ffr[1:] - ffr[:-1]) + 1
+
+        fidx = np.arange(nfaces_slots * 3, dtype="i4")
+        fidx //= 3
+        ff = faces.reshape(-1)
+        remap = np.argsort(ff)
+        fidxr = fidx[remap]
+        ffr = ff[remap]
+        shifts = ffr[1:] - ffr[:-1]
+        shifts_idx = np.flatnonzero(shifts)
+        # these are the SPLIT points
+        shifts_idx += 1
+        # vert_idx is the vertex index starting at each split point
+        vert_idx = np.concatenate([[ffr[0]], ffr[shifts_idx]])
+
+        nverts = faces.max()
+        padding = np.empty((nverts + 1 - len(shifts_idx),), np.int32)
+        padding.fill(len(fidxr) + 1)
+        shifts_idx = np.concatenate([[0], shifts_idx, padding])
+
+        self.fidxr = fidxr
+        self.shifts_idx = shifts_idx
+        self.vert_idx = vert_idx
+
+        # --
+
+        # self.vertex2faces = vertex2faces = [[] for i in range(faces.max()+1)]
+        #
+        # # self.vertex2faces = vertex2faces = np.empty(self._nvertices_slots, dtype=list)
+        # # for vi in range(1, self._nvertices_slots):
+        # #     vertex2faces[vi] = []
+        #
+        # for fi in range(len(faces)):
+        #     face = faces[fi]
+        #     vertex2faces[face[0]].append(fi)
+        #     vertex2faces[face[1]].append(fi)
+        #     vertex2faces[face[2]].append(fi)
+
+    def __getitem__(self, vi):
+        # return [i for i in self.fidxr[self.shifts[vi+1]:self.shifts[vi+2]]]
+
+        # return self.vertex2faces[vi]
+
+        shifts_idx = self.shifts_idx
+        fidxr = self.fidxr
+        # vert_idx = self.vert_idx
+
+        # # ignore zero
+        # if vi == 0:
+        #     return []
+        # vidx = vi
+        # vidx = np.searchsorted(vert_idx, vi)
+        # vertex unused
+        # if vert_idx[vidx] != vi:
+        #     return []
+        # special case start/end ranges
+        # if vidx == 0:
+        #     return fidxr[:shifts_idx[vidx]]
+        # if vidx == vert_idx.size - 1:
+        #     return fidxr[shifts_idx[vidx-1]:]
+        # return fidxr[shifts_idx[vidx-1]:shifts_idx[vidx]]
+        return fidxr[shifts_idx[vi] : shifts_idx[vi + 1]]
+
+
+def get_neighbour_faces(faces, vertex2faces, fi, *, via_edges_only=False):
+    """Get a list of face indices that neighbour the given face index."""
+
+    if via_edges_only:
+        neighbour_faces1 = set()
+        neighbour_faces2 = set()
+        for vi in faces[fi]:
+            for fi2 in vertex2faces[vi]:
+                if fi2 in neighbour_faces1:
+                    neighbour_faces2.add(fi2)
+                else:
+                    neighbour_faces1.add(fi2)
+        neighbour_faces = neighbour_faces2
+    else:
+        neighbour_faces = set()
+        for vi in faces[fi]:
+            neighbour_faces.update(vertex2faces[vi])
+
+    neighbour_faces.discard(fi)
+    return neighbour_faces
+
+
+def mesh_component_labels(faces, vertex2faces, *, via_edges_only=True):
+    """Split the mesh in one or more connected components."""
+
+    # Performance notes:
+    # * Using a deque for the front increases performance a tiny bit.
+    # * Using set logic makes it a bit slower e.g.
+    #   `new_neighbour_faces = neighbour_faces.intersection(faces_to_check)`
+
+    # vertex2faces = ReverseFaceMap(faces)
+    faces_to_check = set(range(len(faces)))
+
+    # List of components, with each component being a list of face indices.
+    component_index = -1
+    component_labels = np.empty((len(faces),), np.int32)
+    component_labels.fill(-1)
+
+    while len(faces_to_check) > 0:
+        # Create new front - once for each connected component in the mesh
+        component_index += 1
+        fi_next = faces_to_check.pop()
+        front = queue.deque()
+        front.append(fi_next)
+
+        # Walk along the front until we find no more neighbours
+        while front:
+            fi_check = front.popleft()
+            component_labels[fi_check] = component_index
+            neighbour_faces = get_neighbour_faces(
+                faces, vertex2faces, fi_check, via_edges_only=via_edges_only
+            )
+            for fi in neighbour_faces:
+                if fi in faces_to_check:
+                    faces_to_check.remove(fi)
+                    front.append(fi)
+
+    return component_labels
+
+
+def check_only_connected_by_edges(faces, vertex2faces):
+    """Check whether the mesh is only connected by edges.
+
+    This helps checking for manifoldness. The second condition is:
+    the faces incident to a vertex form a closed or an open fan.
+    Another way to say this is that a group of connected faces can
+    only connect by sharing an edge. It cannot connect to another
+    group 1) via an edge that already has 2 faces, or 2) via only
+    a vertex. The case (1) is covered by every edge having either
+    1 or 2 faces. So we only have to check for the second failure.
+
+    We do this by splitting components using vertex-connectedness,
+    and then splitting each component using edge-connectedness. If
+    a component has sub-components, then these are connected via a
+    vertex, which violates thes rule (that faces around a vertex
+    must be a fan or half-open fan).
+    """
+
+    # todo: cache these components somewhere, maybe we should force the user to have one instance per component?
+    component_labels1 = mesh_component_labels(faces, vertex2faces, via_edges_only=False)
+
+    component_labels2 = mesh_component_labels(faces, vertex2faces, via_edges_only=True)
+
+    return component_labels1.max() == component_labels2.max()
+
+
+class DynamicMeshData:
+    """An object that holds mesh data that can be modified in-place.
+    It has buffers that are oversized so the vertex and face array can
+    grow. When the buffer is full, a larger buffer is allocated. The
+    arrays are contiguous views onto the buffers. Modifications are
+    managed to keep the arrays without holes.
+    """
+
+    def __init__(self):
+        initial_size = 0
+
+        # Create the buffers
+        self._faces_buf = np.zeros((initial_size, 3), np.int32)
+        self._positions_buf = np.zeros((initial_size, 3), np.float32)
+        self._normals_buf = np.zeros((initial_size, 3), np.float32)
+        self._colors_buf = np.zeros((initial_size, 4), np.float32)
+        # todo: Maybe face colors are more convenient?
+
+        # Create array views
+        self._faces = self._faces_buf[:0]
+        self._positions = self._positions_buf[:0]
+        self._normals = self._normals_buf[:0]
+        self._colors = self._colors_buf[:0]
+
+        # Reverse map
+        self._vertex2faces = []  # vi -> {fi's}
+
+        self.version_verts = 0
+        self.version_faces = 0
+
+    @property
+    def faces(self):
+        # todo: return a readonly version
+        return self._faces
+
+    @property
+    def vertices(self):
+        # todo: return a readonly version
+        # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
+        return self._positions
+
+    def _allocate_faces_buffer(self, n):
+        # Sanity check
+        nfaces = len(self._faces)
+        assert n >= nfaces
+        # Allocate new array.
+        self._faces_buf = np.zeros((n, VERTICES_PER_FACE), np.int32)
+        # Copy the data and reset view
+        self._faces_buf[:nfaces, :] = self._faces
+        self._faces = self._faces_buf[:nfaces]
+
+    def _allocate_vertices_buffer(self, n):
+        # Sanity check
+        nverts = len(self._positions)
+        assert n >= nverts
+        # Allocate new arrays.
+        self._positions_buf = np.empty((n, 3), np.float32)
+        self._normals_buf = np.empty((n, 3), np.float32)
+        self._colors_buf = np.empty((n, 4), np.float32)
+        # Copy the data
+        self._positions_buf[:nverts, :] = self._positions
+        self._normals_buf[:nverts, :] = self._normals
+        self._colors_buf[:nverts, :] = self._colors
+        # Reset views
+        self._positions = self._positions_buf[:nverts]
+        self._normals = self._normals_buf[:nverts]
+        self._colors = self._colors_buf[:nverts]
+        # Resize reverse index
+        self._vertex2faces.extend(set() for i in range(n - nverts))
+
+    def _ensure_free_faces(self, n, resize_factor=1.5):
+        """Make sure that there are at least n free slots for faces.
+        If not, increase the total size of the array by resize_factor.
+        """
+        n = int(n)
+        assert n >= 1
+        assert resize_factor > 1
+        free_faces = len(self._faces_buf) - len(self._faces)
+
+        if free_faces < n:
+            new_size = max(
+                len(self._faces) + n, int(len(self._faces_buf) * resize_factor)
+            )
+            # print(f"Re-allocating faces array to {new_size} elements.")
+            self._allocate_faces_buffer(new_size)
+
+    def _ensure_free_vertices(self, n, resize_factor=1.5):
+        """Make sure that there are at least n free slots for vertices.
+        If not, increase the total size of the array by resize_factor.
+        """
+        n = int(n)
+        assert n >= 1
+        assert resize_factor > 1
+        free_vertices = len(self._positions_buf) - len(self._positions)
+
+        # todo: also reduce slots if below a certain treshold?
+        # To do this without remapping any indices (which we want to avoid, e.g. to keep undo working)
+        # we can only make the array as small as the largest index in use. But we can
+        # reorganize the array a bit (just a few moves) on each resample(), so that the arrays
+        # stay more or less tightly packed.
+
+        if free_vertices < n:
+            new_size = max(
+                len(self._positions) + n, int(len(self._positions_buf) * resize_factor)
+            )
+            # print(f"Re-allocating vertex array to {new_size} elements.")
+            self._allocate_vertices_buffer(new_size)
+
+    def _get_indices_to_delete(self, indices, what):
+        if isinstance(indices, int):
+            return [indices]
+        elif isinstance(indices, list):
+            return indices
+        elif isinstance(indices, np.ndarray):
+            if indices.ndim == 1 and indices.dtype.kind == "i":
+                return indices
+            # note: we could allow deleting faces/vertices via a view, but .. maybe not?
+            # elif indices.ndim == 2 and faces.shape[1] == 3 and faces.base is self._faces_buf:
+            #     addr0 = self._faces_buf.__array_interface__['data'][0]
+            #     addr1 = faces.__array_interface__['data'][0]
+
+        # Else
+        raise TypeError(
+            "The {what} to delete must be given as int, list, or 1D int array."
+        )
+
+    def delete_faces(self, face_indices):
+        to_delete = set(self._get_indices_to_delete(face_indices, "faces"))
+
+        nfaces1 = len(self._faces_buf)
+        nfaces2 = nfaces1 - len(to_delete)
+
+        to_maybe_move = set(range(nfaces2, nfaces1))  # these are for filling the holes
+        to_just_drop = to_maybe_move & to_delete  # but some of these may be at the end
+
+        indices1 = list(to_delete - to_just_drop)
+        indices2 = list(to_maybe_move - to_just_drop)
+        assert len(indices1) == len(indices2)
+
+        # Update reverse map
+        vertex2faces = self._vertex2faces
+        for fi in to_just_drop:
+            face = self._faces[fi]
+            vertex2faces[face[0]].discard(fi)
+            vertex2faces[face[1]].discard(fi)
+            vertex2faces[face[2]].discard(fi)
+        for fi1, fi2 in zip(indices1, indices2):
+            face = self._faces[fi1]
+            for i in range(3):
+                fii = vertex2faces[face[i]]
+                fii.discard(fi1)
+                fii.add(fi2)
+
+        # Move vertices from the end into the slots of the deleted vertices
+        self._faces[indices1] = self._faces[indices2]
+        # Adjust the array lengths (reset views)
+        self._faces_buf = self._faces_buf[:nfaces2]
+        # Tidy up
+        self._faces_buf[nfaces2:nfaces1] = 0
+
+        self.version_faces += 1
+
+    def delete_vertices(self, vertex_indices):
+        # Note: defragmenting when deleting vertices is somewhat expensive
+        # because we also need to update the faces. It'd likely be cheaper
+        # to let the vertex buffers contain holes, and fill these up as vertices
+        # are added. However, the current implementation also has advantages
+        # and I like that it works the same as for the faces. Some observations:
+        #
+        # - With a contiguous vertex array it is easy to check if faces are valid.
+        # - No nan checks anywhere.
+        # - Getting free slots for vertices is straightforward without
+        #   the need for additional structures like a set of free vertices.
+        # - The vertices and faces can at any moment be copied and be sound. No export needed.
+
+        to_delete = set(self._get_indices_to_delete(vertex_indices, "vertices"))
+
+        nverts1 = len(self._positions)
+        nverts2 = nverts1 - len(to_delete)
+
+        to_maybe_move = set(range(nverts2, nverts1))
+        to_just_drop = to_maybe_move & to_delete
+
+        indices1 = list(to_delete - to_just_drop)
+        indices2 = list(to_maybe_move - to_just_drop)
+        assert len(indices1) == len(indices2)
+
+        # Move vertices from the end into the slots of the deleted vertices
+        self._positions[indices1] = self._positions[indices2]
+        self._normals[indices1] = self._normals[indices2]
+        self._colors[indices1] = self._colors[indices2]
+
+        # Adjust the array lengths (reset views)
+        self._positions = self._positions_buf[:nverts2]
+        self._normals = self._normals_buf[:nverts2]
+        self._colors = self._colors_buf[:nverts2]
+
+        # Zero out the free slots, just to tidy up
+        self._positions_buf[nverts2:nverts1] = 0
+        self._normals_buf[nverts2:nverts1] = 0
+        self._colors_buf[nverts2:nverts1] = 0
+
+        # Update the faces that refer to the moved indices
+        for vi1, vi2 in zip(indices1, indices2):
+            self._faces[self._faces == vi1] = vi2
+
+        # Update reverse map
+        vertex2faces = self._vertex2faces
+        for vi in to_delete:
+            assert len(vertex2faces[vi]), "Trying to delete an in-use vertex."
+        for vi1, vi2 in zip(indices1, indices2):
+            vertex2faces[vi2] = vertex2faces[vi1]
+
+        self.version_verts += 1
+
+    def add_faces(self, new_faces):
+        # Check incoming array
+        faces = np.asarray(new_faces, np.int32)
+        if not (
+            isinstance(faces, np.ndarray)
+            and faces.ndim == 2
+            and faces.shape[1] == VERTICES_PER_FACE
+        ):
+            raise TypeError("Faces must be a Nx3 array")
+        # We want to be able to assume that there is at least one face, and 3 valid vertices
+        # (or 4 faces and 4 vertices for a closed mesh)
+        if len(faces) == 0:
+            raise ValueError("Cannot add zero faces.")
+        # Check sanity of the faces
+        if faces.min() < 0 or faces.max() >= len(self._positions):
+            raise ValueError(
+                "The faces array containes indices that are out of bounds."
+            )
+
+        n = len(faces)
+        n1 = len(self._faces)
+        n2 = n1 + n
+
+        self._ensure_free_faces(n)
+        self._faces = self._faces_buf[:n2]
+        self._faces[n1:] = faces
+
+        # Update reverse map
+        vertex2faces = self._vertex2faces
+        for i in range(len(faces)):
+            fi = i + n1
+            face = faces[i]
+            vertex2faces[face[0]].add(fi)
+            vertex2faces[face[1]].add(fi)
+            vertex2faces[face[2]].add(fi)
+
+        self.version_faces += 1
+
+    def add_vertices(self, new_positions):
+        # Check incoming array
+        positions = np.asarray(new_positions, np.float32)
+        if not (
+            isinstance(positions, np.ndarray)
+            and positions.ndim == 2
+            and positions.shape[1] == 3
+        ):
+            raise TypeError("Vertices must be a Nx3 array")
+        if len(positions) == 0:
+            raise ValueError("Cannot add zero vertices.")
+
+        n = len(positions)
+        n1 = len(self._positions)
+        n2 = n1 + n
+
+        self._ensure_free_vertices(n)
+        self._positions = self._positions_buf[:n2]
+        self._normals = self._normals_buf[:n2]
+        self._colors = self._colors_buf[:n2]
+
+        self._positions[n1:] = new_positions
+        self._normals[n1:] = 0.0
+        self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
+
+        # Update reverse map
+        vertex2faces = self._vertex2faces
+        for vi in range(n1, n2):
+            if len(vertex2faces[vi]) > 0:
+                print("WARNING: found faces referenced on stub vertices.")
+
+        self.version_verts += 1
+
+    # def allocate_faces(self, n):
+    #     """Add n new faces to the mesh. Return an nx3 array with the new faces,
+    #     which is a view on the faces buffer (so one can write to it).
+    #     """
+    #     n = int(n)
+    #     n1 = len(self._faces)
+    #     n2 = n1 + n
+    #
+    #     self._ensure_free_faces(n)
+    #     self._faces = self._faces_buf[:n2]
+    #     return self._faces[n1:]
+    #
+    # def allocate_vertices(self, n):
+    #     """Add n new vertices to the mesh. Return an nx3 array with the new positions,
+    #     which is a view on the positions buffer (so one can write to it).
+    #     """
+    #     n = int(n)
+    #     n1 = len(self._positions)
+    #     n2 = n1 + n
+    #
+    #     self._ensure_free_vertices(n)
+    #     self._positions = self._positions_buf[:n2]
+    #     self._normals = self._normals_buf[:n2]
+    #     self._colors = self._colors_buf[:n2]
+    #     return self._positions[n1:]
+
+
 # todo: better name
 class AbstractMesh:
+    """Representation of a mesh, with utilities to modify it.
+    The idea is that this can be subclassed to hook it up in a visualization
+    system (like pygfx), e.g. process updates in a granular way.
     """
-    A mesh object representing a closed mesh, plus utilities to work with such as mesh.
-    Implemented in a generic way ... though not sure how yet :)
-    """
 
-    def __init__(self, vertices, faces, oversize_factor=1.5):
-        # In this method we first initialize all used attributes. This
-        # serves mostly as internal docs.
+    def __init__(self, vertices, faces):
+        self._data = DynamicMeshData()
+        self._components = ()
 
-        # The counts of active faces and vertices.
-        self._nvertices = 0
-        self._nfaces = 0
-
-        # The number of slots for the face and vertex arrays.
-        self._nvertices_slots = 0  # >= _nvertices + VERTEX_OFFSET
-        self._nfaces_slots = 0  # >= _nfaces
-
-        # Array placeholders.
-        # Normals are used to determine surface curvature. Colors are
-        # used as a feedback mechanism to show what vertices participate
-        # in a morph.
-        self._vertices = None  # Nx3 float32 arrray
-        self._normals = None  # Nx3 float32 array
-        self._colors = None  # Nx4 float32 array
-        self._faces = None  # Nx3 int32 array
-
-        # We keep track of free slots using sets.
-        self._free_vertices = set()
-        self._free_faces = set()
-
-        # The reverse mapping. Is a list because the "rows" have variable size.
-        # This is probably the most important data structure of this module ...
-        self._vertex2faces = []  # list mapping vi -> [fi1, fi2, fi3, ...]
-
-        # We keep track of what has changed, so we can update efficiently to the GPU
-        self._dirty_vertices = set()
-        self._dirty_colors = set()
-        self._dirty_faces = set()
-
-        # todo: other attributes on the original that I'm not sure of ...
-        self._mesh_props = (
-            {}
-        )  # todo: this must be cleared whenever the topology has changed
-        self._meta = {}
-        self._gl_objects = None
-        self._version_count = 0
+        self._props = {}
+        self._props_faces = (
+            "is_edge_manifold",
+            "is_closed",
+            "is_oriented",
+            "component_labels",
+            "is_only_connected_by_edges",
+        )
+        self._props_verts = ()
+        self._props_verts_and_faces = "volume", "surface"
 
         # Delegate initialization
-        self.set_data(vertices, faces, oversize_factor)
+        self.add_mesh(vertices, faces)
+
+    def _check_prop(self, name):
+        assert name in self._props_faces or name in self._props_verts
+        if self._props.get("version_faces", 0) != self._data.version_faces:
+            self._props["version_faces"] = self._data.version_faces
+            for x in self._props_faces + self._props_verts_and_faces:
+                self._props.pop(x, None)
+        if self._props.get("version_verts", 0) != self._data.version_verts:
+            self._props["version_verts"] = self._data.version_verts
+            for x in self._props_verts + self._props_verts_and_faces:
+                self._props.pop(x, None)
+        return name in self._props
+
+    @property
+    def faces(self):
+        return self._data.faces
+
+    @property
+    def vertices(self):
+        return self._data.vertices
+
+    @property
+    def component_labels(self):
+        """A tuple of connected components that this mesh consists of."""
+        if not self._check_prop("component_labels"):
+            component_labels = mesh_component_labels(
+                self._data.faces, self._data._vertex2faces
+            )
+            self._props["component_labels"] = component_labels
+        return self._props["component_labels"]
+
+    @property
+    def is_connected(self):
+        """Whether the mesh is a single connected component."""
+        # todo: what should this value be if it consists of two parts connected by a single vertex?
+        return len(components) <= 1
 
     @property
     def is_edge_manifold(self):
@@ -90,9 +675,13 @@ class AbstractMesh:
         1 or 2 faces. It is one of the two condition for a mesh to be
         manifold. You could also call it weak-manifold, I suppose.
         """
-        if "is_edge_manifold" not in self._mesh_props:
-            self.check_edge_manifold_and_closed()
-        return self._mesh_props["is_edge_manifold"]
+        if not self._check_prop("is_edge_manifold"):
+            is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
+                self._data.faces
+            )
+            self._props["is_edge_manifold"] = is_edge_manifold
+            self._props["is_closed"] = is_closed
+        return self._props["is_edge_manifold"]
 
     @property
     def is_manifold(self):
@@ -103,9 +692,14 @@ class AbstractMesh:
         * Each edge is part of 1 or 2 faces.
         * The faces incident to a vertex form a closed or an open fan.
         """
-        if "is_only_connected_by_edges" not in self._mesh_props:
-            self.check_only_connected_by_edges()
-        return self.is_edge_manifold and self._mesh_props["is_only_connected_by_edges"]
+        if not self.is_edge_manifold:
+            return False
+        if not self._check_prop("is_only_connected_by_edges"):
+            is_only_connected_by_edges = check_only_connected_by_edges(
+                self._data.faces, self._data._vertex2faces
+            )
+            self._props["is_only_connected_by_edges"] = is_only_connected_by_edges
+        return self._props["is_only_connected_by_edges"]
 
     @property
     def is_closed(self):
@@ -115,9 +709,13 @@ class AbstractMesh:
         warning symbol. If this value is False, a warning with more
         info is shown in the console.
         """
-        if "is_closed" not in self._mesh_props:
-            self.check_edge_manifold_and_closed()
-        return self._mesh_props["is_closed"]
+        if not self._check_prop("is_closed"):
+            is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
+                self._data.faces
+            )
+            self._props["is_edge_manifold"] = is_edge_manifold
+            self._props["is_closed"] = is_closed
+        return self._props["is_closed"]
 
     @property
     def is_oriented(self):
@@ -126,11 +724,11 @@ class AbstractMesh:
         The mesh being orientable means that the face orientation (i.e. winding) is
         consistent - each two neighbouring faces have the same orientation.
         """
-        # The way we calculate orientedness, also implies edge-manifoldness.
         # todo: I think that a mesh can be edge_manifold, connected, but not manifold.
-        if "is_oriented" not in self._mesh_props:
-            self.check_oriented()
-        return self._mesh_props["is_oriented"]
+        if not self._check_prop("is_oriented"):
+            is_oriented = mesh_is_oriented(self._data.faces)
+            self._props["is_oriented"] = is_oriented
+        return self._props["is_oriented"]
 
     @property
     def is_volumetric(self):
@@ -176,294 +774,37 @@ class AbstractMesh:
 
     # %%
 
-    def set_data(self, vertices, faces, oversize_factor=1.5):
-        """Set the (new) vertex and face data.
+    def add_mesh(self, vertices, faces):
+        """Add vertex and face data.
 
-        The data is copied and the internal data structure is build up.
-        The winding of faces is automatically corrected where needed, and a warning
-        is shown if this was the case. The mesh is also validated for being closed.
-        If the mesh is not closed, a warning is shown for each offending face,
-        and the ``is_closed`` property is set to False.
+        The data is copied and the internal data structure.
         """
+        faces = np.asarray(faces, np.int32)
 
-        # Check incoming arrays
-        vertices = np.asarray(vertices)
-        faces = np.asarray(faces)
-        if not (
-            isinstance(vertices, np.ndarray)
-            and vertices.ndim == 2
-            and vertices.shape[1] == 3
-        ):
-            raise TypeError("Vertices must be a Nx3 array")
-        if not (
-            isinstance(faces, np.ndarray)
-            and faces.ndim == 2
-            and vertices.shape[1] == VERTICES_PER_FACE
-        ):
-            raise TypeError("Faces must be a Nx3 array")
-
-        # We want to be able to assume that there is at least one face, and 3 valid vertices
-        # (or 4 faces and 4 vertices for a closed mesh)
-        if not faces.size or not vertices.size:
-            raise ValueError("The mesh must have nonzero faces and vertices.")
-
-        # Check sanity of the faces
-        if faces.min() < 0 or faces.max() >= vertices.shape[0]:
+        # The DynamicMeshData class also does some checks, but it will
+        # only check if incoming faces match any vertex, not just the
+        # ones we add here, so we perform that check here.
+        if faces.min() < 0 or faces.max() >= len(vertices):
             raise ValueError(
                 "The faces array containes indices that are out of bounds."
             )
 
-        oversize_factor = max(1, oversize_factor or 1.5)
+        vertex_index_offset = len(self._data.vertices)
+        self._data.add_vertices(vertices)
+        self._data.add_faces(faces + vertex_index_offset)
 
-        # Set counts
-        self._nvertices = vertices.shape[0]
-        self._nfaces = faces.shape[0]
+    # todo: questions:
+    # Do we want to keep track of components?
+    # Is so, how would we keep track?
+    # If you add faces / vertices, would you add them to a specific component?
+    #  -> but what if you add stuff making it no longer connected??
+    #  -> and what if you add a face that connects two components?
+    #  -> this is a more general question: when you modify the mesh, it may be (temporary) non-manifold, un-closed, etc.
+    #  -> so even if you mark an added face as belonging to a specific component, we cannot really rely on it?
+    # Why would we want to keep track of components? How would we use it?
+    # In an UI you could show components in a list. Also e.g. highlight a specific component when selected, or make others transparent.
 
-        self._free_vertices = set()
-        self._free_faces = set()
-
-        self._allocate_vertices(
-            int(oversize_factor * self._nvertices),
-            vertices,
-            np.zeros((len(vertices), 4), np.float32),
-        )
-        self._allocate_faces(
-            int(oversize_factor * self._nfaces),
-            faces + VERTEX_OFFSET,
-        )
-
-        self._calculate_vertex2faces()
-
-    def _allocate_vertices(self, n, current_vertices=None, current_colors=None):
-        # Note: the first vertex is reserved as a dummy that empty faces
-        # point to. We could also let empty faces be -1, but then the
-        # lookup may not be well-defined. By making it point to a valid
-        # vertex, we can control its value more reliably.
-        # todo: I think we can handle that in the shader, so we can simplify the core by removing the offset
-
-        if current_vertices is None:
-            current_vertices = self._vertices[1:]
-        if current_colors is None:
-            current_colors = self._colors[1:]
-
-        n += VERTEX_OFFSET
-
-        # Sanity check
-        assert n >= len(current_vertices)
-        # Allocate new arrays.
-        self._nvertices_slots = n
-        self._vertices = np.empty((n, 3), np.float32)
-        self._normals = np.empty((n, 3), np.float32)
-        self._colors = np.empty((n, 4), np.float32)
-        # Copy the data
-        self._vertices[
-            VERTEX_OFFSET : len(current_vertices) + VERTEX_OFFSET, :
-        ] = current_vertices
-        self._colors[
-            VERTEX_OFFSET : len(current_colors) + VERTEX_OFFSET, :
-        ] = current_colors
-        # Nullify the free slots
-        self._vertices[:VERTEX_OFFSET, :] = np.NaN
-        self._vertices[len(current_vertices) + VERTEX_OFFSET :, :] = np.NaN
-        # Collect the free slots
-        self._free_vertices.update(range(len(current_vertices) + VERTEX_OFFSET, n))
-        # Mark for update
-        self._dirty_vertices.add("reset")
-        self._dirty_colors.add("reset")
-        # self.data_update()
-
-    def _allocate_faces(self, n, current_faces=None):
-        if current_faces is None:
-            current_faces = self._faces
-
-        # Sanity check
-        assert n >= len(current_faces)
-        # Allocate new array.
-        self._nfaces_slots = n
-        self._faces = np.empty((n, VERTICES_PER_FACE), np.int32)
-        # Copy the data
-        self._faces[0 : len(current_faces), :] = current_faces
-        # Nullify the free slots
-        self._faces[len(current_faces) :, :] = VERTEX_OFFSET - 1
-        # Collect the free slots
-        self._free_faces.update(range(len(current_faces), n))
-        # Mark for update
-        self._dirty_faces.add("reset")
-        # self.data_update()
-
-    def _calculate_vertex2faces(self):
-        """Do a full reset of the vertex2faces backward mapping array."""
-        faces = self._faces
-
-        # A vectorized version by Korijn that is much faster, but assumes that
-        # there are no holes:
-        #
-        # fidx = np.arange(self._nfaces_slots * 3, dtype="i4") // 3
-        # ff = faces.reshape(-1)
-        #
-        # remap = np.argsort(ff)
-        # fidxr = fidx[remap]
-        # ffr = ff[remap]
-        # shifts = np.flatnonzero(ffr[1:] - ffr[:-1]) + 1
-        #
-        # def get_faces(vi):
-        #     return [i for i in fidxr[shifts[vi+1]:shifts[vi+2]]]
-
-        # todo: what offers the best performance (at the right moment)?
-        # - A python list with lists?
-        # - A python list with arrays (would have to do an extra step here)?
-        # - An array with lists?
-        # - An array with arrays?
-
-        self._vertex2faces = vertex2faces = [[] for i in range(self._nvertices_slots)]
-
-        # self._vertex2faces = vertex2faces = np.empty(self._nvertices_slots, dtype=list)
-        # for vi in range(1, self._nvertices_slots):
-        #     vertex2faces[vi] = []
-
-        for fi in range(self._nfaces_slots):
-            face = faces[fi]
-            if face[0] < VERTEX_OFFSET:
-                continue  # empty slot
-            # Loop unrolling helps performance a bit
-            vertex2faces[face[0]].append(fi)
-            vertex2faces[face[1]].append(fi)
-            vertex2faces[face[2]].append(fi)
-
-    def _ensure_free_vertices(self, n, resize_factor=1.5):
-        """Make sure that there are at least n free slots for vertices.
-        If not, increase the total size of the array by resize_factor.
-        """
-        n = int(n)
-        assert n >= 1
-        assert resize_factor > 1
-
-        # todo: also reduce slots if below a certain treshold?
-        # To do this without remapping any indices (which we want to avoid, e.g. to keep undo working)
-        # we can only make the array as small as the largest index in use. But we can
-        # reorganize the array a bit (just a few moves) on each resample(), so that the arrays
-        # stay more or less tightly packed.
-
-        if len(self._free_vertices) < n:
-            nvertices_slots_new = max(
-                self._nvertices + n, int(self._nvertices_slots * resize_factor)
-            )
-            print(f"Re-allocating vertex array to {nvertices_slots_new} elements.")
-            self._allocate_vertices(nvertices_slots_new)
-
-    def _ensure_free_faces(self, n, resize_factor=1.5):
-        """Make sure that there are at least n free slots for faces.
-        If not, increase the total size of the array by resize_factor.
-        """
-        n = int(n)
-        assert n >= 1
-        assert resize_factor > 1
-
-        if len(self._free_faces) < n:
-            nfaces_slots_new = max(
-                self._nfaces + n, int(self._nfaces_slots * resize_factor)
-            )
-            print(f"Re-allocating faces array to {nfaces_slots_new} elements.")
-            self._allocate_faces(nfaces_slots_new)
-
-    def _get_free_vertices(self, n):
-        """Obtain a list of n fresh vertices for all your triangle-building needs!"""
-        self._ensure_free_vertices(n)
-        return [self._free_vertices.pop() for i in range(n)]
-
-    # %%
-    def check_edge_manifold_and_closed(self):
-        """Check whether the mesh is edge-manifold, and whether it is closed.
-
-        This is a (probably) much faster way to check that the mesh is edge-manifold.
-        It does not guarantee proper manifoldness though, since there can still be faces
-        that are attached via a single vertex.
-        """
-
-        # Select faces
-        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
-        faces = self._faces[valid_face_indices, :]
-
-        # Select edges
-        edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
-        edges = edges.reshape(-1, 2)
-        edges.sort(axis=1)  # note, sorting!
-
-        # This line is the performance bottleneck. It is not worth
-        # combining this method with e.g. check_oriented, because this
-        # line needs to be applied to different data, so the gain would
-        # be about zero.
-        edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
-        _, edge_counts = np.unique(edges_blob, return_counts=True)
-
-        # The mesh is edge-manifold if edges are shared at most by 2 faces.
-        is_edge_manifold = bool(edge_counts.max() <= 2)
-
-        # The mesh is closed if it has no edges incident to just once face.
-        # The following is equivalent to np.all(edge_counts == 2)
-        is_closed = is_edge_manifold and bool(edge_counts.min() == 2)
-
-        # Store and return
-        self._mesh_props["is_edge_manifold"] = is_edge_manifold
-        self._mesh_props["is_closed"] = is_closed
-        return is_edge_manifold, is_closed
-
-    def check_oriented(self):
-        """Check whether  the mesh is oriented. Also implies edge-manifoldness."""
-
-        # Select faces
-        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
-        faces = self._faces[valid_face_indices, :]
-
-        # Select edges. Note no sorting!
-        edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
-        edges = edges.reshape(-1, 2)
-
-        # The magic line
-        edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
-        _, edge_counts = np.unique(edges_blob, return_counts=True)
-
-        # If neighbouring faces have consistent winding, their edges
-        # are in opposing directions, so the unsorted edges should have
-        # no duplicates. Note that ths implies edge manifoldness,
-        # because if an edge is incident to more than 2 faces, one of
-        # the edges orientations would appear twice.
-        is_oriented = edge_counts.max() == 1
-
-        # Store and return
-        self._mesh_props["is_oriented"] = is_oriented
-        return is_oriented
-
-    def check_only_connected_by_edges(self):
-        """Check whether the mesh is only connected by edges.
-
-        This helps checking for manifoldness. The second condition is:
-        the faces incident to a vertex form a closed or an open fan.
-        Another way to say this is that a group of connected faces can
-        only connect by sharing an edge. It cannot connect to another
-        group 1) via an edge that already has 2 faces, or 2) via only
-        a vertex. The case (1) is covered by every edge having either
-        1 or 2 faces. So we only have to check for the second failure.
-
-        We do this by splitting components using vertex-connectedness,
-        and then splitting each component using edge-connectedness. If
-        a component has sub-components, then these are connected via a
-        vertex, which violates thes rule (that faces around a vertex
-        must be a fan or half-open fan).
-        """
-
-        # todo: cache these components somewhere, maybe we should force the user to have one instance per component?
-        components = self._split_components(None, via_edges_only=False)
-        is_only_connected_by_edges = True
-
-        for component in components:
-            subcomponents = self._split_components(component, via_edges_only=True)
-            if len(subcomponents) > 1:
-                is_only_connected_by_edges = False
-                break
-
-        self._mesh_props["is_only_connected_by_edges"] = is_only_connected_by_edges
-        return is_only_connected_by_edges
+    # %% could probably a functional API ?
 
     def repair_manifold(self):
         # Remove collapsed faces
@@ -748,49 +1089,6 @@ class AbstractMesh:
 
         return is_manifold, is_closed
 
-    def _split_components(self, face_indices=None, *, via_edges_only=True):
-        """Split the mesh in one or more connected components."""
-
-        # Performance notes:
-        # * Using a deque for the front increases performance a tiny bit.
-        # * Using set logic makes it a bit slower e.g.
-        #   `new_neighbour_faces = neighbour_faces.intersection(faces_to_check)`
-        # * Using a list for faces_in_this_component avoids having to cast to list later.
-
-        # Collect faces to check
-        if face_indices is None:
-            (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
-            faces_to_check = set(valid_face_indices)
-        else:
-            faces_to_check = set(face_indices)
-
-        # List of components, with each component being a list of face indices.
-        components = []
-
-        while len(faces_to_check) > 0:
-            # Create new front - once for each connected component in the mesh
-            fi_next = faces_to_check.pop()
-            faces_in_this_component = [fi_next]
-            front = queue.deque()
-            front.append(fi_next)
-
-            # Walk along the front until we find no more neighbours
-            while front:
-                fi_check = front.popleft()
-                neighbour_faces = self.get_neighbour_faces(
-                    fi_check, via_edges_only=via_edges_only
-                )
-                for fi in neighbour_faces:
-                    if fi in faces_to_check:
-                        faces_to_check.remove(fi)
-                        front.append(fi)
-                        faces_in_this_component.append(fi)
-
-            # We've now found one connected component (there may be more).
-            components.append(faces_in_this_component)
-
-        return components
-
     def _fix_stuff_deprecated(self):
         """Check that the mesh is closed.
 
@@ -973,18 +1271,12 @@ class AbstractMesh:
         It is assumed that the mesh is closed. If not, the result does
         not mean much. If the volume is negative, it is inside out.
         """
-        # This code is surprisingly fast, over 10x faster than the other
-        # checks. I also checked out skcg's computed_interior_volume,
-        # which uses Gauss' theorem of calculus, but that is
-        # considerably (~8x) slower.
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
-        valid_faces = self._faces[valid_face_indices]
-        return maybe_pylinalg.volume_of_closed_mesh(self._vertices, valid_faces)
+        return sum(c.get_volume() for c in self._components)
 
     def get_surface_area(self):
         # see skcg computed_surface_area
         # Or simply calculate area of each triangle (vectorized)
-        raise NotImplementedError()
+        return sum(c.get_surface_area() for c in self._components)
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""
@@ -999,8 +1291,8 @@ class AbstractMesh:
 
     def get_neighbour_vertices(self, vi):
         """Get a list of vertex indices that neighbour the given vertex index."""
-        faces = self._faces
-        vertices = self._vertices
+        faces = self._data.faces
+        vertices = self._data.vertices
         face_indices = self._vertex2faces[vi]
 
         neighbour_vertices = set(faces[face_indices].flat)
@@ -1039,7 +1331,7 @@ class AbstractMesh:
         if ref_pos.shape != (3,):
             raise ValueError("ref_pos must be a position (3 values).")
 
-        distances = np.linalg.norm(self._vertices - ref_pos, axis=1)
+        distances = np.linalg.norm(self.vertices - ref_pos, axis=1)
         vi = np.nanargmin(distances)
         return vi, distances[vi]
 
@@ -1047,7 +1339,7 @@ class AbstractMesh:
         """Given a reference vertex, select more nearby vertices (over the surface).
         Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
         """
-        vertices = self._vertices
+        vertices = self.vertices
         vi0 = int(ref_vertex)
         p0 = vertices[vi0]
         # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
@@ -1098,7 +1390,7 @@ if __name__ == "__main__":
     # geo = gfx.geometries.tetrahedron_geometry()
     geo = maybe_pygfx.smooth_sphere_geometry(1)
     # m = AbstractMesh(geo.positions.data, geo.indices.data)
-    m = AbstractMesh(*get_tetrahedron())
+    m = AbstractMesh(*get_tetrahedron()[:2])
 
     # m._check_manifold_nr1()
 

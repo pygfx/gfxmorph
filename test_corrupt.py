@@ -93,6 +93,7 @@ def test_corrupt_mesh11():
 
         m = MeshClass(vertices, faces)
 
+        assert not m.is_edge_manifold
         assert not m.is_manifold
         assert not m.is_closed
         assert not m.is_oriented

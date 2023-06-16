@@ -2,6 +2,7 @@ import time
 
 import maybe_pygfx
 import pygfx as gfx
+import meshmorph
 from meshmorph import AbstractMesh
 
 from skcg.core.mesh import Mesh
@@ -52,11 +53,13 @@ def benchmark():
             t.toc("init")
 
             t.tic()
-            m.check_edge_manifold_and_closed()
+            # m.check_edge_manifold_and_closed()
+            meshmorph.mesh_is_edge_manifold_and_closed(m.faces)
             t.toc("check_em_and_closed")
 
             t.tic()
-            m.check_oriented()
+            # m.check_oriented()
+            meshmorph.mesh_is_oriented(m.faces)
             t.toc("check_oriented")
 
             # t.tic()
@@ -64,12 +67,19 @@ def benchmark():
             # t.toc("check m c (depr)")
 
             t.tic()
-            m.check_only_connected_by_edges()
+            # m.check_only_connected_by_edges()
+            meshmorph.check_only_connected_by_edges(m.faces, m._data._vertex2faces)
             t.toc("check_fan")
 
             t.tic()
-            m._split_components()
+            # m._split_components()
+            meshmorph.mesh_component_labels(m.faces, m._data._vertex2faces)
             t.toc("Spit components")
+
+            t.tic()
+            # m._split_components()
+            meshmorph.ReverseFaceMap(m.faces)
+            t.toc("Build reverse map")
 
             t.tic()
             v = m.get_volume()
@@ -82,11 +92,11 @@ def benchmark():
 
             t.add_data("", "")
 
-            t.tic()
-            i, d = m.get_closest_vertex((0, 0, 0))
-            verts = m.select_vertices_over_surface(i, 65)
-            t.toc("Select vertices")
-            t.add_data("", len(verts))
+            # t.tic()
+            # i, d = m.get_closest_vertex((0, 0, 0))
+            # verts = m.select_vertices_over_surface(i, 65)
+            # t.toc("Select vertices")
+            # t.add_data("", len(verts))
 
         if False:
             t.add_data("", "")
