@@ -81,11 +81,11 @@ def benchmark():
             # but it looks like it'd be slooow ...
             t.tic()
             d = {}
-            edges =  m._data.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
+            edges = m._data.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
             edges.sort(axis=1)
             for i in range(len(edges)):
                 edge = tuple(edges[i])
-                d.setdefault(edge, []).append(i//3)
+                d.setdefault(edge, []).append(i // 3)
             t.toc("build edges dict")
 
             t.tic()

@@ -229,15 +229,38 @@ def get_neighbour_faces(faces, vertex2faces, fi, *, via_edges_only=False):
     return neighbour_faces
 
 
+def get_neighbour_faces1(faces, vertex2faces, fi):
+    """Get a list of face indices that neighbour the given face index."""
+    neighbour_faces = set()
+    for vi in faces[fi]:
+        neighbour_faces.update(vertex2faces[vi])
+    neighbour_faces.remove(fi)
+    return neighbour_faces
+
+
+def get_neighbour_faces2(faces, vertex2faces, fi):
+    neighbour_faces1 = set()
+    neighbour_faces2 = set()
+    for vi in faces[fi]:
+        for fi2 in vertex2faces[vi]:
+            if fi2 == fi:
+                pass
+            elif fi2 in neighbour_faces1:
+                neighbour_faces2.add(fi2)
+            else:
+                neighbour_faces1.add(fi2)
+    return neighbour_faces1, neighbour_faces2
+
+
 def mesh_component_labels(faces, vertex2faces, *, via_edges_only=True):
     """Split the mesh in one or more connected components."""
 
     # Performance notes:
     # * Using a deque for the front increases performance a tiny bit.
-    # * Using set logic makes it a bit slower e.g.
-    #   `new_neighbour_faces = neighbour_faces.intersection(faces_to_check)`
+    # * Using set logic makes rather then control flow does not seem to matter much.
+    # * The labels that we're interested in we set directly in an array
+    #   so we avoid the step to go from set -> list -> array labels.
 
-    # vertex2faces = ReverseFaceMap(faces)
     faces_to_check = set(range(len(faces)))
 
     # List of components, with each component being a list of face indices.
@@ -245,26 +268,50 @@ def mesh_component_labels(faces, vertex2faces, *, via_edges_only=True):
     component_labels = np.empty((len(faces),), np.int32)
     component_labels.fill(-1)
 
+    # Keep track of the single vertices that connect components
+    vertices_to_detach = {}
+
     while len(faces_to_check) > 0:
         # Create new front - once for each connected component in the mesh
         component_index += 1
+        faces_in_this_component = 0
         fi_next = faces_to_check.pop()
         front = queue.deque()
         front.append(fi_next)
+        connected_faces1 = {fi_next}
 
         # Walk along the front until we find no more neighbours
         while front:
             fi_check = front.popleft()
             component_labels[fi_check] = component_index
-            neighbour_faces = get_neighbour_faces(
-                faces, vertex2faces, fi_check, via_edges_only=via_edges_only
+            faces_in_this_component += 1
+            neighbour_faces1, neighbour_faces2 = get_neighbour_faces2(
+                faces, vertex2faces, fi_check
             )
-            for fi in neighbour_faces:
+            connected_faces1.update(neighbour_faces1)
+            for fi in neighbour_faces2:
                 if fi in faces_to_check:
                     faces_to_check.remove(fi)
                     front.append(fi)
 
-    return component_labels
+        # Check if there were any connections via just one vertex. If
+        # so, we do more work to find enough info about it to be able
+        # to repair it. We prioritize on making the above code fast,
+        # also if it makes the code below (for "corrupt" meshes) slower.
+        if len(connected_faces1) != faces_in_this_component:  # len(connected_faces2):
+            component_faces = set(np.where(component_labels == component_index)[0])
+            external_faces = list(connected_faces1.difference(component_faces))
+            component_vertices = set(faces[component_labels == component_index].flat)
+            external_vertices = set(faces[external_faces, :].flat)
+            linking_vertices = external_vertices & component_vertices
+            for vi in linking_vertices:
+                vertices_to_detach.setdefault(vi, []).append(component_index)
+
+    # Sanity check
+    for fi, component_indices in vertices_to_detach.items():
+        assert len(component_indices) >= 2
+
+    return component_labels, vertices_to_detach
 
 
 def check_only_connected_by_edges(faces, vertex2faces):
@@ -285,12 +332,13 @@ def check_only_connected_by_edges(faces, vertex2faces):
     must be a fan or half-open fan).
     """
 
+    component_labels, vertices_to_detach = mesh_component_labels(faces, vertex2faces)
+    return len(vertices_to_detach) == 0
+
     # todo: cache these components somewhere, maybe we should force the user to have one instance per component?
-    component_labels1 = mesh_component_labels(faces, vertex2faces, via_edges_only=False)
-
-    component_labels2 = mesh_component_labels(faces, vertex2faces, via_edges_only=True)
-
-    return component_labels1.max() == component_labels2.max()
+    # component_labels1 = mesh_component_labels(faces, vertex2faces, via_edges_only=False)
+    # component_labels2 = mesh_component_labels(faces, vertex2faces, via_edges_only=True)
+    # return component_labels1.max() == component_labels2.max()
 
 
 class DynamicMeshData:
@@ -666,7 +714,7 @@ class AbstractMesh:
     def component_labels(self):
         """A tuple of connected components that this mesh consists of."""
         if not self._check_prop("component_labels"):
-            component_labels = mesh_component_labels(
+            component_labels, _ = mesh_component_labels(
                 self._data.faces, self._data._vertex2faces
             )
             self._props["component_labels"] = component_labels
