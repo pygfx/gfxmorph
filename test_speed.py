@@ -76,6 +76,18 @@ def benchmark():
             meshmorph.mesh_component_labels(m.faces, m._data._vertex2faces)
             t.toc("Spit components")
 
+            # Time what it would take to build a dict of edges
+            # It could be nice to get neighbouring faces based on edges this way,
+            # but it looks like it'd be slooow ...
+            t.tic()
+            d = {}
+            edges =  m._data.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
+            edges.sort(axis=1)
+            for i in range(len(edges)):
+                edge = tuple(edges[i])
+                d.setdefault(edge, []).append(i//3)
+            t.toc("build edges dict")
+
             t.tic()
             # m._split_components()
             meshmorph.ReverseFaceMap(m.faces)

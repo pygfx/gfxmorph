@@ -318,7 +318,18 @@ class DynamicMeshData:
         self._colors = self._colors_buf[:0]
 
         # Reverse map
-        self._vertex2faces = []  # vi -> {fi's}
+        # This array is jagged, because the number of faces incident
+        # to one vertex can potentially be big (e.g. the top and bottom
+        # of a sphere sampled in lon/lat directions). We could use a
+        # numpy array of lists, which has the advantage that you can
+        # do `vertex2faces[multiple_indices].sum()`. However, benchmarks
+        # show that this is *slower* than a simple list of lists. A
+        # list of sets could also work, but is slightly slower.
+        #
+        # Other data structures are also possibe, e.g. one based on
+        # shifts. These structures can be build faster, but using them
+        # is slower due to the extra indirection.
+        self._vertex2faces = []  # vi -> [fi1, fi2, ..]
 
         self.version_verts = 0
         self.version_faces = 0
@@ -361,7 +372,7 @@ class DynamicMeshData:
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
         # Resize reverse index
-        self._vertex2faces.extend(set() for i in range(n - nverts))
+        self._vertex2faces.extend([] for i in range(n - nverts))
 
     def _ensure_free_faces(self, n, resize_factor=1.5):
         """Make sure that there are at least n free slots for faces.
@@ -436,15 +447,15 @@ class DynamicMeshData:
         vertex2faces = self._vertex2faces
         for fi in to_just_drop:
             face = self._faces[fi]
-            vertex2faces[face[0]].discard(fi)
-            vertex2faces[face[1]].discard(fi)
-            vertex2faces[face[2]].discard(fi)
+            vertex2faces[face[0]].remove(fi)
+            vertex2faces[face[1]].remove(fi)
+            vertex2faces[face[2]].remove(fi)
         for fi1, fi2 in zip(indices1, indices2):
             face = self._faces[fi1]
             for i in range(3):
                 fii = vertex2faces[face[i]]
-                fii.discard(fi1)
-                fii.add(fi2)
+                fii.remove(fi1)
+                fii.append(fi2)
 
         # Move vertices from the end into the slots of the deleted vertices
         self._faces[indices1] = self._faces[indices2]
@@ -540,9 +551,9 @@ class DynamicMeshData:
         for i in range(len(faces)):
             fi = i + n1
             face = faces[i]
-            vertex2faces[face[0]].add(fi)
-            vertex2faces[face[1]].add(fi)
-            vertex2faces[face[2]].add(fi)
+            vertex2faces[face[0]].append(fi)
+            vertex2faces[face[1]].append(fi)
+            vertex2faces[face[2]].append(fi)
 
         self.version_faces += 1
 
