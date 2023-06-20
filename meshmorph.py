@@ -29,6 +29,7 @@ VERTEX_OFFSET = 0
 
 
 def make_vertex2faces(faces):
+    """Create a simple map to map vertex indices to a list of face indices."""
     faces = np.asarray(faces)
     nverts = faces.max() + 1
 
@@ -72,7 +73,9 @@ def face_get_neighbours2(faces, vertex2faces, fi):
     return neighbour_faces1, neighbour_faces2
 
 
-def vertex_get_incident_face_groups(faces, vertex2faces, vi_check):
+def vertex_get_incident_face_groups(
+    faces, vertex2faces, vi_check, *, face_adjacency=None
+):
     """Get the groups of faces incident to the given vertex.
 
     If there are zero groups, the vertex has no incident faces. If there
@@ -121,22 +124,27 @@ def vertex_get_incident_face_groups(faces, vertex2faces, vi_check):
     # That component can still be edge-manifold, closed, and oriented.
 
     faces_to_check = set(vertex2faces[vi_check])
-
     groups = []
 
     while faces_to_check:
         group = []
         groups.append(group)
         fi_next = faces_to_check.pop()
-        front = {fi_next}
+        front = queue.deque()
+        front.append(fi_next)
         while front:
-            fi_check = front.pop()
+            fi_check = front.popleft()
             group.append(fi_check)
-            _, neighbour_faces2 = face_get_neighbours2(faces, vertex2faces, fi_check)
-            new_faces = neighbour_faces2 & faces_to_check
-            front.update(new_faces)
-            faces_to_check.difference_update(new_faces)
-
+            if face_adjacency is not None:
+                neighbour_faces2 = face_adjacency[fi_check]
+            else:
+                _, neighbour_faces2 = face_get_neighbours2(
+                    faces, vertex2faces, fi_check
+                )
+            for fi in neighbour_faces2:
+                if fi in faces_to_check:
+                    faces_to_check.remove(fi)
+                    front.append(fi)
     return groups
 
 
@@ -328,9 +336,17 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
     # suspicious_vertices = np.unique(faces)
     suspicious_vertices = set(faces.flat)
 
+    # Calculate face adjecency once beforehand, instead of 3x per face
+    face_adjacency = [None for _ in range(len(faces))]
+    for fi in range(len(faces)):
+        _, neighbour_faces2 = face_get_neighbours2(faces, vertex2faces, fi)
+        face_adjacency[fi] = neighbour_faces2
+
     vertices_to_detach = {}
     for vi in suspicious_vertices:
-        groups = vertex_get_incident_face_groups(faces, vertex2faces, vi)
+        groups = vertex_get_incident_face_groups(
+            faces, vertex2faces, vi, face_adjacency=face_adjacency
+        )
         if len(groups) > 1:
             vertices_to_detach[vi] = groups
 
