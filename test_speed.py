@@ -71,12 +71,6 @@ def benchmark():
             t.toc("check v-manifold")
 
             t.tic()
-            meshmorph.mesh_get_component_labels_and_nonmanifold_vertices(
-                m.faces, m._data._vertex2faces
-            )
-            t.toc("split and v-manifold")
-
-            t.tic()
             v = m.get_volume()
             t.toc("volume")
             t.add_data("", v)

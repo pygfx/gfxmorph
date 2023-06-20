@@ -10,7 +10,7 @@ import pytest
 import maybe_pygfx
 import meshmorph
 
-from testutils import iter_test_meshes, get_quad, get_sphere
+from testutils import iter_test_meshes, get_quad, get_sphere, iter_fans
 
 
 # Set to 1 to perform these tests on skcg, as a validation check
@@ -209,6 +209,42 @@ def test_corrupt_mesh16():
 
 
 def test_corrupt_mesh17():
+    # This tests a variety of fan compositions, and combinations
+    # thereof, to make sure that the vertex-manifold detection is sound.
+
+    # Note that in this test we assume that the algorithm to detect
+    # vertex-manifoldness only looks at the faces incident to the vertex
+    # in question, and e.g. does not consider neighbours of these faces
+    # (except the ones incident to the same vertex).
+
+    for faces1 in iter_fans():
+        for faces2 in iter_fans():
+            faces1 = np.array(faces1)
+            faces2 = np.array(faces2)
+            fan2_offset = faces1.max() + 1
+            faces = np.concatenate([faces1, faces2 + fan2_offset])
+
+            # Stub vertices
+            vertices = np.zeros((faces.max() + 1, 3), np.float32)
+
+            # Sanity check: adding individual meshes is manifold
+            m = MeshClass(vertices, faces)
+            assert m.is_edge_manifold
+            assert m.is_vertex_manifold
+            assert m.is_oriented
+            assert not m.is_closed
+
+            # Stitch them together
+            faces[faces == fan2_offset] = 0
+
+            m = MeshClass(vertices, faces)
+            assert m.is_edge_manifold
+            assert not m.is_vertex_manifold
+            assert m.is_oriented
+            assert not m.is_closed
+
+
+def test_corrupt_mesh18():
     """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
@@ -221,7 +257,7 @@ def test_corrupt_mesh17():
         assert not m.is_oriented
 
 
-def test_corrupt_mesh18():
+def test_corrupt_mesh19():
     """Collapse a face, but at the edge, so its still edge-manifold."""
 
     vertices, faces, _ = get_quad()

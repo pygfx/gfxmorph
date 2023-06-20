@@ -69,6 +69,34 @@ def get_strip():
     return vertices, faces, False
 
 
+def iter_fans():
+    """Produce a series of fans to test stuff on."""
+
+    # An open fan with 10 faces
+    open_fan = [
+        [0, 2, 1],
+        [0, 3, 2],
+        [0, 4, 3],
+        [0, 5, 4],
+        [0, 6, 5],
+        [0, 7, 6],
+        [0, 8, 7],
+        [0, 9, 8],
+        [0, 10, 9],
+        [0, 11, 10],
+    ]
+
+    # Open fans
+    for i in range(1, 11):
+        yield [x for x in open_fan[:i]]
+
+    # Closed fans
+    for i in range(2, 11):
+        fan = [x for x in open_fan[:i]]
+        fan.append([0, 1, fan[-1][1]])
+        yield fan
+
+
 def iter_test_meshes():
     yield get_tetrahedron()  # 4 vertices, 4 faces
     yield get_sphere()  # 32 vertices, 60 faces
