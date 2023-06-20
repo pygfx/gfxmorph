@@ -2,17 +2,12 @@
 #
 # Our internal arrays are larger than needed - we have free slots. This
 # is because we must be able to dynamically add and remove vertices and
-# faces. Further, we have one reserved vertex slot at index zero,
-# because we must be able to mark faces as unused and still point to a
-# valid vertex index.
-#
-# In the faces array, empty faces are denoted by setting its values to 0.
-# In the vertices array, empty vertices are denoted by setting its values to NaN.
-#
+# faces.
+
 # We always make a copy of the given data:
 # - so we control the dtype.
 # - we will change the values, avoid surprises by modifying given arrays.
-# - we need the first vertex to be empty.
+# - we need the first vertex to be empty. ---> not anymore
 # - we may want to initialize with some extra size.
 #
 # Vertex indices are denoted with vi, face indices with fi.
@@ -30,15 +25,77 @@ VERTICES_PER_FACE = 3
 VERTEX_OFFSET = 0
 
 
-# %% Functional stuff
+# %% Functions
+
+
+def face_get_neighbours1(faces, vertex2faces, fi):
+    """Get a set of face indices that neighbour the given face index.
+
+    Connectedness is either via an edge or via a vertex.
+    """
+    neighbour_faces = set()
+    for vi in faces[fi]:
+        neighbour_faces.update(vertex2faces[vi])
+    neighbour_faces.remove(fi)
+    return neighbour_faces
+
+
+def face_get_neighbours2(faces, vertex2faces, fi):
+    """Get two sets of face indices that neighbour the given face index.
+
+    The first comprises of both vertex- and edge connections, the second
+    only consists of faces connected via an edge.
+    """
+    neighbour_faces1 = set()
+    neighbour_faces2 = set()
+    for vi in faces[fi]:
+        for fi2 in vertex2faces[vi]:
+            if fi2 == fi:
+                pass
+            elif fi2 in neighbour_faces1:
+                neighbour_faces2.add(fi2)
+            else:
+                neighbour_faces1.add(fi2)
+    return neighbour_faces1, neighbour_faces2
+
+
+def vertex_get_incident_face_groups(faces, vertex2faces, vi_check):
+    """Get the groups of faces incident to the given vertex.
+
+    If there are zero groups, the vertex has no incident faces. If there
+    is exactly one group, the faces incident to the given vertex form
+    a (closed or open) fan. If there is more than one group, the mesh
+    is not manifold (and can be repaired by duplicating this vertex for
+    each group).
+    """
+
+    incident_faces = set(vertex2faces[vi_check])
+
+    groups = []
+
+    faces_to_check = set(incident_faces)
+    while faces_to_check:
+        group = []
+        groups.append(group)
+        fi_next = faces_to_check.pop()
+        front = {fi_next}
+        while front:
+            fi_check = front.pop()
+            group.append(fi_check)
+            neighbour_faces1, neighbour_faces2 = face_get_neighbours2(
+                faces, vertex2faces, fi_check
+            )
+            new_faces = neighbour_faces2 & faces_to_check
+            front.update(new_faces)
+            faces_to_check.difference_update(new_faces)
+
+    return groups
 
 
 def mesh_is_edge_manifold_and_closed(faces):
     """Check whether the mesh is edge-manifold, and whether it is closed.
 
-    This is a (probably) much faster way to check that the mesh is edge-manifold.
-    It does not guarantee proper manifoldness though, since there can still be faces
-    that are attached via a single vertex.
+    This implementation is based on vectorized numpy code and therefore and very fast.
     """
 
     # Select edges
@@ -64,7 +121,10 @@ def mesh_is_edge_manifold_and_closed(faces):
 
 
 def mesh_is_oriented(faces):
-    """Check whether  the mesh is oriented. Also implies edge-manifoldness."""
+    """Check whether  the mesh is oriented. Also implies edge-manifoldness.
+
+    This implementation is based on vectorized numpy code and therefore and very fast.
+    """
 
     # Select edges. Note no sorting!
     edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
@@ -86,11 +146,13 @@ def mesh_is_oriented(faces):
     return is_oriented
 
 
-def mesh_volume(vertices, faces):
+def mesh_get_volume(vertices, faces):
     """Calculate the volume of the mesh.
 
     It is assumed that the mesh is closed. If not, the result does
     not mean much. If the volume is negative, it is inside out.
+
+    This implementation is based on vectorized numpy code and therefore and very fast.
     """
     # This code is surprisingly fast, over 10x faster than the other
     # checks. I also checked out skcg's computed_interior_volume,
@@ -99,161 +161,17 @@ def mesh_volume(vertices, faces):
     return maybe_pylinalg.volume_of_closed_mesh(vertices, faces)
 
 
-def mesh_surface_area(vertices, faces):
+def mesh_get_surface_area(vertices, faces):
     # see skcg computed_surface_area
     # Or simply calculate area of each triangle (vectorized)
     raise NotImplementedError()
 
 
-# def _calculate_vertex2faces(self):
-#     """Do a full reset of the vertex2faces backward mapping array."""
-#     faces = self._faces
-#
-#     # todo: what offers the best performance (at the right moment)?
-#     # - A python list with lists?
-#     # - A python list with arrays (would have to do an extra step here)?
-#     # - An array with lists?
-#     # - An array with arrays?
-#
-#     self._vertex2faces = vertex2faces = [[] for i in range(self._nvertices_slots)]
-#
-#     # self._vertex2faces = vertex2faces = np.empty(self._nvertices_slots, dtype=list)
-#     # for vi in range(1, self._nvertices_slots):
-#     #     vertex2faces[vi] = []
-#
-#     for fi in range(self._nfaces_slots):
-#         face = faces[fi]
-#         if face[0] < VERTEX_OFFSET:
-#             continue  # empty slot
-#         # Loop unrolling helps performance a bit
-#         vertex2faces[face[0]].append(fi)
-#         vertex2faces[face[1]].append(fi)
-#         vertex2faces[face[2]].append(fi)
+def mesh_get_component_labels(faces, vertex2faces, *, via_edges_only=True):
+    """Split the mesh in one or more connected components.
 
-
-class ReverseFaceMap:
-    def __init__(self, faces):
-        faces = np.asarray(faces)
-        nfaces_slots = len(faces)
-        self.faces = faces  # meh
-
-        # fidx = np.arange(len(faces) * 3, dtype="i4") // 3
-        # ff = faces.reshape(-1)
-        #
-        # remap = np.argsort(ff)
-        # fidxr = fidx[remap]
-        # ffr = ff[remap]
-        # shifts = np.flatnonzero(ffr[1:] - ffr[:-1]) + 1
-
-        fidx = np.arange(nfaces_slots * 3, dtype="i4")
-        fidx //= 3
-        ff = faces.reshape(-1)
-        remap = np.argsort(ff)
-        fidxr = fidx[remap]
-        ffr = ff[remap]
-        shifts = ffr[1:] - ffr[:-1]
-        shifts_idx = np.flatnonzero(shifts)
-        # these are the SPLIT points
-        shifts_idx += 1
-        # vert_idx is the vertex index starting at each split point
-        vert_idx = np.concatenate([[ffr[0]], ffr[shifts_idx]])
-
-        nverts = faces.max()
-        padding = np.empty((nverts + 1 - len(shifts_idx),), np.int32)
-        padding.fill(len(fidxr) + 1)
-        shifts_idx = np.concatenate([[0], shifts_idx, padding])
-
-        self.fidxr = fidxr
-        self.shifts_idx = shifts_idx
-        self.vert_idx = vert_idx
-
-        # --
-
-        # self.vertex2faces = vertex2faces = [[] for i in range(faces.max()+1)]
-        #
-        # # self.vertex2faces = vertex2faces = np.empty(self._nvertices_slots, dtype=list)
-        # # for vi in range(1, self._nvertices_slots):
-        # #     vertex2faces[vi] = []
-        #
-        # for fi in range(len(faces)):
-        #     face = faces[fi]
-        #     vertex2faces[face[0]].append(fi)
-        #     vertex2faces[face[1]].append(fi)
-        #     vertex2faces[face[2]].append(fi)
-
-    def __getitem__(self, vi):
-        # return [i for i in self.fidxr[self.shifts[vi+1]:self.shifts[vi+2]]]
-
-        # return self.vertex2faces[vi]
-
-        shifts_idx = self.shifts_idx
-        fidxr = self.fidxr
-        # vert_idx = self.vert_idx
-
-        # # ignore zero
-        # if vi == 0:
-        #     return []
-        # vidx = vi
-        # vidx = np.searchsorted(vert_idx, vi)
-        # vertex unused
-        # if vert_idx[vidx] != vi:
-        #     return []
-        # special case start/end ranges
-        # if vidx == 0:
-        #     return fidxr[:shifts_idx[vidx]]
-        # if vidx == vert_idx.size - 1:
-        #     return fidxr[shifts_idx[vidx-1]:]
-        # return fidxr[shifts_idx[vidx-1]:shifts_idx[vidx]]
-        return fidxr[shifts_idx[vi] : shifts_idx[vi + 1]]
-
-
-def get_neighbour_faces(faces, vertex2faces, fi, *, via_edges_only=False):
-    """Get a list of face indices that neighbour the given face index."""
-
-    if via_edges_only:
-        neighbour_faces1 = set()
-        neighbour_faces2 = set()
-        for vi in faces[fi]:
-            for fi2 in vertex2faces[vi]:
-                if fi2 in neighbour_faces1:
-                    neighbour_faces2.add(fi2)
-                else:
-                    neighbour_faces1.add(fi2)
-        neighbour_faces = neighbour_faces2
-    else:
-        neighbour_faces = set()
-        for vi in faces[fi]:
-            neighbour_faces.update(vertex2faces[vi])
-
-    neighbour_faces.discard(fi)
-    return neighbour_faces
-
-
-def get_neighbour_faces1(faces, vertex2faces, fi):
-    """Get a list of face indices that neighbour the given face index."""
-    neighbour_faces = set()
-    for vi in faces[fi]:
-        neighbour_faces.update(vertex2faces[vi])
-    neighbour_faces.remove(fi)
-    return neighbour_faces
-
-
-def get_neighbour_faces2(faces, vertex2faces, fi):
-    neighbour_faces1 = set()
-    neighbour_faces2 = set()
-    for vi in faces[fi]:
-        for fi2 in vertex2faces[vi]:
-            if fi2 == fi:
-                pass
-            elif fi2 in neighbour_faces1:
-                neighbour_faces2.add(fi2)
-            else:
-                neighbour_faces1.add(fi2)
-    return neighbour_faces1, neighbour_faces2
-
-
-def mesh_component_labels(faces, vertex2faces, *, via_edges_only=True):
-    """Split the mesh in one or more connected components."""
+    Returns a 1D array that contains component indices for all faces.
+    """
 
     # Performance notes:
     # * Using a deque for the front increases performance a tiny bit.
@@ -263,82 +181,273 @@ def mesh_component_labels(faces, vertex2faces, *, via_edges_only=True):
 
     faces_to_check = set(range(len(faces)))
 
-    # List of components, with each component being a list of face indices.
-    component_index = -1
+    # Array to store component labels. (Using list vs array does not seem to affect performance.)
     component_labels = np.empty((len(faces),), np.int32)
     component_labels.fill(-1)
-
-    # Keep track of the single vertices that connect components
-    vertices_to_detach = {}
+    component_index = -1
 
     while len(faces_to_check) > 0:
         # Create new front - once for each connected component in the mesh
         component_index += 1
-        faces_in_this_component = 0
         fi_next = faces_to_check.pop()
         front = queue.deque()
         front.append(fi_next)
-        connected_faces1 = {fi_next}
 
-        # Walk along the front until we find no more neighbours
         while front:
             fi_check = front.popleft()
             component_labels[fi_check] = component_index
-            faces_in_this_component += 1
-            neighbour_faces1, neighbour_faces2 = get_neighbour_faces2(
+
+            if via_edges_only:
+                _, neighbour_faces = face_get_neighbours2(faces, vertex2faces, fi_check)
+            else:
+                neighbour_faces = face_get_neighbours1(faces, vertex2faces, fi_check)
+
+            for fi in neighbour_faces:
+                if fi in faces_to_check:
+                    faces_to_check.remove(fi)
+                    front.append(fi)
+
+    return component_labels
+
+
+def mesh_get_non_manifold_vertices(faces, vertex2faces):
+    """Detect non-manifold vertices.
+
+    These are returned as a dict ``vi -> [[fi1, fi2, ..], [fi3, fi4, ...]]``.
+    It maps vertex indices to a list of face-index-groups, each
+    representing a fan attached to the vertex. I.e. to repair the vertex,
+    a duplicate vertex must be created for each group (except one).
+
+    If the returned dictionary is empty, the mesh is vertex-manifold.
+    On other words, for each vertex, the faces incident to that vertex
+    form a closed or an open fan.
+
+    This implementation literally performs this test for each vertex.
+    This makes it somewhat slow, but still has value (at least for now)
+    as a reference implementation. Use ``mesh_get_non_manifold_vertices_fast``
+    which performs some tricks to get the same information faster.
+    """
+
+    suspicious_vertices = np.unique(faces)
+
+    vertices_to_detach = {}
+    for vi in suspicious_vertices:
+        groups = vertex_get_incident_face_groups(faces, vertex2faces, vi)
+        if len(groups) > 1:
+            vertices_to_detach[vi] = groups
+
+    return vertices_to_detach
+
+
+def mesh_get_non_manifold_vertices_fast(faces, vertex2faces):
+    """A faster version of ``mesh_get_non_manifold_vertices``.
+
+    This implements a way to detect possibly non-manifold faces, and then
+    only properly checks these candidates. It turns out that this
+    combines really well with splitting the mesh, getting the split
+    basically for free, using
+    ``mesh_get_component_labels_and_nonmanifold_vertices``.
+    """
+
+    vertex_hit_counts = [0 for _ in range(faces.max() + 1)]
+
+    for fi_check in range(len(faces)):
+        neighbour_faces1 = set()
+        neighbour_faces2 = set()
+        vii = faces[fi_check]
+        for vi in vii:
+            for fi2 in vertex2faces[vi]:
+                if fi2 == fi_check:
+                    continue
+                elif fi2 in neighbour_faces1:
+                    neighbour_faces2.add(fi2)
+                else:
+                    neighbour_faces1.add(fi2)
+
+        if neighbour_faces1:
+            multiplier = 1 / (0.1 + len(neighbour_faces2))
+            # if not neighbour_faces2:
+            #     multiplier *= 4
+            for vi in vii:
+                for fi2 in vertex2faces[vi]:
+                    if fi2 == fi_check:
+                        continue
+                    if fi2 in neighbour_faces2:
+                        vertex_hit_counts[vi] += multiplier
+                    else:
+                        vertex_hit_counts[vi] -= 0.5 * multiplier
+
+    vertex_hit_counts = np.array(vertex_hit_counts, np.float32)
+    suspicious_vertices = np.where(vertex_hit_counts < 0)[0]
+
+    vertices_to_detach = {}
+    for vi in suspicious_vertices:
+        groups = vertex_get_incident_face_groups(faces, vertex2faces, vi)
+        if len(groups) > 1:
+            vertices_to_detach[vi] = groups
+
+    return vertices_to_detach
+
+
+def mesh_get_component_labels_and_nonmanifold_vertices(faces, vertex2faces):
+    """Split the mesh and get non-manifold vertices
+
+    This combines ``mesh_get_component_labels`` and ``mesh_get_non_manifold_vertices_fast``
+    into one pass that is about as fast as ``mesh_get_non_manifold_vertices_fast``.
+    """
+
+    # Performance notes:
+    # * Using a deque for the front increases performance a tiny bit.
+    # * Using set logic makes rather then control flow does not seem to matter much.
+    # * The labels that we're interested in we set directly in an array
+    #   so we avoid the step to go from set -> list -> array labels.
+
+    #
+    #   Diagram 1           Diagram 2
+    #   _________                ____
+    #  |\       /|              |   /|
+    #  | \  D  / |              |D / |
+    #  |  \   /  |              | /  |
+    #  |   \ /   |              |/ C |
+    #  | B  O  C |              O----|
+    #  |   / \   |              |\ B |
+    #  |  /   \  |              | \  |
+    #  | /  A  \ |              |A \ |
+    #  |/_______\|              |___\|
+    #
+    #
+    #   Diagram 3           Diagram 4
+    #   _________                ____
+    #  |\       /|              |   /|
+    #  | \  D  / | _      _     |D / |
+    #  |  \   / _|- |    | -._  | /  |
+    #  |   \ /.- | E|    |E   -.|/ C |
+    #  | B  O----|--|    |------O----|
+    #  |   / \ C |              |\ B |
+    #  |  /   \  |              | \  |
+    #  | /  A  \ |              |A \ |
+    #  |/_______\|              |___\|
+    #
+    #
+    # In the two diagrams above, the vertex indicated by the big O is
+    # the reference vertex. On the left (diagram 1 and 3) we see a
+    # closed fan, and on the right (diagram 2 and 4) an open fan. In
+    # the top diagrams all is well, but in the bottom diagrams (3 and
+    # 4) there is an additional face E attached to the vertex, breaking
+    # the manifold condition. Note that it does not matter whether E
+    # is a lose vertex, part of a strip, or part of an (otherwise)
+    # manifold and closed component. Note also that E can even be a
+    # face on the same component that faces a-d are part of. That
+    # component can still be edge-manifold, closed, and oriented.
+    #
+    # The bottom cases can be detected using
+    # ``vertex_get_incident_face_groups``, but doing this for each
+    # vertex is slow, because by checking each vertex, the neighbours of
+    # each face are queried three times! The algorithm it uses looks a
+    # bit like the one we use to walk over the surface to find connected
+    # components. As it turns out, we can perform a little trick to
+    # detect these cases as we walk over the surface, making it much
+    # faster, and safing some overhead because we split components at
+    # the same time.
+    #
+    # The caveat is that we may find a few false positives - faces that
+    # look suspicious but on closer examination are just fine. That's
+    # one of the reason that we check the vertices of all suspicious
+    # faces using ``vertex_get_incident_face_groups``. The other reason
+    # we do this is that it provides the information required to detach
+    # the faces and make the mesh manifold.
+    #
+    # So now let's talk about the trick. The below algorithm walks over the surface via the faces.
+    # For each face we step on, we query the neighbours, but distinguish between
+    # direct neighbours that are connected via an edge, and neighbours that are only
+    # connected via a vertex. E.g. if we examine face A in the diagrams, face B is a direct neighbour (as is C in diagram 1), and D is a "distant neighbour".
+    #
+    # The
+    #  ---> hee wacht even, als je bij B ziet dat D een directe buur is,
+    #       moet je dan niet checken dat B ook een (directe of indirecte) buur van A is??
+    #
+    # Let n1 be the number of faces that lie in a fan (open or closed) on one side
+    # of a non-manifold-vertex, and n2 the number of faces in a fan on the other side.
+    #
+    # Every face sees on one side sees all faces "on the other side", and all faces on the
+    # other side see it as well.
+    # indirect_neighbour_count = n1 * n2 * 2
+    # direct_neighbour_count = n1 * 2 + n2 * 2
+    #
+    # It's easy to see that for high numbers of n1 and n2, the number of indirect
+    # neighbours exceeds the number of direct neigbours.
+    #
+    # However, for n1 == 1, we get `n2 * 2` vs ` + `n2 * 2 + 2`. This case is
+    # easily fixed: if we find a face without direct neighbours we can easily increase
+    # its contribution to the vertex count, because we know that any of its vertices that are
+    # incident to other faces are non-manifold.
+    #
+    # For `n1 == 2`, we get `n2 * 4`  vs `n2 *2 + 4`. This yields equal results if n2 is also 2, but
+    # for higher values of n2, the indirect count is higher.
+    #
+    # If multiple fans are incident to one vertex (i.e. the vertex is "multi-non-manifold")
+    # one can see that the numbers lean even faster in the direction of the indirect count.
+    #
+    # Looking at faces surrounding a manifold vertex, imagine one with 6 faces:
+    # indirect_count is `3 * 6 = 18` vs direct count `2 * 6 = 12`. Do we have room
+    # to increase the weight of the direct count by 1.5?
+
+    faces_to_check = set(range(len(faces)))
+
+    # List of components, with each component being a list of face indices.
+    component_index = -1
+
+    # Array to store component labels. (Using list vs array does not seem to affect performance.)
+    component_labels = np.empty((len(faces),), np.int32)
+    component_labels.fill(-1)
+
+    # List to store vertex hit counts.
+    # Surprisingly, if I use a numpy array to store the hit counts, this whole algorithm is 5x slower
+    vertex_hit_counts = [0 for _ in range(faces.max() + 1)]
+
+    while len(faces_to_check) > 0:
+        # Create new front - once for each connected component in the mesh
+        component_index += 1
+        fi_next = faces_to_check.pop()
+        front = queue.deque()
+        front.append(fi_next)
+
+        while front:
+            fi_check = front.popleft()
+            component_labels[fi_check] = component_index
+
+            vii = faces[fi_check]
+            neighbour_faces1, neighbour_faces2 = face_get_neighbours2(
                 faces, vertex2faces, fi_check
             )
-            connected_faces1.update(neighbour_faces1)
+
+            if neighbour_faces1:
+                multiplier = 1 / (0.1 + len(neighbour_faces2))
+                # if not neighbour_faces2:
+                #     multiplier *= 4
+                for vi in vii:
+                    for fi2 in vertex2faces[vi]:
+                        if fi2 == fi_check:
+                            continue
+                        if fi2 in neighbour_faces2:
+                            vertex_hit_counts[vi] += multiplier
+                        else:
+                            vertex_hit_counts[vi] -= 0.5 * multiplier
+
             for fi in neighbour_faces2:
                 if fi in faces_to_check:
                     faces_to_check.remove(fi)
                     front.append(fi)
 
-        # Check if there were any connections via just one vertex. If
-        # so, we do more work to find enough info about it to be able
-        # to repair it. We prioritize on making the above code fast,
-        # also if it makes the code below (for "corrupt" meshes) slower.
-        if len(connected_faces1) != faces_in_this_component:  # len(connected_faces2):
-            component_faces = set(np.where(component_labels == component_index)[0])
-            external_faces = list(connected_faces1.difference(component_faces))
-            component_vertices = set(faces[component_labels == component_index].flat)
-            external_vertices = set(faces[external_faces, :].flat)
-            linking_vertices = external_vertices & component_vertices
-            for vi in linking_vertices:
-                vertices_to_detach.setdefault(vi, []).append(component_index)
-
-    # Sanity check
-    for fi, component_indices in vertices_to_detach.items():
-        assert len(component_indices) >= 2
+    vertex_hit_counts = np.array(vertex_hit_counts, np.int32)
+    # print((vertex_hit_counts<0).sum())
+    vertices_to_detach = {}
+    for vi in np.where(vertex_hit_counts < 0)[0]:
+        groups = vertex_get_incident_face_groups(faces, vertex2faces, vi)
+        if len(groups) > 1:
+            vertices_to_detach[vi] = groups
 
     return component_labels, vertices_to_detach
-
-
-def check_only_connected_by_edges(faces, vertex2faces):
-    """Check whether the mesh is only connected by edges.
-
-    This helps checking for manifoldness. The second condition is:
-    the faces incident to a vertex form a closed or an open fan.
-    Another way to say this is that a group of connected faces can
-    only connect by sharing an edge. It cannot connect to another
-    group 1) via an edge that already has 2 faces, or 2) via only
-    a vertex. The case (1) is covered by every edge having either
-    1 or 2 faces. So we only have to check for the second failure.
-
-    We do this by splitting components using vertex-connectedness,
-    and then splitting each component using edge-connectedness. If
-    a component has sub-components, then these are connected via a
-    vertex, which violates thes rule (that faces around a vertex
-    must be a fan or half-open fan).
-    """
-
-    component_labels, vertices_to_detach = mesh_component_labels(faces, vertex2faces)
-    return len(vertices_to_detach) == 0
-
-    # todo: cache these components somewhere, maybe we should force the user to have one instance per component?
-    # component_labels1 = mesh_component_labels(faces, vertex2faces, via_edges_only=False)
-    # component_labels2 = mesh_component_labels(faces, vertex2faces, via_edges_only=True)
-    # return component_labels1.max() == component_labels2.max()
 
 
 class DynamicMeshData:
@@ -683,6 +792,7 @@ class AbstractMesh:
             "is_oriented",
             "component_labels",
             "is_only_connected_by_edges",
+            "nonmanifold_vertices",
         )
         self._props_verts = ()
         self._props_verts_and_faces = "volume", "surface"
@@ -714,25 +824,29 @@ class AbstractMesh:
     def component_labels(self):
         """A tuple of connected components that this mesh consists of."""
         if not self._check_prop("component_labels"):
-            component_labels, _ = mesh_component_labels(
+            (
+                component_labels,
+                nonmanifold_vertices,
+            ) = mesh_get_component_labels_and_nonmanifold_vertices(
                 self._data.faces, self._data._vertex2faces
             )
             self._props["component_labels"] = component_labels
+            self._props["nonmanifold_vertices"] = nonmanifold_vertices
         return self._props["component_labels"]
 
     @property
     def is_connected(self):
         """Whether the mesh is a single connected component."""
-        # todo: what should this value be if it consists of two parts connected by a single vertex?
-        return len(components) <= 1
+        # Note that connectedness is defined as going via edges, not vertices.
+        return self.component_labels.max() == 0
 
     @property
     def is_edge_manifold(self):
-        """Whether the mesh is edge_manifold.
+        """Whether the mesh is edge-manifold.
 
-        This is another way of saying that each edge is part of either
+        A mesh being edge-manifold means that each edge is part of either
         1 or 2 faces. It is one of the two condition for a mesh to be
-        manifold. You could also call it weak-manifold, I suppose.
+        manifold.
         """
         if not self._check_prop("is_edge_manifold"):
             is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
@@ -743,22 +857,27 @@ class AbstractMesh:
         return self._props["is_edge_manifold"]
 
     @property
-    def is_manifold(self):
-        """Whether the mesh is manifold.
+    def is_vertex_manifold(self):
+        """Whether the mesh is vertex-manifold.
 
-        The mesh being manifold means that:
-
-        * Each edge is part of 1 or 2 faces.
-        * The faces incident to a vertex form a closed or an open fan.
+        A mesh being vertex-manifold means that each for each vertex, the
+        faces incident to that vertex form a single (closed or open) fan.
         """
-        if not self.is_edge_manifold:
-            return False
-        if not self._check_prop("is_only_connected_by_edges"):
-            is_only_connected_by_edges = check_only_connected_by_edges(
+        if not self._check_prop("nonmanifold_vertices"):
+            (
+                component_labels,
+                nonmanifold_vertices,
+            ) = mesh_get_component_labels_and_nonmanifold_vertices(
                 self._data.faces, self._data._vertex2faces
             )
-            self._props["is_only_connected_by_edges"] = is_only_connected_by_edges
-        return self._props["is_only_connected_by_edges"]
+            self._props["component_labels"] = component_labels
+            self._props["nonmanifold_vertices"] = nonmanifold_vertices
+        return len(self._props["nonmanifold_vertices"]) == 0
+
+    @property
+    def is_manifold(self):
+        """Whether the mesh is manifold (both edge- and vertex-manifold)."""
+        return self.is_edge_manifold and self.is_vertex_manifold
 
     @property
     def is_closed(self):
@@ -984,7 +1103,7 @@ class AbstractMesh:
             while len(front) > 0:
                 fi_check = front.popleft()
                 vi1, vi2, vi3 = faces[fi_check]
-                for fi in self.get_neighbour_faces(fi_check, via_edges_only=True):
+                for fi in self.face_get_neighbours(fi_check, via_edges_only=True):
                     if fi in faces_to_check:
                         faces_to_check.remove(fi)
                         front.append(fi)
@@ -1196,7 +1315,7 @@ class AbstractMesh:
                 fi_check = front.popleft()
                 vi1, vi2, vi3 = faces[fi_check]
                 neighbour_per_edge = [0, 0, 0]
-                for fi in self.get_neighbour_faces(fi_check):
+                for fi in self.face_get_neighbours(fi_check):
                     vj1, vj2, vj3 = faces[fi]
                     matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
                     if len(matching_vertices) == 3:
@@ -1361,7 +1480,7 @@ class AbstractMesh:
         return neighbour_vertices
         # return np.array(neighbour_vertices, np.int32)
 
-    def get_neighbour_faces(self, fi, *, via_edges_only=False):
+    def face_get_neighbours(self, fi, *, via_edges_only=False):
         """Get a list of face indices that neighbour the given face index."""
 
         vertex2faces = self._vertex2faces

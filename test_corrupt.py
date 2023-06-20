@@ -185,17 +185,27 @@ def test_corrupt_mesh16():
         (0, 21),  # one vertex in between
     ]
 
-    for vi1, vi2 in vertex_pairs:
-        vertices, faces, _ = get_sphere()
-        faces = np.asarray(faces, np.int32)
-        faces[faces == vi2] = vi1
+    vertices, faces, _ = get_sphere()
 
-        m = MeshClass(vertices, faces)
+    failed = []
+    for index_to_start_from in range(len(faces)):
+        for vi1, vi2 in vertex_pairs:
+            vertices, faces, _ = get_sphere()
+            faces = np.asarray(faces, np.int32)
+            faces[faces == vi2] = vi1
+            faces[0], faces[index_to_start_from] = tuple(
+                faces[index_to_start_from]
+            ), tuple(faces[0])
 
-        assert m.is_edge_manifold
-        assert not m.is_manifold
-        assert m.is_closed
-        assert m.is_oriented
+            m = MeshClass(vertices, faces)
+
+            assert m.is_edge_manifold
+            assert not m.is_manifold
+            if m.is_manifold:
+                failed.append(index_to_start_from)
+            assert m.is_closed
+            assert m.is_oriented
+    # print(failed)
 
 
 def test_corrupt_mesh17():

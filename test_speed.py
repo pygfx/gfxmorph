@@ -55,52 +55,31 @@ def benchmark():
             t.tic()
             # m.check_edge_manifold_and_closed()
             meshmorph.mesh_is_edge_manifold_and_closed(m.faces)
-            t.toc("check_em_and_closed")
+            t.toc("check e-manifold & closed")
 
             t.tic()
             # m.check_oriented()
             meshmorph.mesh_is_oriented(m.faces)
-            t.toc("check_oriented")
-
-            # t.tic()
-            # m.check_manifold_closed_deprecated()
-            # t.toc("check m c (depr)")
+            t.toc("check oriented")
 
             t.tic()
-            # m.check_only_connected_by_edges()
-            meshmorph.check_only_connected_by_edges(m.faces, m._data._vertex2faces)
-            t.toc("check_fan")
+            meshmorph.mesh_get_component_labels(m.faces, m._data._vertex2faces)
+            t.toc("split components")
 
             t.tic()
-            # m._split_components()
-            meshmorph.mesh_component_labels(m.faces, m._data._vertex2faces)
-            t.toc("Spit components")
-
-            # Time what it would take to build a dict of edges
-            # It could be nice to get neighbouring faces based on edges this way,
-            # but it looks like it'd be slooow ...
-            t.tic()
-            d = {}
-            edges = m._data.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
-            edges.sort(axis=1)
-            for i in range(len(edges)):
-                edge = tuple(edges[i])
-                d.setdefault(edge, []).append(i // 3)
-            t.toc("build edges dict")
+            meshmorph.mesh_get_non_manifold_vertices(m.faces, m._data._vertex2faces)
+            t.toc("check v-manifold")
 
             t.tic()
-            # m._split_components()
-            meshmorph.ReverseFaceMap(m.faces)
-            t.toc("Build reverse map")
+            meshmorph.mesh_get_component_labels_and_nonmanifold_vertices(
+                m.faces, m._data._vertex2faces
+            )
+            t.toc("split and v-manifold")
 
             t.tic()
             v = m.get_volume()
             t.toc("volume")
             t.add_data("", v)
-
-            # t.tic()
-            # m._fix_stuff()
-            # t.toc("_fix_stuff")
 
             t.add_data("", "")
 
@@ -151,7 +130,7 @@ def benchmark():
     for row in zip(*columns):
         titles = [x[0] for x in row]
         assert len(set(titles)) == 1, "expected titles to match"
-        print(titles[0].rjust(24), *[x[1].rjust(10) for x in row])
+        print(titles[0].rjust(32), *[x[1].rjust(10) for x in row])
 
 
 def benchmark_sphere():
