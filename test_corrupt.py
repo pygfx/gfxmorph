@@ -128,7 +128,7 @@ def test_non_manifold_add_face_1():
 def test_non_manifold_add_face_2():
     """Add a duplicate face to the mesh. Some edges will now have 3 faces."""
 
-    for vertices, faces, _ in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         faces.append(faces[0])
 
         m = MeshClass(vertices, faces)
@@ -162,6 +162,8 @@ def test_non_manifold_add_face_4():
     # skcg to turn the test on.
 
     for vertices, faces, _ in iter_test_meshes():
+        # Break it
+
         vertices.append([1, 2, 3])
         vertices.append([2, 3, 4])
         faces.append([faces[0][0], len(vertices) - 2, len(vertices) - 1])
@@ -174,6 +176,14 @@ def test_non_manifold_add_face_4():
         assert not m.is_closed  # not closed because the added face is not
         assert m.is_oriented
 
+        # Repair it
+
+        m.repair_vertex_manifold()
+
+        assert m.is_manifold
+        assert not m.is_closed
+        assert m.is_oriented
+
 
 def test_non_manifold_add_face_5():
     """Add one face to the mesh, using one extra vertex, connected via two vertices (no edges)."""
@@ -182,6 +192,8 @@ def test_non_manifold_add_face_5():
         # Cannot do this on quad and tetrahedron
         if len(vertices) <= 4:
             continue
+
+        # Break it
 
         vertices.append([1, 2, 3])
         extra_vi = 3 if len(vertices) == 6 else 10
@@ -194,6 +206,14 @@ def test_non_manifold_add_face_5():
         assert m.is_edge_manifold
         assert not m.is_vertex_manifold
         assert not m.is_manifold
+        assert not m.is_closed
+        assert m.is_oriented
+
+        # Repair it
+
+        m.repair_vertex_manifold()
+
+        assert m.is_manifold
         assert not m.is_closed
         assert m.is_oriented
 
@@ -216,6 +236,9 @@ def test_non_manifold_weakly_connected_1():
     for index_to_start_from in range(len(faces)):
         for vi1, vi2 in vertex_pairs:
             vertices, faces, _ = get_sphere()
+
+            # Break it
+
             faces = np.asarray(faces, np.int32)
             faces[faces == vi2] = vi1
             faces[0], faces[index_to_start_from] = tuple(
@@ -227,6 +250,14 @@ def test_non_manifold_weakly_connected_1():
             assert m.is_edge_manifold
             assert not m.is_vertex_manifold
             assert m.is_closed  # still closed!
+            assert m.is_oriented
+
+            # Repair it
+
+            m.repair_vertex_manifold()
+
+            assert m.is_manifold
+            assert m.is_closed
             assert m.is_oriented
 
 
@@ -252,18 +283,26 @@ def test_non_manifold_weakly_connected_2():
 
             # Try this for a couple of different vertices
             for iter in range(4):
-                # Stitch them together
+                # Break it (stitch together)
+
                 i1 = np.random.randint(faces1.max() + 1)
                 i2 = np.random.randint(faces2.max() + 1) + offset2
                 stitched_faces = faces.copy()
                 stitched_faces[faces == i2] = i1
 
-                # Check
                 m = MeshClass(vertices, stitched_faces)
                 assert m.is_edge_manifold
                 assert not m.is_vertex_manifold
                 assert m.is_oriented
                 assert m.is_closed == (closed1 and closed2)
+
+                # Repair it
+
+                m.repair_vertex_manifold()
+
+                assert m.is_manifold
+                assert m.is_closed == (closed1 and closed2)
+                assert m.is_oriented
 
 
 def test_non_manifold_weakly_connected_3():
@@ -294,15 +333,23 @@ def test_non_manifold_weakly_connected_3():
             assert m.is_oriented
             assert not m.is_closed
 
-            # Stitch them together
+            # Break it (stitch them together)
+
             faces[faces == offset2] = 0
 
-            # Check
             m = MeshClass(vertices, faces)
             assert m.is_edge_manifold
             assert not m.is_vertex_manifold
             assert m.is_oriented
             assert not m.is_closed  # none of these fans are closed
+
+            # Repair it
+
+            m.repair_vertex_manifold()
+
+            assert m.is_manifold
+            assert not m.is_closed
+            assert m.is_oriented
 
 
 # %% Test is_closed

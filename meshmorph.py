@@ -368,6 +368,8 @@ class DynamicMeshData:
     def __init__(self):
         initial_size = 0
 
+        self._debug_mode = True
+
         # Create the buffers
         self._faces_buf = np.zeros((initial_size, 3), np.int32)
         self._positions_buf = np.zeros((initial_size, 3), np.float32)
@@ -409,6 +411,34 @@ class DynamicMeshData:
         # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
         return self._positions
 
+    def _check_internal_state(self):
+        # Some vertices not being used is technically an ok state. It
+        # is also unavoidable, because one first adds vertices and then
+        # the faces to use them. But a bug in our internals could make
+        # the number of unused vertices grow, so maybe we'll want some
+        # sort of check for it at some point.
+
+        faces = self.faces
+        if len(faces) == 0:
+            return
+        # Check that faces match a vertex
+        assert faces.min() >= 0
+        assert faces.max() < len(self.vertices)
+
+        # Build vertex2faces
+        vertex2faces = [[] for _ in range(len(self.vertices))]
+        for fi in range(len(faces)):
+            face = faces[fi]
+            vertex2faces[face[0]].append(fi)
+            vertex2faces[face[1]].append(fi)
+            vertex2faces[face[2]].append(fi)
+
+        # todo: being able to do this test might be a reason to use sets instead of lists
+        # assert vertex2faces == self._vertex2faces
+        assert len(vertex2faces) == len(self._vertex2faces)
+        for face1, face2 in zip(vertex2faces, self._vertex2faces):
+            assert set(face1) == set(face2)
+
     def _allocate_faces_buffer(self, n):
         # Sanity check
         nfaces = len(self._faces)
@@ -435,8 +465,6 @@ class DynamicMeshData:
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
-        # Resize reverse index
-        self._vertex2faces.extend([] for i in range(n - nverts))
 
     def _ensure_free_faces(self, n, resize_factor=1.5):
         """Make sure that there are at least n free slots for faces.
@@ -476,26 +504,31 @@ class DynamicMeshData:
             # print(f"Re-allocating vertex array to {new_size} elements.")
             self._allocate_vertices_buffer(new_size)
 
-    def _get_indices_to_delete(self, indices, what):
+    def _get_indices(self, indices, what_for):
+        result = None
         if isinstance(indices, int):
-            return [indices]
+            result = [indices]
         elif isinstance(indices, list):
-            return indices
+            result = indices
         elif isinstance(indices, np.ndarray):
             if indices.ndim == 1 and indices.dtype.kind == "i":
-                return indices
+                result = indices
             # note: we could allow deleting faces/vertices via a view, but .. maybe not?
             # elif indices.ndim == 2 and faces.shape[1] == 3 and faces.base is self._faces_buf:
             #     addr0 = self._faces_buf.__array_interface__['data'][0]
             #     addr1 = faces.__array_interface__['data'][0]
 
-        # Else
-        raise TypeError(
-            "The {what} to delete must be given as int, list, or 1D int array."
-        )
+        if result is None:
+            raise TypeError(
+                "The {what_for} must be given as int, list, or 1D int array."
+            )
+        elif min(indices) < 0:
+            raise ValueError("Negative indices not allowed.")
+
+        return result
 
     def delete_faces(self, face_indices):
-        to_delete = set(self._get_indices_to_delete(face_indices, "faces"))
+        to_delete = set(self._get_indices(face_indices, "face indices to delete"))
 
         nfaces1 = len(self._faces_buf)
         nfaces2 = nfaces1 - len(to_delete)
@@ -529,6 +562,8 @@ class DynamicMeshData:
         self._faces_buf[nfaces2:nfaces1] = 0
 
         self.version_faces += 1
+        if self._debug_mode:
+            self._check_internal_state()
 
     def delete_vertices(self, vertex_indices):
         # Note: defragmenting when deleting vertices is somewhat expensive
@@ -543,7 +578,7 @@ class DynamicMeshData:
         #   the need for additional structures like a set of free vertices.
         # - The vertices and faces can at any moment be copied and be sound. No export needed.
 
-        to_delete = set(self._get_indices_to_delete(vertex_indices, "vertices"))
+        to_delete = set(self._get_indices(vertex_indices, "vertex indices to delete"))
 
         nverts1 = len(self._positions)
         nverts2 = nverts1 - len(to_delete)
@@ -577,11 +612,15 @@ class DynamicMeshData:
         # Update reverse map
         vertex2faces = self._vertex2faces
         for vi in to_delete:
-            assert len(vertex2faces[vi]), "Trying to delete an in-use vertex."
+            if len(vertex2faces[vi]) > 0:
+                raise RuntimeError("Trying to delete an in-use vertex.")
         for vi1, vi2 in zip(indices1, indices2):
             vertex2faces[vi2] = vertex2faces[vi1]
+        vertex2faces[nverts2:] = []
 
         self.version_verts += 1
+        if self._debug_mode:
+            self._check_internal_state()
 
     def add_faces(self, new_faces):
         # Check incoming array
@@ -620,6 +659,8 @@ class DynamicMeshData:
             vertex2faces[face[2]].append(fi)
 
         self.version_faces += 1
+        if self._debug_mode:
+            self._check_internal_state()
 
     def add_vertices(self, new_positions):
         # Check incoming array
@@ -648,11 +689,42 @@ class DynamicMeshData:
 
         # Update reverse map
         vertex2faces = self._vertex2faces
-        for vi in range(n1, n2):
-            if len(vertex2faces[vi]) > 0:
-                print("WARNING: found faces referenced on stub vertices.")
+        vertex2faces.extend([] for i in range(n))
 
         self.version_verts += 1
+        if self._debug_mode:
+            self._check_internal_state()
+
+    def update_faces(self, face_indices, new_faces):
+        """Update the value of the given faces."""
+
+        indices = self._get_indices(face_indices, "face indices to update")
+        faces = np.asarray(new_faces, np.int32)
+
+        if len(indices) != len(faces):
+            raise ValueError("Indices and faces to update have different lengths.")
+
+        # Note: this should work to, but moves more stuff around, so its less efficient.
+        # self.delete_faces(face_indices)
+        # self.add_faces(faces)
+
+        # Update reverse map
+        vertex2faces = self._vertex2faces
+        for fi, new_face in zip(indices, faces):
+            old_face = self._faces[fi]
+            vertex2faces[old_face[0]].remove(fi)
+            vertex2faces[old_face[1]].remove(fi)
+            vertex2faces[old_face[2]].remove(fi)
+            vertex2faces[new_face[0]].append(fi)
+            vertex2faces[new_face[1]].append(fi)
+            vertex2faces[new_face[2]].append(fi)
+
+        # Update
+        self._faces[indices] = faces
+
+        self.version_faces += 1
+        if self._debug_mode:
+            self._check_internal_state()
 
     # def allocate_faces(self, n):
     #     """Add n new faces to the mesh. Return an nx3 array with the new faces,
@@ -885,7 +957,34 @@ class AbstractMesh:
     # Why would we want to keep track of components? How would we use it?
     # In an UI you could show components in a list. Also e.g. highlight a specific component when selected, or make others transparent.
 
-    # %% could probably a functional API ?
+    # %% Repairs
+
+    def repair_vertex_manifold(self):
+        """
+        It's tricky to find vertices that wrongfully connect faces, but it's
+        easy to repair them, once found.
+        """
+
+        # Trigger the detection to happen
+        self.is_vertex_manifold
+
+        # We'll collect these
+        new_vertices = []
+        face_indices_groups = []
+        new_faces_groups = []
+
+        # Process all required changes
+        for vi, groups in self._props["nonmanifold_vertices"].items():
+            assert len(groups) >= 2
+            for face_indices in groups[1:]:
+                # Add vertex
+                self._data.add_vertices([self._data.vertices[vi]])
+                vi2 = len(self._data.vertices) - 1
+                # Update faces
+                faces = self._data.faces[face_indices, :]
+                # faces = faces if faces.base is None else faces.copy()
+                faces[faces == vi] = vi2  # todo: must be disallowed!
+                self._data.update_faces(face_indices, faces)
 
     def repair_manifold(self):
         # Remove collapsed faces
