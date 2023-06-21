@@ -76,10 +76,35 @@ def test_invalid_faces():
 # %% Test is_manifold
 
 
-def test_corrupt_mesh11():
-    """Add one face to the mesh. Some edges will now have 3 faces."""
+def test_non_manifold_collapse_face_1():
+    """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
+    for vertices, faces, _ in iter_test_meshes():
+        faces[1][1] = faces[1][0]
 
-    # Note: the extra_face is actually in the tetrahedron, but in a different order
+        m = MeshClass(vertices, faces)
+
+        assert not m.is_edge_manifold
+        assert not m.is_vertex_manifold  # cannot have sound fans with 3-face edges
+        assert not m.is_closed  # cannot be closed if not edge manifold
+        assert not m.is_oriented  #  cannot be oriented if not edge manifold
+
+
+def test_non_manifold_collapse_face_2():
+    """Collapse a face, but at the edge, so its still edge-manifold."""
+
+    vertices, faces, _ = get_quad()
+    faces[1][0] = faces[1][1]
+
+    m = MeshClass(vertices, faces)
+
+    assert m.is_edge_manifold
+    assert not m.is_vertex_manifold
+    assert not m.is_closed
+    assert m.is_oriented  # the collapsed face maket is non-orientable
+
+
+def test_non_manifold_add_face_1():
+    """Add one face to the mesh. Some edges will now have 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
         # Cannot do this on quad and tetrahedron
@@ -94,12 +119,13 @@ def test_corrupt_mesh11():
         m = MeshClass(vertices, faces)
 
         assert not m.is_edge_manifold
-        assert not m.is_manifold
+        # assert not m.is_vertex_manifold -> depends on the mesh
+        assert not m.is_manifold  # double-check
         assert not m.is_closed
         assert not m.is_oriented
 
 
-def test_corrupt_mesh12():
+def test_non_manifold_add_face_2():
     """Add a duplicate face to the mesh. Some edges will now have 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
@@ -107,12 +133,13 @@ def test_corrupt_mesh12():
 
         m = MeshClass(vertices, faces)
 
-        assert not m.is_manifold
+        assert not m.is_edge_manifold
+        assert not m.is_vertex_manifold
         assert not m.is_closed
         assert not m.is_oriented
 
 
-def test_corrupt_mesh13():
+def test_non_manifold_add_face_3():
     """Add one face to the mesh, using one extra vertex. One edge will now have 3 faces."""
 
     for vertices, faces, _ in iter_test_meshes():
@@ -121,12 +148,13 @@ def test_corrupt_mesh13():
 
         m = MeshClass(vertices, faces)
 
-        assert not m.is_manifold
+        assert not m.is_edge_manifold
+        assert not m.is_vertex_manifold
         assert not m.is_closed
         assert not m.is_oriented
 
 
-def test_corrupt_mesh14():
+def test_non_manifold_add_face_4():
     """Add one face to the mesh, using two extra vertices. There now is connectivity via a vertex."""
 
     # Note (AK): this case is excluded from skcg.Mesh, because its
@@ -140,17 +168,15 @@ def test_corrupt_mesh14():
 
         m = MeshClass(vertices, faces)
 
+        assert m.is_edge_manifold
+        assert not m.is_vertex_manifold
         assert not m.is_manifold
-        assert not m.is_closed
-        # A mesh that is edge-manifold but not full manifold can still be oriented!
-        # todo: I guess it's also closed?
+        assert not m.is_closed  # not closed because the added face is not
         assert m.is_oriented
 
 
-def test_corrupt_mesh15():
+def test_non_manifold_add_face_5():
     """Add one face to the mesh, using one extra vertex, connected via two vertices (no edges)."""
-
-    # Note: similar case as the previous one.
 
     for vertices, faces, _ in iter_test_meshes():
         # Cannot do this on quad and tetrahedron
@@ -165,19 +191,18 @@ def test_corrupt_mesh15():
 
         m = MeshClass(vertices, faces)
 
+        assert m.is_edge_manifold
+        assert not m.is_vertex_manifold
         assert not m.is_manifold
         assert not m.is_closed
         assert m.is_oriented
 
 
-def test_corrupt_mesh16():
+def test_non_manifold_weakly_connected_1():
     """Attach one part of the mesh to another part, using just one vertex."""
 
-    # Note: similar case as the previous one. I initially overlooked
-    # this use-case when I thought that the fan-requirement could be
-    # checked by comparing the result of splitting components with both
-    # edge- and vertex-connectedness. This is a single connected
-    # component that *also* has a one-vertex connection.
+    # Note: This is a single connected component that *also* has a
+    # one-vertex connection. A case that I initially overlooked.
 
     # Some hand-picked vertex pairs to connect
     vertex_pairs = [
@@ -200,17 +225,52 @@ def test_corrupt_mesh16():
             m = MeshClass(vertices, faces)
 
             assert m.is_edge_manifold
-            assert not m.is_manifold
-            if m.is_manifold:
-                failed.append(index_to_start_from)
-            assert m.is_closed
+            assert not m.is_vertex_manifold
+            assert m.is_closed  # still closed!
             assert m.is_oriented
-    # print(failed)
 
 
-def test_corrupt_mesh17():
-    # This tests a variety of fan compositions, and combinations
-    # thereof, to make sure that the vertex-manifold detection is sound.
+def test_non_manifold_weakly_connected_2():
+    """Attach two meshes, using just one vertex."""
+
+    # Stitch the test meshes together, some are open, some closed.
+
+    for vertices1, faces1, closed1 in iter_test_meshes():
+        for vertices2, faces2, closed2 in iter_test_meshes():
+            faces1 = np.array(faces1)
+            faces2 = np.array(faces2)
+            offset2 = faces1.max() + 1
+            faces = np.concatenate([faces1, faces2 + offset2])
+            vertices = vertices1 + vertices2
+
+            # Sanity check: adding individual meshes is manifold
+            m = MeshClass(vertices, faces)
+            assert m.is_edge_manifold
+            assert m.is_vertex_manifold
+            assert m.is_oriented
+            assert m.is_closed == (closed1 and closed2)
+
+            # Try this for a couple of different vertices
+            for iter in range(4):
+                # Stitch them together
+                i1 = np.random.randint(faces1.max() + 1)
+                i2 = np.random.randint(faces2.max() + 1) + offset2
+                stitched_faces = faces.copy()
+                stitched_faces[faces == i2] = i1
+
+                # Check
+                m = MeshClass(vertices, stitched_faces)
+                assert m.is_edge_manifold
+                assert not m.is_vertex_manifold
+                assert m.is_oriented
+                assert m.is_closed == (closed1 and closed2)
+
+
+def test_non_manifold_weakly_connected_3():
+    """Attatch two fans in many different configurations, using one vertex."""
+
+    # This tests a variety of fan topologies, and combinations
+    # thereof, to help ensure that the vertex-manifold detection is sound.
 
     # Note that in this test we assume that the algorithm to detect
     # vertex-manifoldness only looks at the faces incident to the vertex
@@ -221,8 +281,8 @@ def test_corrupt_mesh17():
         for faces2 in iter_fans():
             faces1 = np.array(faces1)
             faces2 = np.array(faces2)
-            fan2_offset = faces1.max() + 1
-            faces = np.concatenate([faces1, faces2 + fan2_offset])
+            offset2 = faces1.max() + 1
+            faces = np.concatenate([faces1, faces2 + offset2])
 
             # Stub vertices
             vertices = np.zeros((faces.max() + 1, 3), np.float32)
@@ -235,45 +295,20 @@ def test_corrupt_mesh17():
             assert not m.is_closed
 
             # Stitch them together
-            faces[faces == fan2_offset] = 0
+            faces[faces == offset2] = 0
 
+            # Check
             m = MeshClass(vertices, faces)
             assert m.is_edge_manifold
             assert not m.is_vertex_manifold
             assert m.is_oriented
-            assert not m.is_closed
-
-
-def test_corrupt_mesh18():
-    """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
-
-    for vertices, faces, _ in iter_test_meshes():
-        faces[1][1] = faces[1][0]
-
-        m = MeshClass(vertices, faces)
-
-        assert not m.is_manifold
-        assert not m.is_closed
-        assert not m.is_oriented
-
-
-def test_corrupt_mesh19():
-    """Collapse a face, but at the edge, so its still edge-manifold."""
-
-    vertices, faces, _ = get_quad()
-    faces[1][0] = faces[1][1]
-
-    m = MeshClass(vertices, faces)
-
-    assert not m.is_manifold
-    assert not m.is_closed
-    assert m.is_oriented
+            assert not m.is_closed  # none of these fans are closed
 
 
 # %% Test is_closed
 
 
-def test_corrupt_mesh21():
+def test_non_closed_remove_face():
     """Remove a face, opening up the mesh."""
 
     for vertices, faces, _ in iter_test_meshes():
@@ -290,7 +325,7 @@ def test_corrupt_mesh21():
         assert m.is_oriented
 
 
-def test_corrupt_mesh22():
+def test_non_closed_planes_1():
     """A plane is an open mesh."""
 
     geo = gfx.geometries.plane_geometry()
@@ -304,7 +339,7 @@ def test_corrupt_mesh22():
     assert m.is_oriented
 
 
-def test_corrupt_mesh23():
+def test_non_closed_planes_2():
     """A Pygfx isohedron consists of a series of planes."""
 
     # Note: multiple components in these meshes.
@@ -322,7 +357,7 @@ def test_corrupt_mesh23():
         assert m.is_oriented
 
 
-def test_corrupt_mesh24():
+def test_non_closed_knot():
     """Pygfx can produce open and closed torus knots."""
 
     for stitch in (False, True):
@@ -340,7 +375,7 @@ def test_corrupt_mesh24():
 # %% Test is_oriented
 
 
-def test_corrupt_mesh31():
+def test_non_oriented_change_winding_1():
     """Change the winding of one face."""
 
     for face_idx in [0, 1, 2, 11, 29, -3, -2, -1]:
@@ -360,7 +395,7 @@ def test_corrupt_mesh31():
             assert not m.is_oriented
 
 
-def test_corrupt_mesh32():
+def test_non_oriented_change_winding_2():
     """Change the winding of two adjacent faces."""
 
     for face_idx1 in [0, 1, 2, 11, 29, -3, -2, -1]:
@@ -396,7 +431,7 @@ def test_corrupt_mesh32():
             assert not m.is_oriented
 
 
-def test_corrupt_mesh33():
+def test_non_oriented_mobius():
     """A Möbius strip!"""
 
     # This one is just a surface, really
@@ -422,7 +457,7 @@ def test_corrupt_mesh33():
     assert not m.is_oriented
 
 
-def test_corrupt_mesh34():
+def test_non_oriented_klein_bottle():
     """A Klein bottle!"""
 
     # This one is just a surface, really
@@ -448,7 +483,7 @@ def test_corrupt_mesh34():
     assert not m.is_oriented
 
 
-# %% Allow running a script
+# %% Allow running as a script
 
 
 if __name__ == "__main__":

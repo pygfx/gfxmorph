@@ -123,6 +123,10 @@ def vertex_get_incident_face_groups(
     # even be a face on the same component that faces a-d are part of.
     # That component can still be edge-manifold, closed, and oriented.
 
+    # Note that the algorithm below does not detect duplicate faces or
+    # edges with 3 incident faces. Therefore, to be be vertex-manifold,
+    # a mesh must *also* be edge-manifold.
+
     faces_to_check = set(vertex2faces[vi_check])
     groups = []
 
@@ -151,7 +155,7 @@ def vertex_get_incident_face_groups(
 def mesh_is_edge_manifold_and_closed(faces):
     """Check whether the mesh is edge-manifold, and whether it is closed.
 
-    This implementation is based on vectorized numpy code and therefore and very fast.
+    This implementation is based on vectorized numpy code and therefore very fast.
     """
 
     # Select edges
@@ -179,7 +183,7 @@ def mesh_is_edge_manifold_and_closed(faces):
 def mesh_is_oriented(faces):
     """Check whether  the mesh is oriented. Also implies edge-manifoldness.
 
-    This implementation is based on vectorized numpy code and therefore and very fast.
+    This implementation is based on vectorized numpy code and therefore very fast.
     """
 
     # Select edges. Note no sorting!
@@ -208,7 +212,7 @@ def mesh_get_volume(vertices, faces):
     It is assumed that the mesh is closed. If not, the result does
     not mean much. If the volume is negative, it is inside out.
 
-    This implementation is based on vectorized numpy code and therefore and very fast.
+    This implementation is based on vectorized numpy code and therefore very fast.
     """
     # This code is surprisingly fast, over 10x faster than the other
     # checks. I also checked out skcg's computed_interior_volume,
@@ -274,9 +278,9 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
     representing a fan attached to the vertex. I.e. to repair the vertex,
     a duplicate vertex must be created for each group (except one).
 
-    If the returned dictionary is empty, the mesh is vertex-manifold.
-    On other words, for each vertex, the faces incident to that vertex
-    form a closed or an open fan.
+    If the returned dictionary is empty, and the mesh is edge-manifold,
+    the mesh is also vertex-manifold. On other words, for each vertex,
+    the faces incident to that vertex form a closed or an open fan.
 
     """
     # This implementation literally performs this test for each vertex.
@@ -743,9 +747,9 @@ class AbstractMesh:
     def is_edge_manifold(self):
         """Whether the mesh is edge-manifold.
 
-        A mesh being edge-manifold means that each edge is part of either
-        1 or 2 faces. It is one of the two condition for a mesh to be
-        manifold.
+        A mesh being edge-manifold means that each edge is part of
+        either 1 or 2 faces. It is one of the two condition for a mesh
+        to be manifold.
         """
         if not self._check_prop("is_edge_manifold"):
             is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
@@ -759,15 +763,19 @@ class AbstractMesh:
     def is_vertex_manifold(self):
         """Whether the mesh is vertex-manifold.
 
-        A mesh being vertex-manifold means that each for each vertex, the
-        faces incident to that vertex form a single (closed or open) fan.
+        A mesh being vertex-manifold means that for each vertex, the
+        faces incident to that vertex form a single (closed or open)
+        fan. It is one of the two condition for a mesh to be manifold.
+
+        In contrast to edge-manifoldness, a mesh being non-vertex-manifold,
+        can still be closed and oriented.
         """
         if not self._check_prop("nonmanifold_vertices"):
             nonmanifold_vertices = mesh_get_non_manifold_vertices(
                 self._data.faces, self._data._vertex2faces
             )
             self._props["nonmanifold_vertices"] = nonmanifold_vertices
-        return len(self._props["nonmanifold_vertices"]) == 0
+        return self.is_edge_manifold and len(self._props["nonmanifold_vertices"]) == 0
 
     @property
     def is_manifold(self):
@@ -778,9 +786,9 @@ class AbstractMesh:
     def is_closed(self):
         """Whether the mesh is closed.
 
-        If this tool is used in a GUI, you can use this flag to show a
-        warning symbol. If this value is False, a warning with more
-        info is shown in the console.
+        A closed mesh has 2 faces incident to all its edges. This
+        implies that the mesh is edge-manifold, and has no boundary
+        edges.
         """
         if not self._check_prop("is_closed"):
             is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
@@ -794,10 +802,10 @@ class AbstractMesh:
     def is_oriented(self):
         """Whether the mesh is orientable.
 
-        The mesh being orientable means that the face orientation (i.e. winding) is
-        consistent - each two neighbouring faces have the same orientation.
+        The mesh being orientable means that the face orientation (i.e.
+        winding) is consistent - each two neighbouring faces have the
+        same orientation. This implies that the mesh is edge-manifold.
         """
-        # todo: I think that a mesh can be edge_manifold, connected, but not manifold.
         if not self._check_prop("is_oriented"):
             is_oriented = mesh_is_oriented(self._data.faces)
             self._props["is_oriented"] = is_oriented
