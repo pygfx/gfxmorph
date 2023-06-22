@@ -78,7 +78,7 @@ def test_invalid_faces():
 
 def test_non_manifold_collapse_face_1():
     """Collapse a face. Now the mesh is open, and one edge has 3 faces."""
-    for vertices, faces, _ in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         faces[1][1] = faces[1][0]
 
         m = MeshClass(vertices, faces)
@@ -87,6 +87,16 @@ def test_non_manifold_collapse_face_1():
         assert not m.is_vertex_manifold  # cannot have sound fans with 3-face edges
         assert not m.is_closed  # cannot be closed if not edge manifold
         assert not m.is_oriented  #  cannot be oriented if not edge manifold
+
+        # Collapsing this face the small meshes makes it non-manifold even after repair
+        if len(faces) <= 4:
+            continue
+
+        m.repair_manifold()  # We can detect and remove collapsed faces!
+
+        assert m.is_manifold
+        assert not m.is_closed  # there's a hole in the mesh
+        assert m.is_oriented
 
 
 def test_non_manifold_collapse_face_2():
@@ -101,6 +111,12 @@ def test_non_manifold_collapse_face_2():
     assert not m.is_vertex_manifold
     assert not m.is_closed
     assert m.is_oriented  # the collapsed face maket is non-orientable
+
+    m.repair_manifold()  # We can detect and remove collapsed faces!
+
+    assert m.is_manifold
+    assert not m.is_closed
+    assert m.is_oriented
 
 
 def test_non_manifold_add_face_1():
@@ -124,6 +140,8 @@ def test_non_manifold_add_face_1():
         assert not m.is_closed
         assert not m.is_oriented
 
+        # m.repair_manifold() -> cannot repair this (yet)
+
 
 def test_non_manifold_add_face_2():
     """Add a duplicate face to the mesh. Some edges will now have 3 faces."""
@@ -137,6 +155,13 @@ def test_non_manifold_add_face_2():
         assert not m.is_vertex_manifold
         assert not m.is_closed
         assert not m.is_oriented
+
+        m.repair_manifold()  # We can detect and remove duplicate faces!
+
+        assert m.is_edge_manifold
+        assert m.is_manifold
+        assert m.is_closed == is_closed
+        assert m.is_oriented
 
 
 def test_non_manifold_add_face_3():

@@ -506,12 +506,21 @@ class DynamicMeshData:
 
     def _get_indices(self, indices, what_for):
         result = None
+        typ = type(indices).__name__
         if isinstance(indices, int):
             result = [indices]
         elif isinstance(indices, list):
             result = indices
         elif isinstance(indices, np.ndarray):
-            if indices.ndim == 1 and indices.dtype.kind == "i":
+            typ = (
+                "ndarray:"
+                + "x".join(str(x) for x in indices.shape)
+                + "x"
+                + indices.dtype.name
+            )
+            if indices.size == 0:
+                result = []
+            elif indices.ndim == 1 and indices.dtype.kind == "i":
                 result = indices
             # note: we could allow deleting faces/vertices via a view, but .. maybe not?
             # elif indices.ndim == 2 and faces.shape[1] == 3 and faces.base is self._faces_buf:
@@ -520,8 +529,10 @@ class DynamicMeshData:
 
         if result is None:
             raise TypeError(
-                "The {what_for} must be given as int, list, or 1D int array."
+                f"The {what_for} must be given as int, list, or 1D int array, not {typ}."
             )
+        elif len(result) == 0:
+            raise ValueError(f"The {what_for} must not be empty.")
         elif min(indices) < 0:
             raise ValueError("Negative indices not allowed.")
 
@@ -542,22 +553,22 @@ class DynamicMeshData:
 
         # Update reverse map
         vertex2faces = self._vertex2faces
-        for fi in to_just_drop:
+        for fi in to_delete:
             face = self._faces[fi]
             vertex2faces[face[0]].remove(fi)
             vertex2faces[face[1]].remove(fi)
             vertex2faces[face[2]].remove(fi)
         for fi1, fi2 in zip(indices1, indices2):
-            face = self._faces[fi1]
+            face = self._faces[fi2]
             for i in range(3):
                 fii = vertex2faces[face[i]]
-                fii.remove(fi1)
-                fii.append(fi2)
+                fii.remove(fi2)
+                fii.append(fi1)
 
         # Move vertices from the end into the slots of the deleted vertices
         self._faces[indices1] = self._faces[indices2]
         # Adjust the array lengths (reset views)
-        self._faces_buf = self._faces_buf[:nfaces2]
+        self._faces = self._faces_buf[:nfaces2]
         # Tidy up
         self._faces_buf[nfaces2:nfaces1] = 0
 
@@ -703,6 +714,8 @@ class DynamicMeshData:
 
         if len(indices) != len(faces):
             raise ValueError("Indices and faces to update have different lengths.")
+        if len(indices) == 0:
+            return
 
         # Note: this should work to, but moves more stuff around, so its less efficient.
         # self.delete_faces(face_indices)
@@ -988,73 +1001,27 @@ class AbstractMesh:
 
     def repair_manifold(self):
         # Remove collapsed faces
-
-        valid_faces = self._faces[:, 0] > 0
-        collapsed_faces = np.array([len(set(f)) != len(f) for f in self._faces], bool)
-        (faces2remove,) = np.where(valid_faces & collapsed_faces)
-
-        if len(faces2remove):
-            self._faces[faces2remove] = (
-                VERTEX_OFFSET - 1,
-                VERTEX_OFFSET - 1,
-                VERTEX_OFFSET - 1,
-            )
-            self._free_faces.update(faces2remove)
-            self._mesh_props = {}
+        collapsed_faces = np.array(
+            [len(set(f)) != len(f) for f in self._data.faces], bool
+        )
+        (indices,) = np.where(collapsed_faces)
+        if len(indices):
+            self._data.delete_faces(indices)
 
         # Remove duplicate faces
-
         while True:
-            unique_faces, index, counts = np.unique(
-                np.sort(self._faces, axis=1),
-                axis=0,
-                return_index=True,
-                return_counts=True,
+            sorted_buf = np.frombuffer(np.sort(self._data.faces, axis=1), dtype="V12")
+            _, index, counts = np.unique(
+                sorted_buf, axis=0, return_index=True, return_counts=True
             )
-            counts[unique_faces[:, 0] < VERTEX_OFFSET] = 0
-            if counts.max() == 1:
+            indices = index[counts > 1]
+            if len(indices):
+                self._data.delete_faces(indices)
+            else:
                 break
-            faces2remove = index[counts > 1]
 
-            if len(faces2remove):
-                self._faces[faces2remove] = 0, 0, 0
-                self._free_faces.update(faces2remove)
-                self._mesh_props = {}
-
+        #
         # todo: Remove non-manifold faces?
-        # Remove vertex-connected faces
-        components = self._split_components(None, via_edges_only=False)
-        is_only_connected_by_edges = True
-
-        final_components = []
-        vertices2dedupe_per_component = []
-
-        for component in components:
-            subcomponents = self._split_components(component, via_edges_only=True)
-            index_offset = len(final_components)
-            final_components.extend(subcomponents)
-            while len(vertices2dedupe_per_component) < len(final_components):
-                vertices2dedupe_per_component.append(set())
-            if len(subcomponents) > 1:
-                for i1 in range(len(subcomponents)):
-                    for i2 in range(i1 + 1, len(subcomponents)):
-                        vii1 = set(self._faces[subcomponents[i1]].flat)
-                        vii2 = set(self._faces[subcomponents[i2]].flat)
-                        reused = vii1 & vii2
-                        vertices2dedupe_per_component[index_offset + i2].update(reused)
-
-        self._component_labels = -1 * np.ones((len(self._faces),), np.int32)
-        for i in range(len(final_components)):
-            self._component_labels[final_components[i]] = i
-
-        for i in range(len(final_components)):
-            component = final_components[i]
-            dedupe = vertices2dedupe_per_component[i]
-            for vi1 in dedupe:
-                vi2 = self._get_free_vertices(1)[0]
-                # todo: must only be applied for this ith component. Waiting to implement that because I want to try having faces views first.
-                self._faces[self._faces == vi1] = vi2
-                self._mesh_props = {}
 
     def repair_closed(self):
         pass
