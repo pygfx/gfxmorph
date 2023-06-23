@@ -669,7 +669,7 @@ class DynamicMeshData:
 
         # Update the faces that refer to the moved indices
         for vi1, vi2 in zip(indices1, indices2):
-            self._faces[self._faces == vi1] = vi2
+            self._faces[self._faces == vi2] = vi1
 
         # Update reverse map
         vertex2faces = self._vertex2faces
@@ -677,7 +677,7 @@ class DynamicMeshData:
             if len(vertex2faces[vi]) > 0:
                 raise RuntimeError("Trying to delete an in-use vertex.")
         for vi1, vi2 in zip(indices1, indices2):
-            vertex2faces[vi2] = vertex2faces[vi1]
+            vertex2faces[vi1] = vertex2faces[vi2]
         vertex2faces[nverts2:] = []
 
         self.version_verts += 1
@@ -1220,8 +1220,39 @@ class AbstractMesh:
         pass
         # todo: we could detect duplicate vertices, and use it to stitch the faces together.
 
-    def clean_small_components(self, min_faces=4):
-        pass
+    def remove_small_components(self, min_faces=4):
+        """Remove small connected components from the mesh."""
+
+        # We need the mesh to be manifold to do this
+        if not self.is_edge_manifold:
+            self.repair_edge_manifold()
+        if not self.is_vertex_manifold:
+            self.repair_edge_manifold()
+        assert self.is_manifold
+
+        # Get labels and their counts
+        component_labels = self.component_labels
+        labels, counts = np.unique(component_labels, return_counts=True)
+
+        # Determine what faces to remove
+        faces_to_remove = []
+        for label, count in zip(labels, counts):
+            if count < min_faces:
+                faces_to_remove.extend(np.where(component_labels == label)[0])
+
+        # Determine what vertices to remove - important to be vertex-manifold!
+        vertices_to_remove = np.unique(self._data.faces[faces_to_remove].flatten())
+
+        # check
+        for vi in vertices_to_remove:
+            fii, _ = np.where(self.faces == vi)
+            for fi in fii:
+                assert fi in faces_to_remove
+
+        # Apply
+        if len(faces_to_remove):
+            self._data.delete_faces(faces_to_remove)
+            self._data.delete_vertices(vertices_to_remove)
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""

@@ -237,7 +237,7 @@ def test_non_manifold_add_face_4():
 def test_non_manifold_add_face_5():
     """Add one face to the mesh, using one extra vertex, connected via two vertices (no edges)."""
 
-    for vertices, faces, _ in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         # Cannot do this on quad and tetrahedron
         if len(vertices) <= 4:
             continue
@@ -264,6 +264,11 @@ def test_non_manifold_add_face_5():
 
         assert m.is_manifold
         assert not m.is_closed
+        assert m.is_oriented
+
+        m.remove_small_components(2)
+        assert m.is_manifold
+        assert m.is_closed == is_closed
         assert m.is_oriented
 
 
