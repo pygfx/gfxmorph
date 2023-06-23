@@ -466,6 +466,13 @@ def test_non_oriented_change_winding_1():
             assert m.is_closed == is_closed
             assert not m.is_oriented
 
+            n_reversed = m.repair_oriented()
+
+            assert n_reversed == 1
+            assert m.is_manifold
+            assert m.is_closed == is_closed
+            assert m.is_oriented
+
 
 def test_non_oriented_change_winding_2():
     """Change the winding of two adjacent faces."""
@@ -502,6 +509,13 @@ def test_non_oriented_change_winding_2():
             assert m.is_closed == is_closed
             assert not m.is_oriented
 
+            n_reversed = m.repair_oriented()
+
+            assert n_reversed == 2 if len(faces) > 3 else 1
+            assert m.is_manifold
+            assert m.is_closed == is_closed
+            assert m.is_oriented
+
 
 def test_non_oriented_mobius():
     """A Möbius strip!"""
@@ -528,6 +542,12 @@ def test_non_oriented_mobius():
     assert not m.is_closed
     assert not m.is_oriented
 
+    m.repair_oriented()
+
+    assert m.is_manifold
+    assert not m.is_closed
+    assert not m.is_oriented  # cannot repair this topology
+
 
 def test_non_oriented_klein_bottle():
     """A Klein bottle!"""
@@ -553,6 +573,12 @@ def test_non_oriented_klein_bottle():
     assert m.is_manifold
     assert m.is_closed
     assert not m.is_oriented
+
+    m.repair_oriented()
+
+    assert m.is_manifold
+    assert m.is_closed
+    assert not m.is_oriented  # cannot repair this topology
 
 
 # %% Allow running as a script

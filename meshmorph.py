@@ -973,12 +973,18 @@ class AbstractMesh:
     # %% Repairs
 
     def repair_vertex_manifold(self):
-        """
-        It's tricky to find vertices that wrongfully connect faces, but it's
-        easy to repair them, once found.
+        """Repair vertices that are non-manifold.
+
+        Non-manifold vertices are vertices who's incident faces do not
+        form a single (open or closed) fan. It's tricky to find such
+        vertices, but it's easy to repair them, once found. The vertices
+        are duplicated and assigned to the fans so that the
+        vertex-manifold condition is attained.
+
+        The repair can only fail is the mesh is not edge-manifold.
         """
 
-        # Trigger the detection to happen
+        # Trigger 'nonmanifold_vertices' to be available
         self.is_vertex_manifold
 
         # We'll collect these
@@ -1000,6 +1006,13 @@ class AbstractMesh:
                 self._data.update_faces(face_indices, faces)
 
     def repair_manifold(self):
+        """Repair the mesh to maybe make it manifold.
+
+        * Remove collapsed faces.
+        * Remove duplicate faces.
+
+        """
+
         # Remove collapsed faces
         collapsed_faces = np.array(
             [len(set(f)) != len(f) for f in self._data.faces], bool
@@ -1023,15 +1036,14 @@ class AbstractMesh:
         #
         # todo: Remove non-manifold faces?
 
-    def repair_closed(self):
-        pass
-        # todo: we could detect duplicate vertices, and use it to stitch the faces together.
-
-    def clean_small_components(self, min_faces=4):
-        pass
-
     def repair_oriented(self):
-        """ """
+        """Repair the winding of individual faces so that it is consistent.
+
+        Returns the number of faces that are reversed.
+
+        The repair can only fail if the mesh is not manifold or when
+        it is not orientable (i.e. a Mobius strip or Klein bottle).
+        """
 
         # This implementation walks over the surface using a front. The
         # algorithm is similar to the one for splitting the mesh in
@@ -1039,40 +1051,35 @@ class AbstractMesh:
         # nesting.
         #
         # It starts out from one face, and reverses the neighboring
-        # faces if they don't match the winding of the current face.
-        # And so on. Faces that have been been processed cannot be
-        # reversed again. So the fix operates as a wave that flows over
-        # the mesh, with the first face defining the reference winding.
+        # faces that don't match the winding of the current face. And
+        # so on. Faces that have been been processed cannot be reversed
+        # again. So the fix operates as a wave that flows over the mesh,
+        # with the first face defining the winding.
         #
-        # The repair can only fail if the mesh is not manifold or when
-        # it is not orientable (i.e. a Mobius strip or Klein bottle).
-        #
-        # A vectorized implementation might also be possible, but I'm
-        # not sure if a closed form solution exists, so it might need
-        # to work iteratively? In any case, since this is a repair
-        # operation, performance is of less importance.
+        # A closed form solution for this problem does not exist. The skcg
+        # lib uses pycosat to find the solution. The below might be slower
+        # (being implemented in pure Python), but it's free of dependencies
+        # and speed matters less in a repair function, I suppose.
 
-        faces = self._faces
+        # Make a copy of the faces, so we can reverse them in-place. We'll later update the real faces.
+        faces = self._data.faces.copy()
 
-        # Collect faces to check
-        (valid_face_indices,) = np.where(self._faces[:, 0] >= VERTEX_OFFSET)
-        faces_to_check = set(valid_face_indices)
-
-        component_count = 0
         reversed_faces = []
+        vertex2faces = self._data._vertex2faces
+        faces_to_check = set(range(len(faces)))
 
         while len(faces_to_check) > 0:
             # Create new front - once for each connected component in the mesh
-            component_count += 1
             vi_next = faces_to_check.pop()
             front = queue.deque()
             front.append(vi_next)
 
             # Walk along the front
-            while len(front) > 0:
+            while front:
                 fi_check = front.popleft()
                 vi1, vi2, vi3 = faces[fi_check]
-                for fi in self.face_get_neighbours(fi_check, via_edges_only=True):
+                _, neighbours = face_get_neighbours2(faces, vertex2faces, fi_check)
+                for fi in neighbours:
                     if fi in faces_to_check:
                         faces_to_check.remove(fi)
                         front.append(fi)
@@ -1094,227 +1101,6 @@ class AbstractMesh:
                                     )
                             elif vi1 not in matching_vertices:
                                 # vi2 in matching_vertices and vi3 in matching_vertices
-                                if fi in faces_to_check:
-                                    if (
-                                        (vi2 == vj1 and vi3 == vj2)
-                                        or (vi2 == vj2 and vi3 == vj3)
-                                        or (vi2 == vj3 and vi3 == vj1)
-                                    ):
-                                        reversed_faces.append(fi)
-                                        faces[fi, 1], faces[fi, 2] = (
-                                            faces[fi, 2],
-                                            faces[fi, 1],
-                                        )
-                            elif vi2 not in matching_vertices:
-                                # vi3 in matching_vertices and vi1 in matching_vertices
-                                if fi in faces_to_check:
-                                    if (
-                                        (vi3 == vj1 and vi1 == vj2)
-                                        or (vi3 == vj2 and vi1 == vj3)
-                                        or (vi3 == vj3 and vi1 == vj1)
-                                    ):
-                                        reversed_faces.append(fi)
-                                        faces[fi, 1], faces[fi, 2] = (
-                                            faces[fi, 2],
-                                            faces[fi, 1],
-                                        )
-
-            return len(reversed_faces)
-
-    def repair_volumetric(self):
-        if self.get_volume() < 0:
-            tmp = self._faces[:, 1].copy()
-            self._faces[:, 1] = self._faces[:, 2]
-            self._faces[:, 2] = tmp
-
-    def check_manifold_closed_deprecated(self):
-        """Does a proper check that the mesh is manifold, and also whether its closed."""
-
-        # This algorithm checks the faces around each vertex. This
-        # allows checking all conditions for manifoldness, and also
-        # whether the mesh is closed. It's not even that slow. But using
-        # another combination of check-methods is faster to cover all
-        # mesh-properties. Leaving this for a bit, beacause we may use
-        # it to do repairs.
-
-        # todo: clean this up
-
-        fliebertjes = 0
-        flobbertes = 0
-        isopen = 0
-
-        # todo: this selection could be done beforehand, of if we split components first, we may already have lists available?
-        for vi1 in range(len(self._vertices)):
-            if np.isnan(self._vertices[vi1][0]):
-                continue
-
-            # all_vertex_indices = []
-            # for fi in self._vertex2faces[vi1]:
-            #     vii = set(self._faces[fi])
-            #     vii.remove(vi1)
-            #     all_vertex_indices.extend(vii)
-            #
-            # # todo: the below check is not enough to detect all of the above, but it can detect fans, and if it does that considerably
-            # # faster then we could do that first, and only to the slower check if its not a fan.
-            # # That way we may get reasonable fast code for closed meshes, while being somewhat slower along the edges of open meshes.
-            # unique_ids, counts = np.unique(all_vertex_indices, return_counts=True)
-            # if (counts==2).all():
-            #     continue  # a fan, all is well!
-            #
-            # if (counts > 2).any():
-            #     fliebertjes += 1
-            #     continue  # fail, next!
-            #
-            # if (counts==1).any():
-            #     isopen += 1
-            #     if (counts==1).sum() > 2:
-            #         flobbertes += 1
-            #
-            # continue
-
-            # Fom the current vertex (vi1), we select all incident faces
-            # (all faces that use the vertex) and from that select all
-            # neighbouring vertices.
-            #
-            # Our goal is to check whether these faces form a closed or an open fan.
-            # There may not be fliebertjes (a face attached by an edge that is already
-            # incident to 2 other faces), or flobbertjes (a face that is attached by only
-            # a vertex.
-            #
-            #
-            #  v2     /|v3
-            #  |\    / |
-            #  | \  /  |
-            #  |  vi1  |
-            #  |/   \  |
-            #  v1    \ |
-            #         \|v4
-            #
-
-            # vertex_indices_per_face = []
-            vertex_counts = {}
-            for fi in self._vertex2faces[vi1]:
-                vii = set(self._faces[fi])
-                vii.remove(vi1)
-                for vi in vii:
-                    # vertex_counts[vi] = vertex_counts.get(vi, 0) + 1
-                    vertex_counts.setdefault(vi, []).append(fi)
-                # vertex_indices_per_face.append(vii)
-
-            # for vii in vertex_indices_per_face:
-            #     xx = sum(vertex_counts[vi] for vi in vii)
-            #     if xx == 0:
-            #         self._is_manifold = False
-            #     elif xx > 2:
-            #         self.
-
-            for vi2, fii in vertex_counts.items():
-                if len(fii) == 2:
-                    pass  # ok!
-                elif len(fii) > 2:
-                    fliebertjes += 1  # Bad!
-                elif len(fii) == 1:
-                    isopen += 1
-                    # Might be an edge, or could be a flobbertje
-                    fi = fii[0]
-                    vii = set(self._faces[fi])
-                    if len(vii) != 3:
-                        flobbertes += 1
-                        continue
-                        # todo: a degenerate triangle, should we remove that from top instead?
-                    vii.remove(vi1)
-                    vii.remove(vi2)
-                    vi = vii.pop()
-                    if len(vertex_counts[vi]) == 1:
-                        if len(vertex_counts) > 2:
-                            # If this is the outer vertex on a triangle on the egde, we don't
-                            # need to check this further
-                            flobbertes += 1
-
-        is_manifold = fliebertjes == 0 and flobbertes == 0
-        is_closed = isopen == 0
-
-        return is_manifold, is_closed
-
-    def _fix_stuff_deprecated(self):
-        """Check that the mesh is closed.
-
-        This method also autocorrects the winding of indidual faces,
-        as well as of a whole sub-mesh (connected component) so that their
-        volumes are positive.
-
-        This method reports its findings by showing a warning and by setting
-        a private attribute (which can e.g. be checked in tests and debugging).
-        """
-
-        # This alogotitm is a port of what we did in Arbiter to check the mesh.
-        # This code can:
-        # * Check edge-manifoldness, closed, orientability.
-        # * Repair winding, repair meshes being inside-out.
-        # Leaving for a bit, because we may use some of it for doing repairs.
-
-        # todo: clean this up
-        # todo: the _check_manifold_nr2 checks manifoldness and closeness, so in here we can restrict to the winding (detecting and fixing) and detecting connected components.
-        # todo: if holes are detected, we can check the vertices at these locations for duplicates, and we can merge those duplicates to create a closed mesh from a "stitched" one.
-        faces = self._faces
-
-        # Collect faces to check
-        (valid_face_indices,) = np.where(self._faces[:, 0] > 0)
-        faces_to_check = set(valid_face_indices)
-
-        # Keep track of issues
-        component_count = 0
-        total_reversed_count = 0
-        unclosed_case1 = []
-        unclosed_case2 = []
-
-        self._is_oriented = self._is_manifold = True
-
-        while len(faces_to_check) > 0:
-            # Create new front - once for each connected component in the mesh
-            component_count += 1
-            vi_next = faces_to_check.pop()
-            faces_in_this_component = {vi_next}
-            reversed_faces = []
-            front = queue.deque()
-            front.append(vi_next)
-
-            # Walk along the front
-            while len(front) > 0:
-                fi_check = front.popleft()
-                vi1, vi2, vi3 = faces[fi_check]
-                neighbour_per_edge = [0, 0, 0]
-                for fi in self.face_get_neighbours(fi_check):
-                    vj1, vj2, vj3 = faces[fi]
-                    matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
-                    if len(matching_vertices) == 3:
-                        self._is_manifold = False
-                    elif len(matching_vertices) == 2:
-                        # todo: we now know that we have two matches, so we can write these three if-s better, I think
-                        if vi1 in matching_vertices and vi2 in matching_vertices:
-                            neighbour_per_edge[0] += 1
-                            if fi in faces_to_check:
-                                faces_to_check.remove(fi)
-                                if fi not in faces_in_this_component:
-                                    front.append(fi)
-                                    faces_in_this_component.add(fi)
-                                if (
-                                    (vi1 == vj1 and vi2 == vj2)
-                                    or (vi1 == vj2 and vi2 == vj3)
-                                    or (vi1 == vj3 and vi2 == vj1)
-                                ):
-                                    reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = (
-                                        faces[fi, 2],
-                                        faces[fi, 1],
-                                    )
-                        elif vi2 in matching_vertices and vi3 in matching_vertices:
-                            neighbour_per_edge[1] += 1
-                            if fi in faces_to_check:
-                                faces_to_check.remove(fi)
-                                if fi not in faces_in_this_component:
-                                    front.append(fi)
-                                    faces_in_this_component.add(fi)
                                 if (
                                     (vi2 == vj1 and vi3 == vj2)
                                     or (vi2 == vj2 and vi3 == vj3)
@@ -1325,13 +1111,8 @@ class AbstractMesh:
                                         faces[fi, 2],
                                         faces[fi, 1],
                                     )
-                        elif vi3 in matching_vertices and vi1 in matching_vertices:
-                            neighbour_per_edge[2] += 1
-                            if fi in faces_to_check:
-                                faces_to_check.remove(fi)
-                                if fi not in faces_in_this_component:
-                                    front.append(fi)
-                                    faces_in_this_component.add(fi)
+                            elif vi2 not in matching_vertices:
+                                # vi3 in matching_vertices and vi1 in matching_vertices
                                 if (
                                     (vi3 == vj1 and vi1 == vj2)
                                     or (vi3 == vj2 and vi1 == vj3)
@@ -1343,87 +1124,36 @@ class AbstractMesh:
                                         faces[fi, 1],
                                     )
 
-                # Now that we checked all neighbours, check if we have a neighbour on each edge.
-                # If this is the case for all faces, we know that the mesh is closed. The mesh
-                # can still have weird crossovers or parts sticking out though (e.g. a Klein bottle).
-                if not (
-                    neighbour_per_edge[0] == 1
-                    and neighbour_per_edge[1] == 1
-                    and neighbour_per_edge[2] == 1
-                ):
-                    if (
-                        neighbour_per_edge[0] == 0
-                        or neighbour_per_edge[1] == 0
-                        or neighbour_per_edge[2] == 0
-                    ):
-                        unclosed_case1.append((fi_check, neighbour_per_edge))
-                    else:
-                        self._is_manifold = False
-                        unclosed_case2.append((fi_check, neighbour_per_edge))
-
-            self._is_oriented = not reversed_faces
-
-            # We've now found one connected component (there may be more)
-            faces_in_this_component = list(faces_in_this_component)
-            cfaces = self._faces[faces_in_this_component]
-            volume = maybe_pylinalg.volume_of_closed_mesh(self._vertices, cfaces)
-
-            if volume < 0:
-                # Reverse the whole component
-                cfaces[:, 1], cfaces[:, 2] = cfaces[:, 2].copy(), cfaces[:, 1].copy()
-                self._faces[faces_in_this_component] = cfaces
-                total_reversed_count += len(faces_in_this_component) - len(
-                    reversed_faces
-                )
-                self._dirty_faces.update(faces_in_this_component)
+        if reversed_faces:
+            # Get faces to update. If over half was reversed,
+            # we take the other half and reverse that instead.
+            if len(reversed_faces) < 0.5 * len(faces):
+                new_faces = faces[reversed_faces]
             else:
-                # Mark reversed faces as changed for GPU
-                total_reversed_count += len(reversed_faces)
-                self._dirty_faces.update(reversed_faces)
+                mask = np.ones(len(faces), np.int32)
+                mask[reversed_faces] = 0
+                reversed_faces = np.where(mask)[0]
+                new_faces = faces[reversed_faces]
+                tmp = new_faces[:, 2].copy()
+                new_faces[:, 2] = new_faces[:, 1]
+                new_faces[:, 1] = tmp
+            # Update
+            self._data.update_faces(reversed_faces, new_faces)
 
-        self._component_count = component_count
+        return len(reversed_faces)
 
-        # Report on winding - all is well, we corrected it!
-        self._n_reversed_faces = total_reversed_count
-        # if total_reversed_count > 0:
-        #     warnings.warn(
-        #         f"Auto-corrected the winding of {total_reversed_count} faces."
-        #     )
+    def repair_volumetric(self):
+        if self.get_volume() < 0:
+            tmp = self._faces[:, 1].copy()
+            self._faces[:, 1] = self._faces[:, 2]
+            self._faces[:, 2] = tmp
 
-        # Report on the mesh not being closed - this is a problem!
-        # todo: how bad is this problem again? Should we abort or still allow e.g. morphing the mesh?
-        self._original_unclosed_faces = {fi for fi, _ in unclosed_case1} | {
-            fi for fi, _ in unclosed_case2
-        }
-        if unclosed_case1:
-            lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case1]
-            n = len(unclosed_case1)
-            # warnings.warn(
-            #     f"There is a hole in the mesh at {n} faces:\n" + "\n".join(lines)
-            # )
-        if unclosed_case2:
-            lines = [f"    - {fi} ({nbe})" for fi, nbe in unclosed_case2]
-            n = len(unclosed_case2)
-            # warnings.warn(
-            #     f"Too many neighbour faces at {n} faces:\n" + "\n".join(lines)
-            # )
+    def repair_closed(self):
+        pass
+        # todo: we could detect duplicate vertices, and use it to stitch the faces together.
 
-    def validate_internals(self):
-        raise NotImplementedError()
-        # todo: xx
-
-    def get_volume(self):
-        """Calculate the volume of the mesh.
-
-        It is assumed that the mesh is closed. If not, the result does
-        not mean much. If the volume is negative, it is inside out.
-        """
-        return sum(c.get_volume() for c in self._components)
-
-    def get_surface_area(self):
-        # see skcg computed_surface_area
-        # Or simply calculate area of each triangle (vectorized)
-        return sum(c.get_surface_area() for c in self._components)
+    def clean_small_components(self, min_faces=4):
+        pass
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""
@@ -1435,42 +1165,6 @@ class AbstractMesh:
         raise NotImplementedError()
 
     # %% Walk over the surface
-
-    def get_neighbour_vertices(self, vi):
-        """Get a list of vertex indices that neighbour the given vertex index."""
-        faces = self._data.faces
-        vertices = self._data.vertices
-        face_indices = self._vertex2faces[vi]
-
-        neighbour_vertices = set(faces[face_indices].flat)
-        neighbour_vertices.discard(vi)
-
-        # todo: is it worth converting to array?
-        return neighbour_vertices
-        # return np.array(neighbour_vertices, np.int32)
-
-    def face_get_neighbours(self, fi, *, via_edges_only=False):
-        """Get a list of face indices that neighbour the given face index."""
-
-        vertex2faces = self._vertex2faces
-
-        if via_edges_only:
-            neighbour_faces1 = set()
-            neighbour_faces2 = set()
-            for vi in self._faces[fi]:
-                for fi2 in vertex2faces[vi]:
-                    if fi2 in neighbour_faces1:
-                        neighbour_faces2.add(fi2)
-                    else:
-                        neighbour_faces1.add(fi2)
-            neighbour_faces = neighbour_faces2
-        else:
-            neighbour_faces = set()
-            for vi in self._faces[fi]:
-                neighbour_faces.update(vertex2faces[vi])
-
-        neighbour_faces.discard(fi)
-        return neighbour_faces
 
     def get_closest_vertex(self, ref_pos):
         """Get the vertex index closest to the given 3D point, and its distance."""
