@@ -10,7 +10,13 @@ import pytest
 import maybe_pygfx
 import meshmorph
 
-from testutils import iter_test_meshes, get_quad, get_sphere, iter_fans
+from testutils import (
+    iter_test_meshes,
+    iter_closed_meshes,
+    get_quad,
+    get_sphere,
+    iter_fans,
+)
 
 
 # Set to 1 to perform these tests on skcg, as a validation check
@@ -511,10 +517,33 @@ def test_non_oriented_change_winding_2():
 
             n_reversed = m.repair_oriented()
 
-            assert n_reversed == 2 if len(faces) > 3 else 1
+            if len(faces) > 4:
+                assert n_reversed == 2
             assert m.is_manifold
             assert m.is_closed == is_closed
             assert m.is_oriented
+
+
+def test_non_oriented_inside_out():
+    for vertices, faces, _ in iter_closed_meshes():
+        # Turn the mesh inside-out
+        faces = np.asarray(faces)
+        tmp = faces[:, 0].copy()
+        faces[:, 0] = faces[:, 1]
+        faces[:, 1] = tmp
+
+        m = MeshClass(vertices, faces)
+
+        assert m.is_closed
+        assert m.get_volume() < 0
+        assert m.is_oriented  # still oriented ...
+
+        n_reversed = m.repair_oriented()
+        assert n_reversed == len(faces)  # ... but inside out
+
+        assert m.is_closed
+        assert m.get_volume() > 0  # now its all good!
+        assert m.is_oriented
 
 
 def test_non_oriented_mobius():

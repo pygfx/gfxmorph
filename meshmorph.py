@@ -889,20 +889,12 @@ class AbstractMesh:
 
         The mesh being orientable means that the face orientation (i.e.
         winding) is consistent - each two neighbouring faces have the
-        same orientation. This implies that the mesh is edge-manifold.
+        same orientation. This can only be true if the mesh is edge-manifold.
         """
         if not self._check_prop("is_oriented"):
             is_oriented = mesh_is_oriented(self._data.faces)
             self._props["is_oriented"] = is_oriented
         return self._props["is_oriented"]
-
-    @property
-    def is_volumetric(self):
-        """Whether the mesh has a positive volume.
-
-        If not, the mesh is probably inside-out. CCW winding is assumed.
-        """
-        # todo: ...
 
     @property
     def edges(self):
@@ -939,6 +931,19 @@ class AbstractMesh:
         }
 
     # %%
+
+    def get_volume(self):
+        """The volume of the mesh.
+
+        CCW winding is assumed. If this is negative, the mesh is
+        probably inside-out. If the mesh is not manifold, oriented, and closed,
+        this method raises an error.
+        """
+        if not (self.is_manifold and self.is_oriented and self.is_closed):
+            raise RuntimeError(
+                "Cannot get volume of a mesh that is not manifold, oriented and closed."
+            )
+        return mesh_get_volume(self._data.vertices, self._data.faces)
 
     def add_mesh(self, vertices, faces):
         """Add vertex and face data.
@@ -1140,13 +1145,17 @@ class AbstractMesh:
             # Update
             self._data.update_faces(reversed_faces, new_faces)
 
-        return len(reversed_faces)
+        # Reverse all the faces if this is an oriented closed manifold with a negative volume.
+        if self.is_manifold and self.is_oriented and self.is_closed:
+            if self.get_volume() < 0:
+                new_faces = self._data.faces.copy()
+                tmp = new_faces[:, 2].copy()
+                new_faces[:, 2] = new_faces[:, 1]
+                new_faces[:, 1] = tmp
+                reversed_faces = np.arange(len(new_faces), dtype=np.int32)
+                self._data.update_faces(reversed_faces, new_faces)
 
-    def repair_volumetric(self):
-        if self.get_volume() < 0:
-            tmp = self._faces[:, 1].copy()
-            self._faces[:, 1] = self._faces[:, 2]
-            self._faces[:, 2] = tmp
+        return len(reversed_faces)
 
     def repair_closed(self):
         pass
