@@ -67,6 +67,15 @@ def test_a_single_triangle():
     assert m.is_oriented
 
 
+def test_a_null_mesh():
+    m = MeshClass(None, None)
+
+    # I'm not sure what would be correct, but  I guess with zero faces all conditions are valid?
+    assert m.is_manifold
+    assert m.is_closed
+    assert m.is_oriented
+
+
 def test_invalid_faces():
     """Test to check that faces must have valid indices for the vertices"""
     # Copied from skcg
@@ -141,12 +150,15 @@ def test_non_manifold_add_face_1():
         m = MeshClass(vertices, faces)
 
         assert not m.is_edge_manifold
-        # assert not m.is_vertex_manifold -> depends on the mesh
         assert not m.is_manifold  # double-check
         assert not m.is_closed
         assert not m.is_oriented
 
-        # m.repair_manifold() -> cannot repair this (yet)
+        m.repair_manifold()
+
+        assert m.is_manifold
+        assert m.is_closed == (False if len(m.faces) > 0 else True)
+        assert m.is_oriented
 
 
 def test_non_manifold_add_face_2():
@@ -183,6 +195,12 @@ def test_non_manifold_add_face_3():
         assert not m.is_vertex_manifold
         assert not m.is_closed
         assert not m.is_oriented
+
+        m.repair_manifold()
+
+        assert m.is_manifold
+        assert m.is_closed == (False if len(m.faces) > 0 else True)
+        assert m.is_oriented
 
 
 def test_non_manifold_add_face_4():

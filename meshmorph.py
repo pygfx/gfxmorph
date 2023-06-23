@@ -158,6 +158,10 @@ def mesh_is_edge_manifold_and_closed(faces):
     This implementation is based on vectorized numpy code and therefore very fast.
     """
 
+    # Special case
+    if len(faces) == 0:
+        return True, True
+
     # Select edges
     edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
     edges = edges.reshape(-1, 2)
@@ -168,7 +172,7 @@ def mesh_is_edge_manifold_and_closed(faces):
     # line needs to be applied to different data, so the gain would
     # be about zero.
     edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
-    _, edge_counts = np.unique(edges_blob, return_counts=True)
+    unique_blob, edge_counts = np.unique(edges_blob, return_counts=True)
 
     # The mesh is edge-manifold if edges are shared at most by 2 faces.
     is_edge_manifold = bool(edge_counts.max() <= 2)
@@ -180,11 +184,54 @@ def mesh_is_edge_manifold_and_closed(faces):
     return is_edge_manifold, is_closed
 
 
+def mesh_get_non_manifold_edges(faces):
+    """Detect non-manifold edges.
+
+    These are returned as a dict ``(vi1, vi2) -> [fi1, fi2, ..]``.
+    It maps edges (pairs of vertex indices) to a list face indices incident
+    to that edge. I.e. to repair the edge, the faces incidense to each
+    edge can be removed. Afterwards, the nonmanifold vertices can be repaired,
+    followed by repairing the holes.
+
+    If the returned dictionary is empty, the mesh is edge-manifold. In
+    other words, for each edge there are either one or two incident
+    faces.
+    """
+
+    # Special case
+    if len(faces) == 0:
+        return {}
+
+    edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+    edges = edges.reshape(-1, 2)
+    edges.sort(axis=1)  # note, sorting!
+
+    edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+    unique_blob, edge_counts = np.unique(edges_blob, return_counts=True)
+
+    # Code above is same as first part in mesh_is_edge_manifold_and_closed()
+
+    # Collect faces for each corrupt unique edge, one by one
+    # todo: maybe vectorize-able
+    nonmanifold_edges = {}
+    corrupt_indices = np.where(edge_counts > 2)[0]
+    for i in corrupt_indices:
+        eii = np.where(edges_blob == unique_blob[i])[0]
+        for ei in eii:
+            edge = tuple(edges[ei])
+            nonmanifold_edges[edge] = [fi for fi in eii // 3]
+
+    return nonmanifold_edges
+
+
 def mesh_is_oriented(faces):
     """Check whether  the mesh is oriented. Also implies edge-manifoldness.
 
     This implementation is based on vectorized numpy code and therefore very fast.
     """
+    # Special case
+    if len(faces) == 0:
+        return True
 
     # Select edges. Note no sorting!
     edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
@@ -209,11 +256,15 @@ def mesh_is_oriented(faces):
 def mesh_get_volume(vertices, faces):
     """Calculate the volume of the mesh.
 
-    It is assumed that the mesh is closed. If not, the result does
+    It is assumed that the mesh is oriented and closed. If not, the result does
     not mean much. If the volume is negative, it is inside out.
 
     This implementation is based on vectorized numpy code and therefore very fast.
     """
+    # Special case
+    if len(faces) == 0:
+        return 0
+
     # This code is surprisingly fast, over 10x faster than the other
     # checks. I also checked out skcg's computed_interior_volume,
     # which uses Gauss' theorem of calculus, but that is
@@ -279,7 +330,7 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
     a duplicate vertex must be created for each group (except one).
 
     If the returned dictionary is empty, and the mesh is edge-manifold,
-    the mesh is also vertex-manifold. On other words, for each vertex,
+    the mesh is also vertex-manifold. In other words, for each vertex,
     the faces incident to that vertex form a closed or an open fan.
 
     """
@@ -346,15 +397,15 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
         _, neighbour_faces2 = face_get_neighbours2(faces, vertex2faces, fi)
         face_adjacency[fi] = neighbour_faces2
 
-    vertices_to_detach = {}
+    nonmanifold_vertices = {}
     for vi in suspicious_vertices:
         groups = vertex_get_incident_face_groups(
             faces, vertex2faces, vi, face_adjacency=face_adjacency
         )
         if len(groups) > 1:
-            vertices_to_detach[vi] = groups
+            nonmanifold_vertices[vi] = groups
 
-    return vertices_to_detach
+    return nonmanifold_vertices
 
 
 class DynamicMeshData:
@@ -790,7 +841,8 @@ class AbstractMesh:
         self._props_verts_and_faces = "volume", "surface"
 
         # Delegate initialization
-        self.add_mesh(vertices, faces)
+        if vertices is not None or faces is not None:
+            self.add_mesh(vertices, faces)
 
     def _check_prop(self, name):
         assert name in self._props_faces or name in self._props_verts
@@ -837,12 +889,9 @@ class AbstractMesh:
         to be manifold.
         """
         if not self._check_prop("is_edge_manifold"):
-            is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
-                self._data.faces
-            )
-            self._props["is_edge_manifold"] = is_edge_manifold
-            self._props["is_closed"] = is_closed
-        return self._props["is_edge_manifold"]
+            nonmanifold_edges = mesh_get_non_manifold_edges(self._data.faces)
+            self._props["nonmanifold_edges"] = nonmanifold_edges
+        return len(self._props["nonmanifold_edges"]) == 0
 
     @property
     def is_vertex_manifold(self):
@@ -876,10 +925,7 @@ class AbstractMesh:
         edges.
         """
         if not self._check_prop("is_closed"):
-            is_edge_manifold, is_closed = mesh_is_edge_manifold_and_closed(
-                self._data.faces
-            )
-            self._props["is_edge_manifold"] = is_edge_manifold
+            _, is_closed = mesh_is_edge_manifold_and_closed(self._data.faces)
             self._props["is_closed"] = is_closed
         return self._props["is_closed"]
 
@@ -977,46 +1023,19 @@ class AbstractMesh:
 
     # %% Repairs
 
-    def repair_vertex_manifold(self):
-        """Repair vertices that are non-manifold.
-
-        Non-manifold vertices are vertices who's incident faces do not
-        form a single (open or closed) fan. It's tricky to find such
-        vertices, but it's easy to repair them, once found. The vertices
-        are duplicated and assigned to the fans so that the
-        vertex-manifold condition is attained.
-
-        The repair can only fail is the mesh is not edge-manifold.
-        """
-
-        # Trigger 'nonmanifold_vertices' to be available
-        self.is_vertex_manifold
-
-        # We'll collect these
-        new_vertices = []
-        face_indices_groups = []
-        new_faces_groups = []
-
-        # Process all required changes
-        for vi, groups in self._props["nonmanifold_vertices"].items():
-            assert len(groups) >= 2
-            for face_indices in groups[1:]:
-                # Add vertex
-                self._data.add_vertices([self._data.vertices[vi]])
-                vi2 = len(self._data.vertices) - 1
-                # Update faces
-                faces = self._data.faces[face_indices, :]
-                # faces = faces if faces.base is None else faces.copy()
-                faces[faces == vi] = vi2  # todo: must be disallowed!
-                self._data.update_faces(face_indices, faces)
-
     def repair_manifold(self):
         """Repair the mesh to maybe make it manifold.
 
         * Remove collapsed faces.
         * Remove duplicate faces.
+        * Remove faces incident to edges that have more than 2 incident faces.
 
+        The repair always produces an edge-manifold mesh but it may
+        have less faces (it could even be empty) and the mesh may have
+        holes where it previously attached to other parts of the mesh.
         """
+
+        first_face = self._data.faces[0].copy()
 
         # Remove collapsed faces
         collapsed_faces = np.array(
@@ -1038,8 +1057,48 @@ class AbstractMesh:
             else:
                 break
 
-        #
-        # todo: Remove non-manifold faces?
+        # Remove non-manifold faces
+        # todo: maybe the edge-info can be used to stitch the mesh back up?
+        self.is_edge_manifold
+        nonmanifold_edges = self._props["nonmanifold_edges"]
+        indices = []
+        for edge, fii in nonmanifold_edges.items():
+            indices.extend(fii)
+        if len(indices):
+            self._data.delete_faces(indices)
+
+    def repair_vertex_manifold(self):
+        """Repair vertices that are non-manifold.
+
+        Non-manifold vertices are vertices who's incident faces do not
+        form a single (open or closed) fan. It's tricky to find such
+        vertices, but it's easy to repair them, once found. The vertices
+        are duplicated and assigned to the fans so that the
+        vertex-manifold condition is attained.
+
+        The repair can only fail is the mesh is not edge-manifold.
+        """
+
+        # Trigger 'nonmanifold_vertices' to be available
+        self.is_vertex_manifold
+
+        # Process all required changes
+        # We update each group individually. It may be more efficient
+        # to collect changes, but it'd also make the code more complex.
+        # Note that we can safely do this because no vertices/faces are
+        # deleted in this process, so the indices in
+        # 'nonmanifold_vertices' remain valid.
+        for vi, groups in self._props["nonmanifold_vertices"].items():
+            assert len(groups) >= 2
+            for face_indices in groups[1:]:
+                # Add vertex
+                self._data.add_vertices([self._data.vertices[vi]])
+                vi2 = len(self._data.vertices) - 1
+                # Update faces
+                faces = self._data.faces[face_indices, :]
+                # faces = faces if faces.base is None else faces.copy()
+                faces[faces == vi] = vi2  # todo: must be disallowed!
+                self._data.update_faces(face_indices, faces)
 
     def repair_oriented(self):
         """Repair the winding of individual faces so that it is consistent.
