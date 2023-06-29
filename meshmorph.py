@@ -1217,8 +1217,75 @@ class AbstractMesh:
         return len(reversed_faces)
 
     def repair_closed(self):
-        pass
-        # todo: we could detect duplicate vertices, and use it to stitch the faces together.
+        raise NotImplementedError()
+        # component_labels = self.component_labels
+        # n_components = component_labels.max()
+        #
+        # for label in range(n_components):
+        #     compnent_indices, = np.where(component_labels == label)
+        #     subfaces = faces[compnent_indices]
+        #     vii = np.unique(subfaces.flatten())
+        #
+        #     subvertices = vertices[vii]
+
+    def deduplicate_vertices(self, *, atol=None):
+        """Merge vertices that are the same or close together according to the given tolerance.
+
+        Note that this method can cause the mesh to become non-manifold.
+        You should probably only apply this method if you know the
+        topology of the mesh, especially if you specify a tolerance.
+        """
+
+        faces = self._data.faces.copy()
+        vertices = self._data.vertices
+
+        # Collect duplicate vertices
+        duplicate_map = {}
+        duplicate_mask = np.zeros((len(vertices),), bool)
+        for vi in range(len(vertices)):
+            if not duplicate_mask[vi]:
+                if atol is None:
+                    mask3 = vertices == vertices[vi]
+                else:
+                    mask3 = np.isclose(vertices, vertices[vi], atol=atol)
+                mask = mask3.sum(axis=1) == 3  # all positions of a vertex must match
+                if mask.sum() > 1:
+                    duplicate_mask[mask] = True
+                    mask[vi] = False
+                    duplicate_map[vi] = np.where(mask)[0]
+        # Now we can apply them. Some heavy iterations here ...
+        for vi1, vii in duplicate_map.items():
+            for vi2 in vii:
+                faces[faces == vi2] = vi1
+
+        # Check what faces have been changed in our copy.
+        changed = faces != self._data.faces  # Nx3
+        changed_count = changed.sum(axis=1)
+        (indices,) = np.where(changed_count > 0)
+
+        if len(indices):
+            # Update the faces
+            self._data.update_faces(indices, faces[indices])
+            # We could trace all the vertices that we eventually popped
+            # this way, but let's do it the easy (and robust) way.
+            self.remove_unused_vertices()
+
+    def remove_unused_vertices(self):
+        """Delete vertices that are not used by the faces.
+
+        This is a cleanup step that is safe to apply. Though it should
+        not be necessary to call this after doing processing steps -
+        these should clean up after themselves (though they could use
+        this method for that).
+        """
+        faces = self._data.faces
+
+        vertices_mask = np.zeros((len(self._data.vertices),), bool)
+        vii = np.unique(faces.flatten())
+        vertices_mask[vii] = True
+
+        vii_not_used = np.where(vertices_mask == False)[0]
+        self._data.delete_vertices(vii_not_used)
 
     def remove_small_components(self, min_faces=4):
         """Remove small connected components from the mesh."""
