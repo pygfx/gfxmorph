@@ -30,7 +30,7 @@ VERTEX_OFFSET = 0
 
 def make_vertex2faces(faces):
     """Create a simple map to map vertex indices to a list of face indices."""
-    faces = np.asarray(faces)
+    faces = np.asarray(faces, np.int32)
     nverts = faces.max() + 1
 
     vertex2faces = [[] for _ in range(nverts)]
@@ -406,6 +406,61 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
             nonmanifold_vertices[vi] = groups
 
     return nonmanifold_vertices
+
+
+def mesh_get_boundaries(faces):
+    # Special case
+    if len(faces) == 0:
+        return []
+
+    faces = np.asarray(faces, np.int32)
+
+    # Select edges
+    edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
+    edges = edges.reshape(-1, 2)
+    edges.sort(axis=1)  # note, sorting!
+
+    # Find the unique edges
+    edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
+    unique_blob, edge_counts = np.unique(edges_blob, return_counts=True)
+    unique_edges = np.frombuffer(edges, dtype=np.int32).reshape(-1, 2)
+
+    # Find the boundary edges: those that only have one incident face
+    (boundary_edges,) = np.where(edge_counts == 1)
+
+    # Build map vi -> eii
+    vertex2edges = [[] for _ in range(faces.max() + 1)]
+    for ei in boundary_edges:
+        vi1, vi2 = unique_edges[ei]
+        vertex2edges[vi1].append(ei)
+        vertex2edges[vi2].append(ei)
+
+    # Now group them into boundaries ...
+
+    eii_to_check = set(boundary_edges)
+    boundaries = []
+
+    while eii_to_check:
+        ei = eii_to_check.pop()
+        boundary = [ei]
+        boundaries.append(boundary)
+
+        while True:
+            ei = boundary[-1]
+            vi1, vi2 = unique_edges[ei]
+            eii = vertex2edges[vi1] + vertex2edges[vi2]
+            for ei in eii:
+                if ei in eii_to_check:
+                    eii_to_check.remove(ei)
+                    boundary.append(ei)
+                    break
+            else:
+                break  # from loop
+
+        # Check whether it's a loop
+        assert boundary[0] in eii  # It must always be a loop, right?
+
+    return boundaries
 
 
 class DynamicMeshData:
@@ -1217,16 +1272,15 @@ class AbstractMesh:
         return len(reversed_faces)
 
     def repair_closed(self):
-        raise NotImplementedError()
-        # component_labels = self.component_labels
-        # n_components = component_labels.max()
-        #
-        # for label in range(n_components):
-        #     compnent_indices, = np.where(component_labels == label)
-        #     subfaces = faces[compnent_indices]
-        #     vii = np.unique(subfaces.flatten())
-        #
-        #     subvertices = vertices[vii]
+        if not self.is_manifold:
+            raise RuntimeError("Repairing open meshes requires them to be manifold.")
+
+        faces = self._data.faces
+
+        # # Now we check all boundaries
+        # for boundary in boundaries:
+        #     assert len(boundary) >= 3  # I don't think they can be smaller, right?
+        #     if boundary[0] == boundary[-1]
 
     def deduplicate_vertices(self, *, atol=None):
         """Merge vertices that are the same or close together according to the given tolerance.

@@ -3,7 +3,9 @@ import pygfx as gfx
 import pytest
 
 import maybe_pygfx
+import meshmorph
 from meshmorph import AbstractMesh
+import testutils
 
 
 def test_abstract_mesh_basics():
@@ -94,9 +96,22 @@ def test_mesh_selection():
     assert len(selected1) == len(vertices)
 
 
+def test_boundaries():
+    for faces in testutils.iter_fans():
+        is_open = len(faces) <= 3 or faces[-1][0] == 0
+        boundaries = meshmorph.mesh_get_boundaries(faces)
+        assert len(boundaries) == 1
+        boundary = boundaries[0]
+        if is_open:
+            expected_boundary_length = 3 * len(faces) - 2 * (len(faces) - 1)
+        else:
+            expected_boundary_length = 3 * len(faces) - 2 * len(faces)
+        assert len(boundary) == expected_boundary_length
+
+
 # todo: there are probably more tests in arbiter
 
+# %%
 
 if __name__ == "__main__":
-    test_abstract_mesh_basics()
-    test_mesh_selection()
+    test_boundaries()
