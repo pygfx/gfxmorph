@@ -1,8 +1,9 @@
 import numpy as np
 import pylinalg as la
 
-from maybe_pygfx import smooth_sphere_geometry
-from maybe_pylinalg import volume_of_closed_mesh
+from gfxmorph.maybe_pygfx import smooth_sphere_geometry
+from gfxmorph.maybe_pylinalg import volume_of_closed_mesh
+from testutils import run_tests
 
 
 def test_smooth_sphere_geometry():
@@ -66,4 +67,4 @@ def test_smooth_sphere_geometry():
 
 
 if __name__ == "__main__":
-    test_smooth_sphere_geometry()
+    run_tests(globals())

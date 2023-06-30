@@ -1,16 +1,16 @@
 """
 Test on adverserial cases. The word corrupt is used very generous here,
-e.g. it's also used for opem manifolds.
+e.g. it's also used for open manifolds.
 """
 
 import numpy as np
 import pygfx as gfx
 import pytest
 
-import maybe_pygfx
-import meshmorph
+import gfxmorph
 
 from testutils import (
+    run_tests,
     iter_test_meshes,
     iter_closed_meshes,
     get_quad,
@@ -27,7 +27,7 @@ if USE_SKCG:
 
     MeshClass = skcg.Mesh
 else:
-    MeshClass = meshmorph.AbstractMesh
+    MeshClass = gfxmorph.AbstractMesh
 
 
 # todo: include is_edge_maniforld
@@ -730,13 +730,5 @@ def test_non_oriented_klein_bottle():
     assert not m.is_oriented  # cannot repair this topology
 
 
-# %% Allow running as a script
-
-
 if __name__ == "__main__":
-    for name in list(globals()):
-        if name.startswith("test_"):
-            func = globals().get(name)
-            print(f"Running {name}")
-            func()
-    print("Done")
+    run_tests(globals())

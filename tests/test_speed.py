@@ -1,10 +1,9 @@
 import time
 
-import maybe_pygfx
 import pygfx as gfx
-import meshmorph
-from meshmorph import AbstractMesh
-
+from gfxmorph.maybe_pygfx import smooth_sphere_geometry
+from gfxmorph import AbstractMesh
+from gfxmorph import meshfuncs
 from skcg.core.mesh import Mesh
 
 
@@ -24,7 +23,7 @@ class Timer:
 
 
 def iter_big_meshes():
-    geo = maybe_pygfx.smooth_sphere_geometry(100, subdivisions=6)
+    geo = smooth_sphere_geometry(100, subdivisions=6)
     vertices = geo.positions.data
     faces = geo.indices.data
     yield "sphere", vertices, faces
@@ -54,20 +53,20 @@ def benchmark():
 
             t.tic()
             # m.check_edge_manifold_and_closed()
-            meshmorph.mesh_is_edge_manifold_and_closed(m.faces)
+            meshfuncs.mesh_is_edge_manifold_and_closed(m.faces)
             t.toc("check e-manifold & closed")
 
             t.tic()
             # m.check_oriented()
-            meshmorph.mesh_is_oriented(m.faces)
+            meshfuncs.mesh_is_oriented(m.faces)
             t.toc("check oriented")
 
             t.tic()
-            meshmorph.mesh_get_component_labels(m.faces, m._data._vertex2faces)
+            meshfuncs.mesh_get_component_labels(m.faces, m._data._vertex2faces)
             t.toc("split components")
 
             t.tic()
-            meshmorph.mesh_get_non_manifold_vertices(m.faces, m._data._vertex2faces)
+            meshfuncs.mesh_get_non_manifold_vertices(m.faces, m._data._vertex2faces)
             t.toc("check v-manifold")
 
             t.tic()
@@ -115,6 +114,7 @@ def benchmark():
             t.toc("Split components")
 
             t.tic()
+            # todo: mmm, this used to be very fast and now it seems slow?
             v = m2.computed_interior_volume
             t.toc("Volume")
             t.add_data("", v)
@@ -130,7 +130,7 @@ def benchmark():
 def benchmark_sphere():
     t = Timer()
     t.tic()
-    maybe_pygfx.smooth_sphere_geometry(100, subdivisions=7)
+    smooth_sphere_geometry(100, subdivisions=7)
     t.toc("Create smooth spere")
     print(t.measurements)
 

@@ -1,8 +1,12 @@
 import numpy as np
 
 from pylinalg import vec_dist
-from maybe_pylinalg import volume_of_triangle, volume_of_triangle, volume_of_closed_mesh
-from maybe_pygfx import solid_tetrahedron
+from gfxmorph.maybe_pylinalg import (
+    volume_of_triangle,
+    volume_of_triangle,
+    volume_of_closed_mesh,
+)
+from testutils import run_tests, get_tetrahedron
 
 
 def test_volume_of_triangle():
@@ -30,9 +34,11 @@ def test_volume_of_triangle():
 
 def test_volume_of_closed_mesh():
     # Create a regular tetrahedron
-    vertices, faces = solid_tetrahedron()
+    vertices, faces, _ = get_tetrahedron()
+    vertices = np.asarray(vertices)
+    faces = np.asarray(faces)
 
-    edge = 1.632993117309891
+    edge = 2
     expected_volume = edge**3 / (6 * 2**0.5)
 
     # Make sure the tetrahedron is not inside-out
@@ -89,5 +95,4 @@ def test_volume_of_closed_mesh():
 
 
 if __name__ == "__main__":
-    test_volume_of_triangle()
-    test_volume_of_closed_mesh()
+    run_tests(globals())
