@@ -409,6 +409,15 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
 
 
 def mesh_get_boundaries(faces):
+    """Select the boundaries of the mesh.
+
+    Returns a list of boundaries, where each boundary is a list of
+    vertices. Each boundary is a loop (the first and last vertex are
+    connected via a boundary edge), and the order of vertices is in the
+    appropriate winding direction.
+
+    The
+    """
     # Special case
     if len(faces) == 0:
         return []
@@ -418,47 +427,84 @@ def mesh_get_boundaries(faces):
     # Select edges
     edges = faces[:, [[0, 1], [1, 2], [2, 0]]]
     edges = edges.reshape(-1, 2)
-    edges.sort(axis=1)  # note, sorting!
+    sorted_edges = np.sort(edges, axis=1)
 
     # Find the unique edges
-    edges_blob = np.frombuffer(edges, dtype="V8")  # performance trick
-    unique_blob, edge_counts = np.unique(edges_blob, return_counts=True)
-    unique_edges = np.frombuffer(edges, dtype=np.int32).reshape(-1, 2)
+    edges_blob = np.frombuffer(sorted_edges, dtype="V8")  # performance trick
+    unique_blob, unique_index, edge_counts = np.unique(
+        edges_blob, return_index=True, return_counts=True
+    )
+    unique_edges = np.frombuffer(unique_blob, dtype=np.int32).reshape(-1, 2)
 
     # Find the boundary edges: those that only have one incident face
-    (boundary_edges,) = np.where(edge_counts == 1)
+    (boundary_edge_indices,) = np.where(edge_counts == 1)
 
     # Build map vi -> eii
-    vertex2edges = [[] for _ in range(faces.max() + 1)]
-    for ei in boundary_edges:
+    nvertices = faces.max() + 1
+    vertex2edges = [[] for _ in range(nvertices)]
+    for ei in boundary_edge_indices:
         vi1, vi2 = unique_edges[ei]
         vertex2edges[vi1].append(ei)
         vertex2edges[vi2].append(ei)
 
-    # Now group them into boundaries ...
+    # Sanity check. Note that the mesh can still be non-manifold, as
+    # long as it's vertex-manifold along the boundaries, it's fine.
+    # Edge-manifoldness is less of an issue, because it means an edge
+    # has more than 2 faces, which makes it not a boundary anyway.
+    for vi in range(nvertices):
+        if len(vertex2edges[vi]) > 2:
+            raise RuntimeError("The mesh is not vertex-manifold.")
 
-    eii_to_check = set(boundary_edges)
+    # Now group them into boundaries ...
+    #
+    # This looks a bit like the code we use to walk over the surface
+    # of the mesh, e.g. to find connected components. This is similar
+    # except we walk over boundaries (edges with just one incident
+    # face).
+
+    eii_to_check = set(boundary_edge_indices)
     boundaries = []
 
     while eii_to_check:
-        ei = eii_to_check.pop()
-        boundary = [ei]
+        # Select arbitrary edge as starting point, and add both its edges to
+        # a list that we will build up further. The order of these initial
+        # vertices determines the direction that we walk in.
+        ei = ei_first = eii_to_check.pop()
+        original_edge = edges[unique_index[ei]]
+        boundary = [original_edge[1]]
         boundaries.append(boundary)
 
         while True:
-            ei = boundary[-1]
+            # Get the two vertex indices on the current edge.
+            # One is the last added vertex, the other represents the direction
+            # we should move in.
             vi1, vi2 = unique_edges[ei]
-            eii = vertex2edges[vi1] + vertex2edges[vi2]
-            for ei in eii:
-                if ei in eii_to_check:
-                    eii_to_check.remove(ei)
-                    boundary.append(ei)
-                    break
+            vi = vi2 if vi1 == boundary[-1] else vi1
+            boundary.append(vi)
+            # We look up what boundary-edges are incident to this vertex.
+            # One is the previous edge. the other will be the next.
+            ei1, ei2 = vertex2edges[vi]
+            ei = ei2 if ei1 == ei else ei1
+            # We either keep going, or have gone full circle
+            if ei in eii_to_check:
+                eii_to_check.remove(ei)
             else:
-                break  # from loop
+                if not (ei == ei_first and boundary[0] == boundary[-1]):
+                    raise RuntimeError(
+                        "This should not happen, but if it does, I think the mesh is not manifold."
+                    )
+                boundary.pop(-1)
+                break
 
-        # Check whether it's a loop
-        assert boundary[0] in eii  # It must always be a loop, right?
+        # Sanity check for the algorithm below. It shows the assumptions
+        # that we make about the result, but that are (should be) true
+        # by the mesh being manifold and how the algorithm works.
+        # Can be uncommented when developing.
+        # edge_index = unique_index[ei]
+        # assert np.all(sorted_edges[edge_index] == unique_edges[ei])
+        # original_edge = edges[edge_index]
+        # assert boundary[0] == original_edge[1]
+        # assert boundary[1] == original_edge[0]
 
     return boundaries
 

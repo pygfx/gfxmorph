@@ -97,16 +97,44 @@ def test_mesh_selection():
 
 
 def test_boundaries():
+    # Test boundaries on a bunch of fans
     for faces in testutils.iter_fans():
-        is_open = len(faces) <= 3 or faces[-1][0] == 0
+        is_closed = len(faces) >= 3 and faces[-1][1] == 1
         boundaries = meshmorph.mesh_get_boundaries(faces)
         assert len(boundaries) == 1
         boundary = boundaries[0]
-        if is_open:
-            expected_boundary_length = 3 * len(faces) - 2 * (len(faces) - 1)
-        else:
-            expected_boundary_length = 3 * len(faces) - 2 * len(faces)
-        assert len(boundary) == expected_boundary_length
+        nr_vertices_on_boundary = 3 * len(faces) - 2 * (len(faces) - 1)
+        if is_closed:
+            nr_vertices_on_boundary -= 2
+        assert len(boundary) == nr_vertices_on_boundary
+
+    # Next we'll work with a sphere. We create two holes in the sphere,
+    # with increasing size. The primary faces to remove should be far
+    # away from each-other, so that when we create larger holes, the
+    # hole's won't touch, otherwise the mesh becomes non-manifold.
+    _, faces_original, _ = testutils.get_sphere()
+    vertex2faces = meshmorph.make_vertex2faces(faces_original)
+
+    for n_faces_to_remove_per_hole in [1, 2, 3, 4]:
+        faces = [face for face in faces_original]
+        faces2pop = []
+        for fi in (2, 30):
+            faces2pop.append(fi)
+            _, fii = meshmorph.face_get_neighbours2(faces, vertex2faces, fi)
+            for _ in range(n_faces_to_remove_per_hole - 1):
+                faces2pop.append(fii.pop())
+
+        assert len(faces2pop) == len(set(faces2pop))  # no overlap between holes
+
+        for fi in reversed(sorted(faces2pop)):
+            faces.pop(fi)
+
+        boundaries = meshmorph.mesh_get_boundaries(faces)
+
+        nr_vertices_on_boundary = [0, 3, 4, 5, 6, 7][n_faces_to_remove_per_hole]
+        assert len(boundaries) == 2
+        assert len(boundaries[0]) == nr_vertices_on_boundary
+        assert len(boundaries[1]) == nr_vertices_on_boundary
 
 
 # todo: there are probably more tests in arbiter
