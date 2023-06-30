@@ -1,8 +1,6 @@
 import numpy as np
 
-from pylinalg import vec_dist
 from gfxmorph.maybe_pylinalg import (
-    volume_of_triangle,
     volume_of_triangle,
     volume_of_closed_mesh,
 )

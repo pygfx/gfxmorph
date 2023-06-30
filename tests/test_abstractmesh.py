@@ -1,9 +1,7 @@
 import numpy as np
-import pygfx as gfx
 import pytest
 
 from gfxmorph import maybe_pygfx
-from gfxmorph import meshfuncs
 from gfxmorph import AbstractMesh
 from testutils import run_tests
 
@@ -12,7 +10,7 @@ from testutils import run_tests
 
 
 def test_abstract_mesh_basics():
-    return  #  todo: these tests are outdated
+    return  # todo: these tests are outdated
 
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=3)
     vertices = geo.positions.data

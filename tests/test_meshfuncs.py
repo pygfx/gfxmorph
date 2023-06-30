@@ -3,7 +3,6 @@ We cover most mesh funcs via test_corrupt.py and test_abstractmesh.py.
 Here we have a few more tests to test some functions more directly.
 """
 
-import numpy as np
 from gfxmorph import meshfuncs
 from testutils import run_tests, iter_fans, get_sphere
 

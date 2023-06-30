@@ -101,7 +101,7 @@ def test_non_manifold_collapse_face_1():
         assert not m.is_edge_manifold
         assert not m.is_vertex_manifold  # cannot have sound fans with 3-face edges
         assert not m.is_closed  # cannot be closed if not edge manifold
-        assert not m.is_oriented  #  cannot be oriented if not edge manifold
+        assert not m.is_oriented  # cannot be oriented if not edge manifold
 
         # Collapsing this face the small meshes makes it non-manifold even after repair
         if len(faces) <= 4:
@@ -301,7 +301,6 @@ def test_non_manifold_weakly_connected_1():
 
     vertices, faces, _ = get_sphere()
 
-    failed = []
     for index_to_start_from in range(len(faces)):
         for vi1, vi2 in vertex_pairs:
             vertices, faces, _ = get_sphere()
@@ -605,8 +604,6 @@ def test_non_oriented_change_winding_2():
 
     for face_idx1 in [0, 1, 2, 11, 29, -3, -2, -1]:
         for vertices, faces, is_closed in iter_test_meshes():
-            ori_faces = [face.copy() for face in faces]
-
             # If we reverse all faces, it will still be oriented
             if len(faces) <= 2:
                 continue

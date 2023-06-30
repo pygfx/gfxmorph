@@ -12,9 +12,7 @@
 #
 # Vertex indices are denoted with vi, face indices with fi.
 
-import time
 import queue
-import warnings  # todo: use warnings or logger?
 
 import numpy as np
 
@@ -241,8 +239,6 @@ class AbstractMesh:
         have less faces (it could even be empty) and the mesh may have
         holes where it previously attached to other parts of the mesh.
         """
-
-        first_face = self._data.faces[0].copy()
 
         # Remove collapsed faces
         collapsed_faces = np.array(
@@ -508,7 +504,7 @@ class AbstractMesh:
         vii = np.unique(faces.flatten())
         vertices_mask[vii] = True
 
-        vii_not_used = np.where(vertices_mask == False)[0]
+        vii_not_used = np.where(~vertices_mask)[0]
         self._data.delete_vertices(vii_not_used)
 
     def remove_small_components(self, min_faces=4):
@@ -572,7 +568,7 @@ class AbstractMesh:
         """
         vertices = self.vertices
         vi0 = int(ref_vertex)
-        p0 = vertices[vi0]
+        # p0 = vertices[vi0]
         # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
         selected_vertices = {vi0}
         vertices2check = [(vi0, 0)]
@@ -584,65 +580,8 @@ class AbstractMesh:
                     p2 = vertices[vi2]
                     sdist = cumdist + np.linalg.norm(p2 - p1)
                     if sdist < max_distance:
-                        adist = np.linalg.norm(p2 - p0)
+                        # adist = np.linalg.norm(p2 - p0)
                         # selected_vertices[vi2] = dict(pos=[xn, yn, zn], color=color, sdist=sdist, adist=adist)
                         selected_vertices.add(vi2)
                         vertices2check.append((vi2, sdist))
         return selected_vertices
-
-
-if __name__ == "__main__":
-    import pygfx as gfx
-    import maybe_pygfx
-
-    # The geometries with sharp corners like cubes and all hedrons are not closed
-    # because we deliberately don't share vertices, so that the normals don't interpolate
-    # and make the edges look weird.
-    #
-    # Some other geometries, like the sphere and torus knot, also seems open thought, let's fix that!
-
-    def get_tetrahedron():
-        """A closed tetrahedron as simple list objects, so we can easily add stuff to create corrupt meshes."""
-        vertices = [
-            [-1, 0, -1 / 2**0.5],
-            [+1, 0, -1 / 2**0.5],
-            [0, -1, 1 / 2**0.5],
-            [0, +1, 1 / 2**0.5],
-        ]
-        faces = [
-            [2, 0, 1],
-            [0, 2, 3],
-            [1, 0, 3],
-            [2, 1, 3],
-        ]
-        return vertices, faces, True
-
-    # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
-    # geo = gfx.sphere_geometry(1)
-    # geo = gfx.geometries.tetrahedron_geometry()
-    geo = maybe_pygfx.smooth_sphere_geometry(1)
-    # m = AbstractMesh(geo.positions.data, geo.indices.data)
-    m = AbstractMesh(*get_tetrahedron()[:2])
-
-    # m._check_manifold_nr1()
-
-    # positions = np.array(
-    #     [
-    #         [1, 1, 1],
-    #         [-1, -1, 1],
-    #         [-1, 1, -1],
-    #         [1, -1, -1],
-    #     ],
-    #     dtype=np.float32,
-    # )
-    #
-    # indices = np.array(
-    #     [
-    #         [2, 0, 1],
-    #         [0, 2, 3],
-    #         [1, 0, 3],
-    #         [2, 1, 3],
-    #     ],
-    #     dtype=np.int32,
-    # )
-    # m = AbstractMesh(positions, indices)

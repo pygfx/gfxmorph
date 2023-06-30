@@ -1,7 +1,7 @@
-from .dynamicmesh import DynamicMesh
-from .meshmorph import AbstractMesh
+from .dynamicmesh import DynamicMesh  # noqa: F401
+from .meshmorph import AbstractMesh  # noqa: F401
 
-from . import meshfuncs
+from . import meshfuncs  # noqa: F401
 
 
 __version__ = "0.0.1"
