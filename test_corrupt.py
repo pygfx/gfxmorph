@@ -113,6 +113,12 @@ def test_non_manifold_collapse_face_1():
         assert not m.is_closed  # there's a hole in the mesh
         assert m.is_oriented
 
+        m.repair_closed()
+
+        assert m.is_manifold
+        assert m.is_closed
+        assert m.is_oriented
+
 
 def test_non_manifold_collapse_face_2():
     """Collapse a face, but at the edge, so its still edge-manifold."""
@@ -210,7 +216,7 @@ def test_non_manifold_add_face_4():
     # implementation is very slow. I have changed my local version of
     # skcg to turn the test on.
 
-    for vertices, faces, _ in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         # Break it
 
         vertices.append([1, 2, 3])
@@ -232,6 +238,15 @@ def test_non_manifold_add_face_4():
         assert m.is_manifold
         assert not m.is_closed
         assert m.is_oriented
+
+        # Repair harder
+
+        if is_closed:
+            m.repair_closed()
+
+            assert m.is_manifold
+            assert m.is_closed
+            assert m.is_oriented
 
 
 def test_non_manifold_add_face_5():
@@ -412,9 +427,9 @@ def test_non_manifold_weakly_connected_3():
 def test_non_closed_remove_face():
     """Remove a face, opening up the mesh."""
 
-    for vertices, faces, _ in iter_test_meshes():
+    for vertices, faces, is_closed in iter_test_meshes():
         # Does not work for quad and strip
-        if len(faces) <= 3:
+        if not is_closed:
             continue
 
         faces.pop(1)
@@ -423,6 +438,12 @@ def test_non_closed_remove_face():
 
         assert m.is_manifold
         assert not m.is_closed
+        assert m.is_oriented
+
+        m.repair_closed()
+
+        assert m.is_manifold
+        assert m.is_closed
         assert m.is_oriented
 
 
@@ -455,6 +476,13 @@ def test_non_closed_planes_2():
 
         assert m.is_manifold
         assert not m.is_closed
+        assert m.is_oriented
+
+        # We can stitch the individual planes together!
+        m.deduplicate_vertices(atol=1e-6)
+
+        assert m.is_manifold
+        assert m.is_closed
         assert m.is_oriented
 
 

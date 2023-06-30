@@ -1318,15 +1318,31 @@ class AbstractMesh:
         return len(reversed_faces)
 
     def repair_closed(self):
+        """Repair holes in the mesh.
+
+        At the moment this only repairs holes of a single face, but this can be improved.
+        """
         if not self.is_manifold:
             raise RuntimeError("Repairing open meshes requires them to be manifold.")
 
         faces = self._data.faces
+        new_faces = []
 
-        # # Now we check all boundaries
-        # for boundary in boundaries:
-        #     assert len(boundary) >= 3  # I don't think they can be smaller, right?
-        #     if boundary[0] == boundary[-1]
+        # Detect boundaries
+        boundaries = mesh_get_boundaries(faces)
+
+        # Now we check all boundaries
+        for boundary in boundaries:
+            assert len(boundary) >= 3  # I don't think they can be smaller, right?
+            if len(boundary) == 3:
+                new_faces.append(boundary)
+            else:
+                pass
+                # We can apply the earcut algororithm to fill larger
+                # holes as well. Leaving this open for now.
+
+        if new_faces:
+            self._data.add_faces(new_faces)
 
     def deduplicate_vertices(self, *, atol=None):
         """Merge vertices that are the same or close together according to the given tolerance.
