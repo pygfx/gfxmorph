@@ -4,6 +4,10 @@ import numpy as np
 VERTICES_PER_FACE = 3
 
 
+class UnexpectedExceptionInAtomicCode(RuntimeError):
+    pass
+
+
 class DynamicMesh:
     """An object that holds mesh data that can be modified in-place.
     It has buffers that are oversized so the vertex and face array can
@@ -186,6 +190,10 @@ class DynamicMesh:
         return result
 
     def delete_faces(self, face_indices):
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
         to_delete = set(self._get_indices(face_indices, "face indices to delete"))
 
         nfaces1 = len(self._faces_buf)
@@ -196,32 +204,43 @@ class DynamicMesh:
 
         indices1 = list(to_delete - to_just_drop)
         indices2 = list(to_maybe_move - to_just_drop)
-        assert len(indices1) == len(indices2)
+        assert len(indices1) == len(indices2), "Internal error"
 
-        # Update reverse map
-        vertex2faces = self._vertex2faces
-        for fi in to_delete:
-            face = self._faces[fi]
-            vertex2faces[face[0]].remove(fi)
-            vertex2faces[face[1]].remove(fi)
-            vertex2faces[face[2]].remove(fi)
-        for fi1, fi2 in zip(indices1, indices2):
-            face = self._faces[fi2]
-            for i in range(3):
-                fii = vertex2faces[face[i]]
-                fii.remove(fi2)
-                fii.append(fi1)
+        if not all(0 <= fi < nfaces1 for fi in to_delete):
+            raise ValueError("Face to delete is out of bounds.")
 
-        # Move vertices from the end into the slots of the deleted vertices
-        self._faces[indices1] = self._faces[indices2]
-        # Adjust the array lengths (reset views)
-        self._faces = self._faces_buf[:nfaces2]
-        # Tidy up
-        self._faces_buf[nfaces2:nfaces1] = 0
+        # --- Apply
 
-        self.version_faces += 1
-        if self._debug_mode:
-            self._check_internal_state()
+        try:
+            # Update reverse map
+            for fi in to_delete:
+                face = self._faces[fi]
+                vertex2faces[face[0]].remove(fi)
+                vertex2faces[face[1]].remove(fi)
+                vertex2faces[face[2]].remove(fi)
+            for fi1, fi2 in zip(indices1, indices2):
+                face = self._faces[fi2]
+                for i in range(3):
+                    fii = vertex2faces[face[i]]
+                    fii.remove(fi2)
+                    fii.append(fi1)
+
+            # Move vertices from the end into the slots of the deleted vertices
+            self._faces[indices1] = self._faces[indices2]
+
+            # Adjust the array lengths (reset views)
+            self._faces = self._faces_buf[:nfaces2]
+
+            # Tidy up
+            self._faces_buf[nfaces2:nfaces1] = 0
+
+            # Bump version
+            self.version_faces += 1
+            if self._debug_mode:
+                self._check_internal_state()
+
+        except Exception as err:
+            raise UnexpectedExceptionInAtomicCode(err)
 
     def delete_vertices(self, vertex_indices):
         # Note: defragmenting when deleting vertices is somewhat expensive
@@ -236,6 +255,10 @@ class DynamicMesh:
         #   the need for additional structures like a set of free vertices.
         # - The vertices and faces can at any moment be copied and be sound. No export needed.
 
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checcks
+
         to_delete = set(self._get_indices(vertex_indices, "vertex indices to delete"))
 
         nverts1 = len(self._positions)
@@ -246,41 +269,55 @@ class DynamicMesh:
 
         indices1 = list(to_delete - to_just_drop)
         indices2 = list(to_maybe_move - to_just_drop)
-        assert len(indices1) == len(indices2)
+        assert len(indices1) == len(indices2), "Internal error"
 
-        # Move vertices from the end into the slots of the deleted vertices
-        self._positions[indices1] = self._positions[indices2]
-        self._normals[indices1] = self._normals[indices2]
-        self._colors[indices1] = self._colors[indices2]
-
-        # Adjust the array lengths (reset views)
-        self._positions = self._positions_buf[:nverts2]
-        self._normals = self._normals_buf[:nverts2]
-        self._colors = self._colors_buf[:nverts2]
-
-        # Zero out the free slots, just to tidy up
-        self._positions_buf[nverts2:nverts1] = 0
-        self._normals_buf[nverts2:nverts1] = 0
-        self._colors_buf[nverts2:nverts1] = 0
-
-        # Update the faces that refer to the moved indices
-        for vi1, vi2 in zip(indices1, indices2):
-            self._faces[self._faces == vi2] = vi1
-
-        # Update reverse map
-        vertex2faces = self._vertex2faces
+        # Check that none of the vertices are in use
         for vi in to_delete:
+            if not (0 <= vi < nverts1):
+                raise ValueError("Vertex to delete is out of bounds.")
             if len(vertex2faces[vi]) > 0:
-                raise RuntimeError("Trying to delete an in-use vertex.")
-        for vi1, vi2 in zip(indices1, indices2):
-            vertex2faces[vi1] = vertex2faces[vi2]
-        vertex2faces[nverts2:] = []
+                raise ValueError("Vertex to delete is in use.")
 
-        self.version_verts += 1
-        if self._debug_mode:
-            self._check_internal_state()
+        # --- Apply
+
+        try:
+            # Move vertices from the end into the slots of the deleted vertices
+            self._positions[indices1] = self._positions[indices2]
+            self._normals[indices1] = self._normals[indices2]
+            self._colors[indices1] = self._colors[indices2]
+
+            # Adjust the array lengths (reset views)
+            self._positions = self._positions_buf[:nverts2]
+            self._normals = self._normals_buf[:nverts2]
+            self._colors = self._colors_buf[:nverts2]
+
+            # Zero out the free slots, just to tidy up
+            self._positions_buf[nverts2:nverts1] = 0
+            self._normals_buf[nverts2:nverts1] = 0
+            self._colors_buf[nverts2:nverts1] = 0
+
+            # Update the faces that refer to the moved indices
+            for vi1, vi2 in zip(indices1, indices2):
+                self._faces[self._faces == vi2] = vi1
+
+            # Update reverse map
+            for vi1, vi2 in zip(indices1, indices2):
+                vertex2faces[vi1] = vertex2faces[vi2]
+            vertex2faces[nverts2:] = []
+
+            # Bump version
+            self.version_verts += 1
+            if self._debug_mode:
+                self._check_internal_state()
+
+        except Exception as err:
+            raise UnexpectedExceptionInAtomicCode(err)
 
     def add_faces(self, new_faces):
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
         # Check incoming array
         faces = np.asarray(new_faces, np.int32)
         if not (
@@ -303,24 +340,33 @@ class DynamicMesh:
         n1 = len(self._faces)
         n2 = n1 + n
 
-        self._ensure_free_faces(n)
-        self._faces = self._faces_buf[:n2]
-        self._faces[n1:] = faces
+        # --- Apply
 
-        # Update reverse map
-        vertex2faces = self._vertex2faces
-        for i in range(len(faces)):
-            fi = i + n1
-            face = faces[i]
-            vertex2faces[face[0]].append(fi)
-            vertex2faces[face[1]].append(fi)
-            vertex2faces[face[2]].append(fi)
+        try:
+            self._ensure_free_faces(n)
+            self._faces = self._faces_buf[:n2]
+            self._faces[n1:] = faces
 
-        self.version_faces += 1
-        if self._debug_mode:
-            self._check_internal_state()
+            # Update reverse map
+            for i in range(len(faces)):
+                fi = i + n1
+                face = faces[i]
+                vertex2faces[face[0]].append(fi)
+                vertex2faces[face[1]].append(fi)
+                vertex2faces[face[2]].append(fi)
+
+            self.version_faces += 1
+            if self._debug_mode:
+                self._check_internal_state()
+
+        except Exception as err:
+            raise UnexpectedExceptionInAtomicCode(err)
 
     def add_vertices(self, new_positions):
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
         # Check incoming array
         positions = np.asarray(new_positions, np.float32)
         if not (
@@ -336,55 +382,80 @@ class DynamicMesh:
         n1 = len(self._positions)
         n2 = n1 + n
 
-        self._ensure_free_vertices(n)
-        self._positions = self._positions_buf[:n2]
-        self._normals = self._normals_buf[:n2]
-        self._colors = self._colors_buf[:n2]
+        # --- Apply
 
-        self._positions[n1:] = new_positions
-        self._normals[n1:] = 0.0
-        self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
+        try:
+            self._ensure_free_vertices(n)
+            self._positions = self._positions_buf[:n2]
+            self._normals = self._normals_buf[:n2]
+            self._colors = self._colors_buf[:n2]
 
-        # Update reverse map
-        vertex2faces = self._vertex2faces
-        vertex2faces.extend([] for i in range(n))
+            self._positions[n1:] = new_positions
+            self._normals[n1:] = 0.0
+            self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
 
-        self.version_verts += 1
-        if self._debug_mode:
-            self._check_internal_state()
+            # Update reverse map
+            vertex2faces.extend([] for i in range(n))
+
+            self.version_verts += 1
+            if self._debug_mode:
+                self._check_internal_state()
+
+        except Exception as err:
+            raise UnexpectedExceptionInAtomicCode(err)
 
     def update_faces(self, face_indices, new_faces):
         """Update the value of the given faces."""
 
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        nfaces1 = len(self.faces)
         indices = self._get_indices(face_indices, "face indices to update")
         faces = np.asarray(new_faces, np.int32)
 
         if len(indices) != len(faces):
             raise ValueError("Indices and faces to update have different lengths.")
         if len(indices) == 0:
-            return
+            raise ValueError("Cannot update zero faces.")
+
+        # Check indices
+        if not all(0 <= fi < nfaces1 for fi in indices):
+            raise ValueError("Face to update is out of bounds.")
+
+        # Check sanity of the faces
+        if faces.min() < 0 or faces.max() >= len(self._positions):
+            raise ValueError(
+                "The faces array containes indices that are out of bounds."
+            )
 
         # Note: this should work to, but moves more stuff around, so its less efficient.
         # self.delete_faces(face_indices)
         # self.add_faces(faces)
 
-        # Update reverse map
-        vertex2faces = self._vertex2faces
-        for fi, new_face in zip(indices, faces):
-            old_face = self._faces[fi]
-            vertex2faces[old_face[0]].remove(fi)
-            vertex2faces[old_face[1]].remove(fi)
-            vertex2faces[old_face[2]].remove(fi)
-            vertex2faces[new_face[0]].append(fi)
-            vertex2faces[new_face[1]].append(fi)
-            vertex2faces[new_face[2]].append(fi)
+        # --- Apply
 
-        # Update
-        self._faces[indices] = faces
+        try:
+            # Update reverse map
+            for fi, new_face in zip(indices, faces):
+                old_face = self._faces[fi]
+                vertex2faces[old_face[0]].remove(fi)
+                vertex2faces[old_face[1]].remove(fi)
+                vertex2faces[old_face[2]].remove(fi)
+                vertex2faces[new_face[0]].append(fi)
+                vertex2faces[new_face[1]].append(fi)
+                vertex2faces[new_face[2]].append(fi)
 
-        self.version_faces += 1
-        if self._debug_mode:
-            self._check_internal_state()
+            # Update
+            self._faces[indices] = faces
+
+            self.version_faces += 1
+            if self._debug_mode:
+                self._check_internal_state()
+
+        except Exception as err:
+            raise UnexpectedExceptionInAtomicCode(err)
 
     # def allocate_faces(self, n):
     #     """Add n new faces to the mesh. Return an nx3 array with the new faces,
