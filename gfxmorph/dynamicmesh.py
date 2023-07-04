@@ -1,10 +1,9 @@
 import numpy as np
 
-# We assume meshes with triangles (not quads)
-VERTICES_PER_FACE = 3
-
 
 class UnexpectedExceptionInAtomicCode(RuntimeError):
+    """Raised when an error occurs within a piece of code that is supposed to be atomic."""
+
     pass
 
 
@@ -16,8 +15,13 @@ class DynamicMesh:
     managed to keep the arrays without holes.
     """
 
+    # We assume meshes with triangles (not quads)
+    _verts_per_face = 3
+
+    # In debug mode, the mesh checks its internal state after each change
+    _debug_mode = False
+
     def __init__(self):
-        self._debug_mode = True
         self.version_verts = 0
         self.version_faces = 0
         self.reset(initial_size=0)
@@ -49,7 +53,7 @@ class DynamicMesh:
         # Create the buffers that contain the data, and which are larger
         # than needed. These arrays should *only* be referenced in the
         # allocate- and deallocate- methods.
-        self._faces_buf = np.zeros((initial_size, 3), np.int32)
+        self._faces_buf = np.zeros((initial_size, self._verts_per_face), np.int32)
         self._positions_buf = np.zeros((initial_size, 3), np.float32)
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
@@ -132,10 +136,10 @@ class DynamicMesh:
         nfaces2 = nfaces1 + n
         # Re-allocate buffer?
         if nfaces2 > len(self._faces_buf):
-            new_size = max(8, 2 * nfaces2)
+            new_size = max(8, nfaces2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
             # print(f"Re-allocating faces array to {new_size} elements.")
-            self._faces_buf = np.zeros((new_size, VERTICES_PER_FACE), np.int32)
+            self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces1] = self._faces
         # Reset views
         self._faces = self._faces_buf[:nfaces2]
@@ -150,11 +154,11 @@ class DynamicMesh:
         assert n >= 1
         nfaces = len(self._faces) - n
         # Re-allocate buffer?
-        if nfaces <= 4 * len(self._faces_buf):
-            new_size = max(8, 2 * nfaces)
+        if nfaces <= 0.25 * len(self._faces_buf):
+            new_size = max(8, nfaces * 2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
             # print(f"De-allocating faces array to {new_size} elements.")
-            self._faces_buf = np.zeros((new_size, VERTICES_PER_FACE), np.int32)
+            self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces] = self._faces[:nfaces]
         else:
             # Tidy up
@@ -174,7 +178,7 @@ class DynamicMesh:
         nverts2 = nverts1 + n
         # Re-allocate buffer?
         if nverts2 > len(self._positions_buf):
-            new_size = max(8, 2 * nverts2)
+            new_size = max(8, nverts2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
             # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
@@ -196,8 +200,8 @@ class DynamicMesh:
         assert n >= 1
         nverts = len(self._positions) - n
         # Re-allocate buffer?
-        if nverts <= 4 * len(self._positions_buf):
-            new_size = max(8, 2 * nverts)
+        if nverts <= 0.25 * len(self._positions_buf):
+            new_size = max(8, nverts * 2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
             # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
@@ -242,9 +246,9 @@ class DynamicMesh:
             )
         elif len(result) == 0:
             raise ValueError(f"The {what_for} must not be empty.")
-        elif min(indices) < 0:
+        elif min(result) < 0:
             raise ValueError("Negative indices not allowed.")
-        elif max(indices) >= n:
+        elif max(result) >= n:
             raise ValueError("Index out of bounds.")
 
         return result
@@ -287,7 +291,7 @@ class DynamicMesh:
                 vertex2faces[face[2]].remove(fi)
             for fi1, fi2 in zip(indices1, indices2):
                 face = self._faces[fi2]
-                for i in range(3):
+                for i in range(self._verts_per_face):
                     fii = vertex2faces[face[i]]
                     fii.remove(fi2)
                     fii.append(fi1)
@@ -303,7 +307,7 @@ class DynamicMesh:
             if self._debug_mode:
                 self._check_internal_state()
 
-        except Exception as err:
+        except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
 
     def delete_vertices(self, vertex_indices):
@@ -340,11 +344,8 @@ class DynamicMesh:
         assert len(indices1) == len(indices2), "Internal error"
 
         # Check that none of the vertices are in use
-        for vi in to_delete:
-            if not (0 <= vi < nverts1):
-                raise ValueError("Vertex to delete is out of bounds.")
-            if len(vertex2faces[vi]) > 0:
-                raise ValueError("Vertex to delete is in use.")
+        if any(len(vertex2faces[vi]) > 0 for vi in to_delete):
+            raise ValueError("Vertex to delete is in use.")
 
         # --- Apply
 
@@ -372,7 +373,7 @@ class DynamicMesh:
             if self._debug_mode:
                 self._check_internal_state()
 
-        except Exception as err:
+        except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
 
     def add_faces(self, new_faces):
@@ -385,11 +386,11 @@ class DynamicMesh:
         if not (
             isinstance(faces, np.ndarray)
             and faces.ndim == 2
-            and faces.shape[1] == VERTICES_PER_FACE
+            and faces.shape[1] == self._verts_per_face
         ):
             raise TypeError("Faces must be a Nx3 array")
-        # We want to be able to assume that there is at least one face, and 3 valid vertices
-        # (or 4 faces and 4 vertices for a closed mesh)
+        # It's fine for the mesh to have zero faces, but it's likely
+        # an error if the user calls this with an empty array.
         if len(faces) == 0:
             raise ValueError("Cannot add zero faces.")
         # Check sanity of the faces
@@ -419,7 +420,7 @@ class DynamicMesh:
             if self._debug_mode:
                 self._check_internal_state()
 
-        except Exception as err:
+        except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
 
     def add_vertices(self, new_positions):
@@ -455,7 +456,7 @@ class DynamicMesh:
             if self._debug_mode:
                 self._check_internal_state()
 
-        except Exception as err:
+        except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
 
     def update_faces(self, face_indices, new_faces):
@@ -472,8 +473,6 @@ class DynamicMesh:
 
         if len(indices) != len(faces):
             raise ValueError("Indices and faces to update have different lengths.")
-        if len(indices) == 0:
-            raise ValueError("Cannot update zero faces.")
 
         # Check sanity of the faces
         if faces.min() < 0 or faces.max() >= len(self._positions):
@@ -505,5 +504,5 @@ class DynamicMesh:
             if self._debug_mode:
                 self._check_internal_state()
 
-        except Exception as err:
+        except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
