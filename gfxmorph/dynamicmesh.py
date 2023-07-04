@@ -17,19 +17,53 @@ class DynamicMesh:
     """
 
     def __init__(self):
-        initial_size = 0
-
         self._debug_mode = True
+        self.version_verts = 0
+        self.version_faces = 0
+        self.reset(initial_size=0)
 
-        # Create the buffers
+    @property
+    def faces(self):
+        """The faces of the mesh.
+
+        This is a C-contiguous readonly ndarray. Note that the array
+        may change as data is added and deleted, including faces being
+        moved arround to fill holes left by deleted faces.
+        """
+        return self._faces_r
+
+    @property
+    def vertices(self):
+        """The vertices of the mesh.
+
+        This is a C-contiguous ndarray. Note that the array may change
+        as data is added and deleted, including vertices being moved
+        arround to fill holes left by deleted vertices.
+        """
+        # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
+        return self._positions
+
+    def reset(self, *, vertices=None, faces=None, initial_size=0):
+        """Remove all vertices and faces and add the given ones (if any)."""
+
+        # Create the buffers that contain the data, and which are larger
+        # than needed. These arrays should *only* be referenced in the
+        # allocate- and deallocate- methods.
         self._faces_buf = np.zeros((initial_size, 3), np.int32)
         self._positions_buf = np.zeros((initial_size, 3), np.float32)
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
         # todo: Maybe face colors are more convenient?
 
-        # Create array views
+        # Create faces array views. The internals operate on the ._faces
+        # array. We publicly expose the readonly ._faces_r array, because
+        # any changes to it can corrupt the mesh (e.g. use nonexisting
+        # vertices).
         self._faces = self._faces_buf[:0]
+        self._faces_r = self._faces_buf[:0]
+        self._faces_r.flags.writeable = False
+
+        # The vertex array views. Not much harm can be done to these.
         self._positions = self._positions_buf[:0]
         self._normals = self._normals_buf[:0]
         self._colors = self._colors_buf[:0]
@@ -48,36 +82,34 @@ class DynamicMesh:
         # is slower due to the extra indirection.
         self._vertex2faces = []  # vi -> [fi1, fi2, ..]
 
-        self.version_verts = 0
-        self.version_faces = 0
+        if vertices is not None:
+            self.add_vertices(vertices)
 
-    @property
-    def faces(self):
-        # todo: return a readonly version
-        return self._faces
-
-    @property
-    def vertices(self):
-        # todo: return a readonly version
-        # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
-        return self._positions
+        if faces is not None:
+            self.add_faces(faces)
 
     def _check_internal_state(self):
-        # Some vertices not being used is technically an ok state. It
-        # is also unavoidable, because one first adds vertices and then
-        # the faces to use them. But a bug in our internals could make
-        # the number of unused vertices grow, so maybe we'll want some
-        # sort of check for it at some point.
+        """Method to validate the integrity of the internal state. In
+        practice this check should not be needed, but whole running
+        tests and during dev it add an extra layer of security.
+        """
 
-        faces = self.faces
+        # Note: some vertices not being used is technically an ok state.
+        # It is also unavoidable, because one first adds vertices and
+        # then the faces to use them. But a bug in our internals could
+        # make the number of unused vertices grow, so maybe we'll want
+        # some sort of check for it at some point.
+
+        vertices = self._positions
+        faces = self._faces
         if len(faces) == 0:
             return
         # Check that faces match a vertex
         assert faces.min() >= 0
-        assert faces.max() < len(self.vertices)
+        assert faces.max() < len(vertices)
 
         # Build vertex2faces
-        vertex2faces = [[] for _ in range(len(self.vertices))]
+        vertex2faces = [[] for _ in range(len(vertices))]
         for fi in range(len(faces)):
             face = faces[fi]
             vertex2faces[face[0]].append(fi)
@@ -90,72 +122,102 @@ class DynamicMesh:
         for face1, face2 in zip(vertex2faces, self._vertex2faces):
             assert set(face1) == set(face2)
 
-    def _allocate_faces_buffer(self, n):
-        # Sanity check
-        nfaces = len(self._faces)
-        assert n >= nfaces
-        # Allocate new array.
-        self._faces_buf = np.zeros((n, VERTICES_PER_FACE), np.int32)
-        # Copy the data and reset view
-        self._faces_buf[:nfaces, :] = self._faces
-        self._faces = self._faces_buf[:nfaces]
+    def _allocate_faces(self, n):
+        """Increase the size of the faces view to hold n free faces at
+        the end. If necessary the underlying buffer is re-allocated.
+        """
+        n = int(n)
+        assert n >= 1
+        nfaces1 = len(self._faces)
+        nfaces2 = nfaces1 + n
+        # Re-allocate buffer?
+        if nfaces2 > len(self._faces_buf):
+            new_size = max(8, 2 * nfaces2)
+            new_size = 2 ** int(np.ceil(np.log2(new_size)))
+            # print(f"Re-allocating faces array to {new_size} elements.")
+            self._faces_buf = np.zeros((new_size, VERTICES_PER_FACE), np.int32)
+            self._faces_buf[:nfaces1] = self._faces
+        # Reset views
+        self._faces = self._faces_buf[:nfaces2]
+        self._faces_r = self._faces_buf[:nfaces2]
+        self._faces_r.flags.writeable = False
 
-    def _allocate_vertices_buffer(self, n):
-        # Sanity check
-        nverts = len(self._positions)
-        assert n >= nverts
-        # Allocate new arrays.
-        self._positions_buf = np.empty((n, 3), np.float32)
-        self._normals_buf = np.empty((n, 3), np.float32)
-        self._colors_buf = np.empty((n, 4), np.float32)
-        # Copy the data
-        self._positions_buf[:nverts, :] = self._positions
-        self._normals_buf[:nverts, :] = self._normals
-        self._colors_buf[:nverts, :] = self._colors
+    def _deallocate_faces(self, n):
+        """ "Decrease the size of the faces view, discarting the n faces
+        at the end. If it makes sense, the underlying buffer is re-allocated.
+        """
+        n = int(n)
+        assert n >= 1
+        nfaces = len(self._faces) - n
+        # Re-allocate buffer?
+        if nfaces <= 4 * len(self._faces_buf):
+            new_size = max(8, 2 * nfaces)
+            new_size = 2 ** int(np.ceil(np.log2(new_size)))
+            # print(f"De-allocating faces array to {new_size} elements.")
+            self._faces_buf = np.zeros((new_size, VERTICES_PER_FACE), np.int32)
+            self._faces_buf[:nfaces] = self._faces[:nfaces]
+        else:
+            # Tidy up
+            self._faces_buf[nfaces:] = 0
+        # Reset views
+        self._faces = self._faces_buf[:nfaces]
+        self._faces_r = self._faces_buf[:nfaces]
+        self._faces_r.flags.writeable = False
+
+    def _allocate_vertices(self, n):
+        """Increase the vertex views to hold n free vertices at the end. If
+        necessary the underlying buffers are re-allocated.
+        """
+        n = int(n)
+        assert n >= 1
+        nverts1 = len(self._positions)
+        nverts2 = nverts1 + n
+        # Re-allocate buffer?
+        if nverts2 > len(self._positions_buf):
+            new_size = max(8, 2 * nverts2)
+            new_size = 2 ** int(np.ceil(np.log2(new_size)))
+            # print(f"Re-allocating vertex array to {new_size} elements.")
+            self._positions_buf = np.zeros((new_size, 3), np.float32)
+            self._positions_buf[:nverts1] = self._positions
+            self._normals_buf = np.zeros((new_size, 3), np.float32)
+            self._normals_buf[:nverts1] = self._normals
+            self._colors_buf = np.zeros((new_size, 4), np.float32)
+            self._colors_buf[:nverts1] = self._colors
+        # Reset views
+        self._positions = self._positions_buf[:nverts2]
+        self._normals = self._normals_buf[:nverts2]
+        self._colors = self._colors_buf[:nverts2]
+
+    def _deallocate_vertices(self, n):
+        """Decrease the size of the vertices views, discarting the n vertices
+        at the end. If it makes sense, the underlying buffer is re-allocated.
+        """
+        n = int(n)
+        assert n >= 1
+        nverts = len(self._positions) - n
+        # Re-allocate buffer?
+        if nverts <= 4 * len(self._positions_buf):
+            new_size = max(8, 2 * nverts)
+            new_size = 2 ** int(np.ceil(np.log2(new_size)))
+            # print(f"Re-allocating vertex array to {new_size} elements.")
+            self._positions_buf = np.zeros((new_size, 3), np.float32)
+            self._positions_buf[:nverts] = self._positions[:nverts]
+            self._normals_buf = np.zeros((new_size, 3), np.float32)
+            self._normals_buf[:nverts] = self._normals[:nverts]
+            self._colors_buf = np.zeros((new_size, 4), np.float32)
+            self._colors_buf[:nverts] = self._colors[:nverts]
+        else:
+            # Tidy up
+            self._positions_buf[nverts:] = 0
+            self._normals_buf[nverts:] = 0
+            self._colors_buf[nverts:] = 0
         # Reset views
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
 
-    def _ensure_free_faces(self, n, resize_factor=1.5):
-        """Make sure that there are at least n free slots for faces.
-        If not, increase the total size of the array by resize_factor.
-        """
-        n = int(n)
-        assert n >= 1
-        assert resize_factor > 1
-        free_faces = len(self._faces_buf) - len(self._faces)
-
-        if free_faces < n:
-            new_size = max(
-                len(self._faces) + n, int(len(self._faces_buf) * resize_factor)
-            )
-            # print(f"Re-allocating faces array to {new_size} elements.")
-            self._allocate_faces_buffer(new_size)
-
-    def _ensure_free_vertices(self, n, resize_factor=1.5):
-        """Make sure that there are at least n free slots for vertices.
-        If not, increase the total size of the array by resize_factor.
-        """
-        n = int(n)
-        assert n >= 1
-        assert resize_factor > 1
-        free_vertices = len(self._positions_buf) - len(self._positions)
-
-        # todo: also reduce slots if below a certain treshold?
-        # To do this without remapping any indices (which we want to avoid, e.g. to keep undo working)
-        # we can only make the array as small as the largest index in use. But we can
-        # reorganize the array a bit (just a few moves) on each resample(), so that the arrays
-        # stay more or less tightly packed.
-
-        if free_vertices < n:
-            new_size = max(
-                len(self._positions) + n, int(len(self._positions_buf) * resize_factor)
-            )
-            # print(f"Re-allocating vertex array to {new_size} elements.")
-            self._allocate_vertices_buffer(new_size)
-
-    def _get_indices(self, indices, what_for):
+    def _get_indices(self, indices, n, what_for):
+        """Convenience function used by methods that accept an index array."""
         result = None
         typ = type(indices).__name__
         if isinstance(indices, int):
@@ -173,10 +235,6 @@ class DynamicMesh:
                 result = []
             elif indices.ndim == 1 and indices.dtype.kind == "i":
                 result = indices
-            # note: we could allow deleting faces/vertices via a view, but .. maybe not?
-            # elif indices.ndim == 2 and faces.shape[1] == 3 and faces.base is self._faces_buf:
-            #     addr0 = self._faces_buf.__array_interface__['data'][0]
-            #     addr1 = faces.__array_interface__['data'][0]
 
         if result is None:
             raise TypeError(
@@ -186,17 +244,29 @@ class DynamicMesh:
             raise ValueError(f"The {what_for} must not be empty.")
         elif min(indices) < 0:
             raise ValueError("Negative indices not allowed.")
+        elif max(indices) >= n:
+            raise ValueError("Index out of bounds.")
 
         return result
 
     def delete_faces(self, face_indices):
+        """Delete the faces indicated by the given face indices.
+
+        The deleted faces are replaced with faces from the end of the
+        array, except for deleted faces that leave no holes  because
+        they are already at the end.
+
+        An error can be raised if e.g. the indices are out of bounds.
+        """
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
 
-        to_delete = set(self._get_indices(face_indices, "face indices to delete"))
+        to_delete = set(
+            self._get_indices(face_indices, len(self._faces), "face indices to delete")
+        )
 
-        nfaces1 = len(self._faces_buf)
+        nfaces1 = len(self._faces)
         nfaces2 = nfaces1 - len(to_delete)
 
         to_maybe_move = set(range(nfaces2, nfaces1))  # these are for filling the holes
@@ -205,9 +275,6 @@ class DynamicMesh:
         indices1 = list(to_delete - to_just_drop)
         indices2 = list(to_maybe_move - to_just_drop)
         assert len(indices1) == len(indices2), "Internal error"
-
-        if not all(0 <= fi < nfaces1 for fi in to_delete):
-            raise ValueError("Face to delete is out of bounds.")
 
         # --- Apply
 
@@ -229,10 +296,7 @@ class DynamicMesh:
             self._faces[indices1] = self._faces[indices2]
 
             # Adjust the array lengths (reset views)
-            self._faces = self._faces_buf[:nfaces2]
-
-            # Tidy up
-            self._faces_buf[nfaces2:nfaces1] = 0
+            self._deallocate_faces(nfaces1 - nfaces2)
 
             # Bump version
             self.version_faces += 1
@@ -259,7 +323,11 @@ class DynamicMesh:
 
         # --- Prepare / checcks
 
-        to_delete = set(self._get_indices(vertex_indices, "vertex indices to delete"))
+        to_delete = set(
+            self._get_indices(
+                vertex_indices, len(self._positions), "vertex indices to delete"
+            )
+        )
 
         nverts1 = len(self._positions)
         nverts2 = nverts1 - len(to_delete)
@@ -286,19 +354,13 @@ class DynamicMesh:
             self._normals[indices1] = self._normals[indices2]
             self._colors[indices1] = self._colors[indices2]
 
-            # Adjust the array lengths (reset views)
-            self._positions = self._positions_buf[:nverts2]
-            self._normals = self._normals_buf[:nverts2]
-            self._colors = self._colors_buf[:nverts2]
-
-            # Zero out the free slots, just to tidy up
-            self._positions_buf[nverts2:nverts1] = 0
-            self._normals_buf[nverts2:nverts1] = 0
-            self._colors_buf[nverts2:nverts1] = 0
+            # Drop unused vertices at the end
+            self._deallocate_vertices(nverts1 - nverts2)
 
             # Update the faces that refer to the moved indices
+            faces = self._faces
             for vi1, vi2 in zip(indices1, indices2):
-                self._faces[self._faces == vi2] = vi1
+                faces[faces == vi2] = vi1
 
             # Update reverse map
             for vi1, vi2 in zip(indices1, indices2):
@@ -338,13 +400,11 @@ class DynamicMesh:
 
         n = len(faces)
         n1 = len(self._faces)
-        n2 = n1 + n
 
         # --- Apply
 
         try:
-            self._ensure_free_faces(n)
-            self._faces = self._faces_buf[:n2]
+            self._allocate_faces(n)
             self._faces[n1:] = faces
 
             # Update reverse map
@@ -380,18 +440,12 @@ class DynamicMesh:
 
         n = len(positions)
         n1 = len(self._positions)
-        n2 = n1 + n
 
         # --- Apply
 
         try:
-            self._ensure_free_vertices(n)
-            self._positions = self._positions_buf[:n2]
-            self._normals = self._normals_buf[:n2]
-            self._colors = self._colors_buf[:n2]
-
+            self._allocate_vertices(n)
             self._positions[n1:] = new_positions
-            self._normals[n1:] = 0.0
             self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
 
             # Update reverse map
@@ -411,18 +465,15 @@ class DynamicMesh:
 
         # --- Prepare / checks
 
-        nfaces1 = len(self.faces)
-        indices = self._get_indices(face_indices, "face indices to update")
+        indices = self._get_indices(
+            face_indices, len(self._faces), "face indices to update"
+        )
         faces = np.asarray(new_faces, np.int32)
 
         if len(indices) != len(faces):
             raise ValueError("Indices and faces to update have different lengths.")
         if len(indices) == 0:
             raise ValueError("Cannot update zero faces.")
-
-        # Check indices
-        if not all(0 <= fi < nfaces1 for fi in indices):
-            raise ValueError("Face to update is out of bounds.")
 
         # Check sanity of the faces
         if faces.min() < 0 or faces.max() >= len(self._positions):
@@ -456,29 +507,3 @@ class DynamicMesh:
 
         except Exception as err:
             raise UnexpectedExceptionInAtomicCode(err)
-
-    # def allocate_faces(self, n):
-    #     """Add n new faces to the mesh. Return an nx3 array with the new faces,
-    #     which is a view on the faces buffer (so one can write to it).
-    #     """
-    #     n = int(n)
-    #     n1 = len(self._faces)
-    #     n2 = n1 + n
-    #
-    #     self._ensure_free_faces(n)
-    #     self._faces = self._faces_buf[:n2]
-    #     return self._faces[n1:]
-    #
-    # def allocate_vertices(self, n):
-    #     """Add n new vertices to the mesh. Return an nx3 array with the new positions,
-    #     which is a view on the positions buffer (so one can write to it).
-    #     """
-    #     n = int(n)
-    #     n1 = len(self._positions)
-    #     n2 = n1 + n
-    #
-    #     self._ensure_free_vertices(n)
-    #     self._positions = self._positions_buf[:n2]
-    #     self._normals = self._normals_buf[:n2]
-    #     self._colors = self._colors_buf[:n2]
-    #     return self._positions[n1:]

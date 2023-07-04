@@ -35,6 +35,19 @@ def test_dynamicmesh_init():
     check_mesh(m, len(vertices) * 2, len(faces) * 2)
 
 
+def test_dynamicmesh_readonly():
+    vertices, faces, _ = get_sphere()
+
+    m = DynamicMesh()
+    m.add_vertices(vertices)
+    m.add_faces(faces)
+
+    with pytest.raises(ValueError):
+        m.faces[0] = (0, 0, 0)
+    # with pytest.raises(ValueError):
+    #     m.vertices[0] = (0, 0, 0)
+
+
 def test_dynamicmesh_verts_before_faces():
     vertices, faces, _ = get_sphere()
 
@@ -183,17 +196,7 @@ def test_dynamicmesh_add_and_delete_verts():
 
     # Delete unused
     m.delete_vertices([9])
-    assert [x[0] for x in m.vertices] == [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-    ]
+    assert [x[0] for x in m.vertices] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
     # Cannot delete vertex that is in use
     with pytest.raises(ValueError):
