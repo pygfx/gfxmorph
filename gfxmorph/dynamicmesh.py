@@ -8,11 +8,11 @@ class UnexpectedExceptionInAtomicCode(RuntimeError):
 
 
 class DynamicMesh:
-    """An object that holds mesh data that can be modified in-place.
-    It has buffers that are oversized so the vertex and face array can
-    grow. When the buffer is full, a larger buffer is allocated. The
-    arrays are contiguous views onto the buffers. Modifications are
-    managed to keep the arrays without holes.
+    """A mesh object that can be modified in-place.
+
+    It manages buffers that are oversized so the vertex and face array
+    can grow. When the buffer is full, a larger buffer is allocated.
+    The exposed arrays are contiguous views onto these buffers.
     """
 
     # We assume meshes with triangles (not quads)
@@ -268,8 +268,8 @@ class DynamicMesh:
         """Delete the faces indicated by the given face indices.
 
         The deleted faces are replaced with faces from the end of the
-        array, except for deleted faces that leave no holes  because
-        they are already at the end.
+        array (except for deleted faces that leave no holes because
+        they are already at the end).
 
         An error can be raised if e.g. the indices are out of bounds.
         """
@@ -322,17 +322,27 @@ class DynamicMesh:
             raise UnexpectedExceptionInAtomicCode(err)
 
     def delete_vertices(self, vertex_indices):
-        # Note: defragmenting when deleting vertices is somewhat expensive
-        # because we also need to update the faces. It'd likely be cheaper
-        # to let the vertex buffers contain holes, and fill these up as vertices
-        # are added. However, the current implementation also has advantages
-        # and I like that it works the same as for the faces. Some observations:
+        """Delete the vertices indicated by the given vertex indices.
+
+        The deleted vertices are replaced with vertices from the end of the
+        array (except for deleted vertices that leave no holes because
+        they are already at the end).
+
+        An error can be raised if e.g. the indices are out of bounds.
+        """
+
+        # Note: defragmenting when deleting vertices is somewhat
+        # expensive because we also need to update the faces. From a
+        # technical perspective it's fine to have unused vertices, so
+        # we could just leave them as holes, which would likely be faster.
+        # However, the current implementation also has advantages:
         #
+        # - It works the same as for the faces.
         # - With a contiguous vertex array it is easy to check if faces are valid.
-        # - No nan checks anywhere.
+        # - No need to select vertices that are in use (e.g. for bounding boxes).
         # - Getting free slots for vertices is straightforward without
         #   the need for additional structures like a set of free vertices.
-        # - The vertices and faces can at any moment be copied and be sound. No export needed.
+        # - The vertices and faces can at any moment be copied and be sound.
 
         vertex2faces = self._vertex2faces
 
@@ -388,6 +398,10 @@ class DynamicMesh:
             raise UnexpectedExceptionInAtomicCode(err)
 
     def add_faces(self, new_faces):
+        """Add the given faces to the mesh.
+
+        The faces must reference existing vertices.
+        """
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -435,6 +449,7 @@ class DynamicMesh:
             raise UnexpectedExceptionInAtomicCode(err)
 
     def add_vertices(self, new_positions):
+        """Add the given vertices to the mesh."""
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
