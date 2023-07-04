@@ -62,11 +62,11 @@ def benchmark():
             t.toc("check oriented")
 
             t.tic()
-            meshfuncs.mesh_get_component_labels(m.faces, m._data._vertex2faces)
+            meshfuncs.mesh_get_component_labels(m.faces, m._data.vertex2faces)
             t.toc("split components")
 
             t.tic()
-            meshfuncs.mesh_get_non_manifold_vertices(m.faces, m._data._vertex2faces)
+            meshfuncs.mesh_get_non_manifold_vertices(m.faces, m._data.vertex2faces)
             t.toc("check v-manifold")
 
             t.tic()

@@ -47,6 +47,19 @@ class DynamicMesh:
         # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
         return self._positions
 
+    @property
+    def vertex2faces(self):
+        """Maps vertex indices to a list of face indices.
+
+        This map can be used to e.g. traverse the mesh over its surface.
+
+        Although technically the map is a list that can be modified in
+        place, you should really not do that. Note that each element
+        lists face indices in arbitrary order and may contain duplicate
+        face indices.
+        """
+        return self._vertex2faces
+
     def reset(self, *, vertices=None, faces=None, initial_size=0):
         """Remove all vertices and faces and add the given ones (if any)."""
 
@@ -120,11 +133,9 @@ class DynamicMesh:
             vertex2faces[face[1]].append(fi)
             vertex2faces[face[2]].append(fi)
 
-        # todo: being able to do this test might be a reason to use sets instead of lists
-        # assert vertex2faces == self._vertex2faces
         assert len(vertex2faces) == len(self._vertex2faces)
         for face1, face2 in zip(vertex2faces, self._vertex2faces):
-            assert set(face1) == set(face2)
+            assert sorted(face1) == sorted(face2)
 
     def _allocate_faces(self, n):
         """Increase the size of the faces view to hold n free faces at

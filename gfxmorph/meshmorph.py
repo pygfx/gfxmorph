@@ -74,7 +74,7 @@ class AbstractMesh:
         """A tuple of connected components that this mesh consists of."""
         if not self._check_prop("component_labels"):
             component_labels = meshfuncs.mesh_get_component_labels(
-                self._data.faces, self._data._vertex2faces
+                self._data.faces, self._data.vertex2faces
             )
             self._props["component_labels"] = component_labels
         return self._props["component_labels"]
@@ -111,7 +111,7 @@ class AbstractMesh:
         """
         if not self._check_prop("nonmanifold_vertices"):
             nonmanifold_vertices = meshfuncs.mesh_get_non_manifold_vertices(
-                self._data.faces, self._data._vertex2faces
+                self._data.faces, self._data.vertex2faces
             )
             self._props["nonmanifold_vertices"] = nonmanifold_vertices
         return self.is_edge_manifold and len(self._props["nonmanifold_vertices"]) == 0
@@ -332,7 +332,7 @@ class AbstractMesh:
         faces = self._data.faces.copy()
 
         reversed_faces = []
-        vertex2faces = self._data._vertex2faces
+        vertex2faces = self._data.vertex2faces
         faces_to_check = set(range(len(faces)))
 
         while len(faces_to_check) > 0:
