@@ -7,6 +7,31 @@ class UnexpectedExceptionInAtomicCode(RuntimeError):
     pass
 
 
+class MeshUpdateReceiver:
+    """A class that is notified on changes to the DynamicMesh that it
+    is subscribed to, so that a certain representation of the mesh can
+    be updated.
+    """
+
+    def set_vertex_arrays(self, positions, normals, colors):
+        pass
+
+    def set_face_array(self, array):
+        pass
+
+    def set_n_vertices(self, n):
+        pass
+
+    def set_n_faces(self, n):
+        pass
+
+    def update_vertices(self, indices):
+        pass
+
+    def update_faces(self, indices):
+        pass
+
+
 class DynamicMesh:
     """A mesh object that can be modified in-place.
 
@@ -24,7 +49,8 @@ class DynamicMesh:
     def __init__(self):
         self.version_verts = 0
         self.version_faces = 0
-        self.reset(initial_size=0)
+        self._update_receivers = []
+        self.reset()
 
     @property
     def faces(self):
@@ -60,8 +86,10 @@ class DynamicMesh:
         """
         return self._vertex2faces
 
-    def reset(self, *, vertices=None, faces=None, initial_size=0):
+    def reset(self, *, vertices=None, faces=None):
         """Remove all vertices and faces and add the given ones (if any)."""
+
+        initial_size = 8
 
         # Create the buffers that contain the data, and which are larger
         # than needed. These arrays should *only* be referenced in the
@@ -71,6 +99,7 @@ class DynamicMesh:
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
         # todo: Maybe face colors are more convenient?
+        # todo: also, can colors be managed outside of this class? What about normals?
 
         # Create faces array views. The internals operate on the ._faces
         # array. We publicly expose the readonly ._faces_r array, because
@@ -84,6 +113,15 @@ class DynamicMesh:
         self._positions = self._positions_buf[:0]
         self._normals = self._normals_buf[:0]
         self._colors = self._colors_buf[:0]
+
+        # Notify
+        for receiver in self._update_receivers:
+            receiver.set_face_array(self._faces_buf)
+            receiver.set_vertex_arrays(
+                self._positions_buf, self._normals_buf, self._colors_buf
+            )
+            receiver.set_n_vertices(0)
+            receiver.set_n_faces(0)
 
         # Reverse map
         # This array is jagged, because the number of faces incident
@@ -152,10 +190,14 @@ class DynamicMesh:
             # print(f"Re-allocating faces array to {new_size} elements.")
             self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces1] = self._faces
+            for receiver in self._update_receivers:
+                receiver.set_face_array(self._faces_buf)
         # Reset views
         self._faces = self._faces_buf[:nfaces2]
         self._faces_r = self._faces_buf[:nfaces2]
         self._faces_r.flags.writeable = False
+        for receiver in self._update_receivers:
+            receiver.set_n_faces(nfaces2)
 
     def _deallocate_faces(self, n):
         """ "Decrease the size of the faces view, discarting the n faces
@@ -171,6 +213,8 @@ class DynamicMesh:
             # print(f"De-allocating faces array to {new_size} elements.")
             self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces] = self._faces[:nfaces]
+            for receiver in self._update_receivers:
+                receiver.set_face_array(self._faces_buf)
         else:
             # Tidy up
             self._faces_buf[nfaces:] = 0
@@ -178,6 +222,8 @@ class DynamicMesh:
         self._faces = self._faces_buf[:nfaces]
         self._faces_r = self._faces_buf[:nfaces]
         self._faces_r.flags.writeable = False
+        for receiver in self._update_receivers:
+            receiver.set_n_faces(nfaces)
 
     def _allocate_vertices(self, n):
         """Increase the vertex views to hold n free vertices at the end. If
@@ -194,14 +240,21 @@ class DynamicMesh:
             # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
             self._positions_buf[:nverts1] = self._positions
+            self._positions_buf[nverts2:] = np.nan
             self._normals_buf = np.zeros((new_size, 3), np.float32)
             self._normals_buf[:nverts1] = self._normals
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts1] = self._colors
+            for receiver in self._update_receivers:
+                receiver.set_vertex_arrays(
+                    self._positions_buf, self._normals_buf, self._colors_buf
+                )
         # Reset views
         self._positions = self._positions_buf[:nverts2]
         self._normals = self._normals_buf[:nverts2]
         self._colors = self._colors_buf[:nverts2]
+        for receiver in self._update_receivers:
+            receiver.set_n_vertices(nverts2)
 
     def _deallocate_vertices(self, n):
         """Decrease the size of the vertices views, discarting the n vertices
@@ -217,19 +270,26 @@ class DynamicMesh:
             # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
             self._positions_buf[:nverts] = self._positions[:nverts]
+            self._positions_buf[nverts:] = np.nan
             self._normals_buf = np.zeros((new_size, 3), np.float32)
             self._normals_buf[:nverts] = self._normals[:nverts]
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts] = self._colors[:nverts]
+            for receiver in self._update_receivers:
+                receiver.set_vertex_arrays(
+                    self._positions_buf, self._normals_buf, self._colors_buf
+                )
         else:
             # Tidy up
-            self._positions_buf[nverts:] = 0
+            self._positions_buf[nverts:] = np.nan
             self._normals_buf[nverts:] = 0
             self._colors_buf[nverts:] = 0
         # Reset views
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
+        for receiver in self._update_receivers:
+            receiver.set_n_vertices(nverts)
 
     def _get_indices(self, indices, n, what_for):
         """Convenience function used by methods that accept an index array."""
@@ -313,13 +373,15 @@ class DynamicMesh:
             # Adjust the array lengths (reset views)
             self._deallocate_faces(nfaces1 - nfaces2)
 
-            # Bump version
-            self.version_faces += 1
-            if self._debug_mode:
-                self._check_internal_state()
-
         except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
+
+        # Bump version
+        self.version_faces += 1
+        for receiver in self._update_receivers:
+            receiver.update_faces(np.concatenate([indices1, indices2]))
+        if self._debug_mode:
+            self._check_internal_state()
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -389,13 +451,15 @@ class DynamicMesh:
                 vertex2faces[vi1] = vertex2faces[vi2]
             vertex2faces[nverts2:] = []
 
-            # Bump version
-            self.version_verts += 1
-            if self._debug_mode:
-                self._check_internal_state()
-
         except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
+
+        # Bump version
+        self.version_verts += 1
+        for receiver in self._update_receivers:
+            receiver.update_vertices(np.concatenate([indices1, indices2]))
+        if self._debug_mode:
+            self._check_internal_state()
 
     def add_faces(self, new_faces):
         """Add the given faces to the mesh.
@@ -441,12 +505,15 @@ class DynamicMesh:
                 vertex2faces[face[1]].append(fi)
                 vertex2faces[face[2]].append(fi)
 
-            self.version_faces += 1
-            if self._debug_mode:
-                self._check_internal_state()
-
         except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
+
+        # Bump version
+        self.version_faces += 1
+        for receiver in self._update_receivers:
+            receiver.update_faces(np.arange(n1, n1 + n))
+        if self._debug_mode:
+            self._check_internal_state()
 
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
@@ -478,13 +545,17 @@ class DynamicMesh:
             # Update reverse map
             vertex2faces.extend([] for i in range(n))
 
-            self.version_verts += 1
-            if self._debug_mode:
-                self._check_internal_state()
-
         except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
 
+        # Bump version
+        self.version_verts += 1
+        for receiver in self._update_receivers:
+            receiver.update_vertices(np.arange(n1, n1 + n))
+        if self._debug_mode:
+            self._check_internal_state()
+
+    # todo: maybe rename to change_faces?
     def update_faces(self, face_indices, new_faces):
         """Update the value of the given faces."""
 
@@ -526,9 +597,12 @@ class DynamicMesh:
             # Update
             self._faces[indices] = faces
 
-            self.version_faces += 1
-            if self._debug_mode:
-                self._check_internal_state()
-
         except Exception as err:  # pragma: no cover
             raise UnexpectedExceptionInAtomicCode(err)
+
+        # Bump version
+        self.version_faces += 1
+        for receiver in self._update_receivers:
+            receiver.update_faces(indices)
+        if self._debug_mode:
+            self._check_internal_state()
