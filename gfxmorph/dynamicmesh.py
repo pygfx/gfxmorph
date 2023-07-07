@@ -1,10 +1,12 @@
+import traceback
+import logging
+
 import numpy as np
 
 
-class UnexpectedExceptionInAtomicCode(RuntimeError):
-    """Raised when an error occurs within a piece of code that is supposed to be atomic."""
+logger = logging.getLogger("meshmorph")
 
-    pass
+EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
 
 
 class MeshUpdateReceiver:
@@ -25,11 +27,31 @@ class MeshUpdateReceiver:
     def set_n_faces(self, n):
         pass
 
-    def update_vertices(self, indices):
+    def update_positions(self, indices):
+        pass
+
+    def update_normals(self, indices):
         pass
 
     def update_faces(self, indices):
         pass
+
+
+class Safecall:
+    """Context manager for doing calls that should not raise. If an
+    exception is raised, it is caught, logged, and the context exists
+    normally.
+    """
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_val:
+            lines = traceback.format_exception(exc_type, exc_val, exc_tb)
+            msg = "Exception in update callback:\n" + "".join(lines)
+            logger.error(msg)
+        return True  # Yes, we handled the exception
 
 
 class DynamicMesh:
@@ -95,17 +117,23 @@ class DynamicMesh:
         # than needed. These arrays should *only* be referenced in the
         # allocate- and deallocate- methods.
         self._faces_buf = np.zeros((initial_size, self._verts_per_face), np.int32)
+        self._faces_normals_buf = np.zeros((initial_size, 3), np.float32)
         self._positions_buf = np.zeros((initial_size, 3), np.float32)
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
         # todo: Maybe face colors are more convenient?
         # todo: also, can colors be managed outside of this class? What about normals?
 
+        # We set unused positions to nan, so that code that uses the
+        # full buffer does not accidentally use invalid vertex positions.
+        self._positions_buf[:] = np.nan
+
         # Create faces array views. The internals operate on the ._faces
         # array. We publicly expose the readonly ._faces_r array, because
         # any changes to it can corrupt the mesh (e.g. use nonexisting
         # vertices).
         self._faces = self._faces_buf[:0]
+        self._faces_normals = self._faces_normals_buf[:0]
         self._faces_r = self._faces_buf[:0]
         self._faces_r.flags.writeable = False
 
@@ -116,12 +144,13 @@ class DynamicMesh:
 
         # Notify
         for receiver in self._update_receivers:
-            receiver.set_face_array(self._faces_buf)
-            receiver.set_vertex_arrays(
-                self._positions_buf, self._normals_buf, self._colors_buf
-            )
-            receiver.set_n_vertices(0)
-            receiver.set_n_faces(0)
+            with Safecall():
+                receiver.set_face_array(self._faces_buf)
+                receiver.set_vertex_arrays(
+                    self._positions_buf, self._normals_buf, self._colors_buf
+                )
+                receiver.set_n_vertices(0)
+                receiver.set_n_faces(0)
 
         # Reverse map
         # This array is jagged, because the number of faces incident
@@ -187,17 +216,21 @@ class DynamicMesh:
         if nfaces2 > len(self._faces_buf):
             new_size = max(8, nfaces2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
-            # print(f"Re-allocating faces array to {new_size} elements.")
             self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces1] = self._faces
+            self._faces_normals_buf = np.zeros((new_size, 3), np.float32)
+            self._faces_normals_buf[:nfaces1] = self._faces_normals
             for receiver in self._update_receivers:
-                receiver.set_face_array(self._faces_buf)
+                with Safecall():
+                    receiver.set_face_array(self._faces_buf)
         # Reset views
         self._faces = self._faces_buf[:nfaces2]
+        self._faces_normals = self._faces_normals_buf[:nfaces2]
         self._faces_r = self._faces_buf[:nfaces2]
         self._faces_r.flags.writeable = False
         for receiver in self._update_receivers:
-            receiver.set_n_faces(nfaces2)
+            with Safecall():
+                receiver.set_n_faces(nfaces2)
 
     def _deallocate_faces(self, n):
         """ "Decrease the size of the faces view, discarting the n faces
@@ -210,20 +243,25 @@ class DynamicMesh:
         if nfaces <= 0.25 * len(self._faces_buf):
             new_size = max(8, nfaces * 2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
-            # print(f"De-allocating faces array to {new_size} elements.")
             self._faces_buf = np.zeros((new_size, self._verts_per_face), np.int32)
             self._faces_buf[:nfaces] = self._faces[:nfaces]
+            self._faces_normals_buf = np.zeros((new_size, 3), np.float32)
+            self._faces_normals_buf[:nfaces] = self._faces_normals[:nfaces]
             for receiver in self._update_receivers:
-                receiver.set_face_array(self._faces_buf)
+                with Safecall():
+                    receiver.set_face_array(self._faces_buf)
         else:
             # Tidy up
             self._faces_buf[nfaces:] = 0
+            self._faces_normals_buf[:nfaces:] = 0.0
         # Reset views
         self._faces = self._faces_buf[:nfaces]
+        self._faces_normals = self._faces_normals_buf[:nfaces]
         self._faces_r = self._faces_buf[:nfaces]
         self._faces_r.flags.writeable = False
         for receiver in self._update_receivers:
-            receiver.set_n_faces(nfaces)
+            with Safecall():
+                receiver.set_n_faces(nfaces)
 
     def _allocate_vertices(self, n):
         """Increase the vertex views to hold n free vertices at the end. If
@@ -237,7 +275,6 @@ class DynamicMesh:
         if nverts2 > len(self._positions_buf):
             new_size = max(8, nverts2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
-            # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
             self._positions_buf[:nverts1] = self._positions
             self._positions_buf[nverts2:] = np.nan
@@ -246,15 +283,17 @@ class DynamicMesh:
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts1] = self._colors
             for receiver in self._update_receivers:
-                receiver.set_vertex_arrays(
-                    self._positions_buf, self._normals_buf, self._colors_buf
-                )
+                with Safecall():
+                    receiver.set_vertex_arrays(
+                        self._positions_buf, self._normals_buf, self._colors_buf
+                    )
         # Reset views
         self._positions = self._positions_buf[:nverts2]
         self._normals = self._normals_buf[:nverts2]
         self._colors = self._colors_buf[:nverts2]
         for receiver in self._update_receivers:
-            receiver.set_n_vertices(nverts2)
+            with Safecall():
+                receiver.set_n_vertices(nverts2)
 
     def _deallocate_vertices(self, n):
         """Decrease the size of the vertices views, discarting the n vertices
@@ -267,7 +306,6 @@ class DynamicMesh:
         if nverts <= 0.25 * len(self._positions_buf):
             new_size = max(8, nverts * 2)
             new_size = 2 ** int(np.ceil(np.log2(new_size)))
-            # print(f"Re-allocating vertex array to {new_size} elements.")
             self._positions_buf = np.zeros((new_size, 3), np.float32)
             self._positions_buf[:nverts] = self._positions[:nverts]
             self._positions_buf[nverts:] = np.nan
@@ -276,9 +314,10 @@ class DynamicMesh:
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts] = self._colors[:nverts]
             for receiver in self._update_receivers:
-                receiver.set_vertex_arrays(
-                    self._positions_buf, self._normals_buf, self._colors_buf
-                )
+                with Safecall():
+                    receiver.set_vertex_arrays(
+                        self._positions_buf, self._normals_buf, self._colors_buf
+                    )
         else:
             # Tidy up
             self._positions_buf[nverts:] = np.nan
@@ -289,7 +328,60 @@ class DynamicMesh:
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
         for receiver in self._update_receivers:
-            receiver.set_n_vertices(nverts)
+            with Safecall():
+                receiver.set_n_vertices(nverts)
+
+    def _update_face_normals(self, face_indices):
+        """Update the selected face normals."""
+        face_indices = np.asarray(face_indices, np.int32)
+        faces = self._faces[face_indices]
+        positions = self._positions
+
+        r1 = positions[faces[:, 0], :]
+        r2 = positions[faces[:, 1], :]
+        r3 = positions[faces[:, 2], :]
+        face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
+        # faces_areas = 0.5 * np.linalg.norm(face_normals, axis=1)
+
+        self._faces_normals[face_indices] = face_normals
+
+        # The thing with vertex normals is that they depend on all
+        # incident faces, so doing a partial update is tricky.
+        # * We could first undo the contribution of the selected faces. E.g.
+        #   using a list of dicts: vi -> fi -> normals. Likely slow.
+        # * Or we first select the vertex_indices (by flattening faces), and use
+        #   vertex2faces to come up with a slightly larger set of face_indices,
+        #   which we then use to update the normals for the vertex_indices (and more)
+        #   and then only update vertex_indices. Also likely slow.
+        # * Only update the face normals and vertex normals of connected components.
+        # * Or we just update all vertex normals, but notify receivers
+        #   with the indices of vertices who's normal actually changed.
+        # * Note: we could implement some form of lazy computation for the
+        #   normals, or an option to turn all this off if no normals are needed.
+        self._update_vertex_normals()
+
+        # Get indices of vertices who's normal changed
+        vertex_mask = np.zeros((len(self._positions),), bool)
+        vertex_mask[faces.flatten()] = True
+        vertex_indices = np.where(vertex_mask)[0]
+
+        # Pass on the update
+        # todo: would a mask also be fine?
+        for receiver in self._update_receivers:
+            with Safecall():
+                receiver.update_normals(vertex_indices)
+
+    def _update_vertex_normals(self):
+        """Update all vertex normals."""
+        vertex_normals = self._normals
+        vertex_normals[:] = 0.0
+        for i in range(3):
+            np.add.at(vertex_normals, self._faces[:, i], self._faces_normals)
+        norms = np.linalg.norm(vertex_normals, axis=1)
+        (zeros,) = np.where(norms == 0)
+        norms[zeros] = 1.0  # prevent divide-by-zero
+        vertex_normals /= norms[:, np.newaxis]
+        vertex_normals[zeros] = 0.0
 
     def _get_indices(self, indices, n, what_for):
         """Convenience function used by methods that accept an index array."""
@@ -369,17 +461,20 @@ class DynamicMesh:
 
             # Move vertices from the end into the slots of the deleted vertices
             self._faces[indices1] = self._faces[indices2]
+            self._faces_normals[indices1] = self._faces_normals[indices2]
 
             # Adjust the array lengths (reset views)
             self._deallocate_faces(nfaces1 - nfaces2)
 
-        except Exception as err:  # pragma: no cover
-            raise UnexpectedExceptionInAtomicCode(err)
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
 
         # Bump version
         self.version_faces += 1
         for receiver in self._update_receivers:
-            receiver.update_faces(np.concatenate([indices1, indices2]))
+            with Safecall():
+                receiver.update_faces(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -451,13 +546,15 @@ class DynamicMesh:
                 vertex2faces[vi1] = vertex2faces[vi2]
             vertex2faces[nverts2:] = []
 
-        except Exception as err:  # pragma: no cover
-            raise UnexpectedExceptionInAtomicCode(err)
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
 
         # Bump version
         self.version_verts += 1
         for receiver in self._update_receivers:
-            receiver.update_vertices(np.concatenate([indices1, indices2]))
+            with Safecall():
+                receiver.update_positions(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -490,12 +587,14 @@ class DynamicMesh:
 
         n = len(faces)
         n1 = len(self._faces)
+        indices = np.arange(n1, n1 + n)
 
         # --- Apply
 
         try:
             self._allocate_faces(n)
             self._faces[n1:] = faces
+            self._update_face_normals(indices)
 
             # Update reverse map
             for i in range(len(faces)):
@@ -505,13 +604,15 @@ class DynamicMesh:
                 vertex2faces[face[1]].append(fi)
                 vertex2faces[face[2]].append(fi)
 
-        except Exception as err:  # pragma: no cover
-            raise UnexpectedExceptionInAtomicCode(err)
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
 
         # Bump version
         self.version_faces += 1
         for receiver in self._update_receivers:
-            receiver.update_faces(np.arange(n1, n1 + n))
+            with Safecall():
+                receiver.update_faces(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -545,13 +646,15 @@ class DynamicMesh:
             # Update reverse map
             vertex2faces.extend([] for i in range(n))
 
-        except Exception as err:  # pragma: no cover
-            raise UnexpectedExceptionInAtomicCode(err)
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
 
         # Bump version
         self.version_verts += 1
         for receiver in self._update_receivers:
-            receiver.update_vertices(np.arange(n1, n1 + n))
+            with Safecall():
+                receiver.update_positions(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -566,7 +669,7 @@ class DynamicMesh:
         indices = self._get_indices(
             face_indices, len(self._faces), "face indices to update"
         )
-        faces = np.asarray(new_faces, np.int32)
+        faces = np.asarray(new_faces, np.int32).reshape(-1, self._verts_per_face)
 
         if len(indices) != len(faces):
             raise ValueError("Indices and faces to update have different lengths.")
@@ -577,7 +680,7 @@ class DynamicMesh:
                 "The faces array containes indices that are out of bounds."
             )
 
-        # Note: this should work to, but moves more stuff around, so its less efficient.
+        # Note: this should work too, but moves more stuff around, so its less efficient.
         # self.delete_faces(face_indices)
         # self.add_faces(faces)
 
@@ -596,13 +699,55 @@ class DynamicMesh:
 
             # Update
             self._faces[indices] = faces
+            self._update_face_normals(indices)
 
-        except Exception as err:  # pragma: no cover
-            raise UnexpectedExceptionInAtomicCode(err)
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
 
         # Bump version
         self.version_faces += 1
         for receiver in self._update_receivers:
-            receiver.update_faces(indices)
+            with Safecall():
+                receiver.update_faces(indices)
+        if self._debug_mode:
+            self._check_internal_state()
+
+    def update_vertices(self, vertex_indices, new_positions):
+        """Update the value of the given vertices."""
+
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        indices = self._get_indices(
+            vertex_indices, len(self._positions), "vertex indices to update"
+        )
+        positions = np.asarray(new_positions, np.int32).reshape(-1, 3)
+
+        if len(indices) != len(positions):
+            raise ValueError("Indices and positions to update have different lengths.")
+
+        # --- Apply
+
+        try:
+            self._positions[indices] = positions
+
+            # Note: if the number of changed vertices is large (say 50% or more)
+            # it'd probably be more efficient to collect face_indices via a mask.
+            face_indices = set()
+            for vi in indices:
+                face_indices.update(vertex2faces[vi])
+            self._update_face_normals(list(face_indices))
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # Bump version
+        self.version_verts += 1
+        for receiver in self._update_receivers:
+            with Safecall():
+                receiver.update_positions(indices)
         if self._debug_mode:
             self._check_internal_state()
