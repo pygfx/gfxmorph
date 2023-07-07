@@ -79,20 +79,19 @@ class DynamicMeshGeometry(gfx.Geometry):
     def set_n_faces(self, n):
         print("number of faces", n)
         self.indices.view = 0, n
-        self.normals.update_range()
 
     def update_positions(self, indices):
         # todo: optimize
         # We can update positions more fine-grained,
         # but the normals are actually updates in full.
         # Also, if we render with flat_shading, we don't need the normals!
-        self.positions.update_range()
+        self.positions.update_range(indices.min(), indices.max())
 
     def update_normals(self, indices):
-        self.normals.update_range()
+        self.normals.update_range(indices.min(), indices.max())
 
     def update_faces(self, indices):
-        self.indices.update_range()
+        self.indices.update_range(indices.min(), indices.max())
 
 
 mesh = gfx.Mesh(
