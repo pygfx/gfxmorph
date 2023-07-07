@@ -253,7 +253,7 @@ class DynamicMesh:
         else:
             # Tidy up
             self._faces_buf[nfaces:] = 0
-            self._faces_normals_buf[:nfaces:] = 0.0
+            self._faces_normals_buf[nfaces:] = 0.0
         # Reset views
         self._faces = self._faces_buf[:nfaces]
         self._faces_normals = self._faces_normals_buf[:nfaces]
