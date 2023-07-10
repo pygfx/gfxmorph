@@ -1,4 +1,4 @@
-from .dynamicmesh import DynamicMesh  # noqa: F401
+from .dynamicmesh import DynamicMesh, MeshChangeTracker  # noqa: F401
 from .meshmorph import AbstractMesh  # noqa: F401
 
 from . import meshfuncs  # noqa: F401

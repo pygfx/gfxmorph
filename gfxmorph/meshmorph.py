@@ -183,6 +183,9 @@ class AbstractMesh:
 
     # %%
 
+    def track_changes(self, tracker):
+        return self._data.track_changes(tracker)
+
     def get_volume(self):
         """The volume of the mesh.
 

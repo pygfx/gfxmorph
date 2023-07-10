@@ -1,13 +1,26 @@
 import numpy as np
 import pygfx as gfx  # noqa
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry  # noqa
-from gfxmorph import DynamicMesh, AbstractMesh  # noqa
+from gfxmorph import DynamicMesh, AbstractMesh, MeshChangeTracker  # noqa
 
 # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
 # geo = gfx.sphere_geometry(1)
 # geo = gfx.geometries.tetrahedron_geometry()
 # geo = smooth_sphere_geometry(1)
 # m = AbstractMesh(geo.positions.data, geo.indices.data)
+
+# Pseudo code:
+# m = DynamicMesh() or higher level so we have manifold props etc.
+# morph = MorphLogic(m)
+# geo = DynamicMeshGeometry()
+# m.track_changes(geo)
+
+
+# TODO TODO:
+#     * Implement MeshChangeTracker in tests to check that all updates are applied.
+#     * Add tests to get full coverage again.
+#     * Include dedupe logic in repair_closed, but applied only to boundary vertices.
+#     * more towards gfx and morphing.
 
 
 m = AbstractMesh(None, None)
@@ -49,20 +62,11 @@ def breakit():
 
 
 d = None
-for i in range(1):
+for i in range(0):
     add_mesh()
 
 
-class DynamicMeshGeometry(gfx.Geometry):
-    def __init__(self, abstract_mesh):
-        super().__init__()
-        abstract_mesh._data._update_receivers.append(self)
-        self.positions = gfx.Buffer(
-            abstract_mesh._data._positions_buf
-        )  # todo: should not use private vars
-        self.indices = gfx.Buffer(abstract_mesh._data._faces_buf)
-        self.normals = gfx.Buffer(abstract_mesh._data._normals_buf)
-
+class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     def set_vertex_arrays(self, positions, normals, colors):
         self.positions = gfx.Buffer(positions)
         self.normals = gfx.Buffer(normals)
@@ -95,10 +99,11 @@ class DynamicMeshGeometry(gfx.Geometry):
 
 
 mesh = gfx.Mesh(
-    DynamicMeshGeometry(m),  # gfx.geometries.DynamicMeshGeometry
+    DynamicMeshGeometry(),  # gfx.geometries.DynamicMeshGeometry
     gfx.materials.MeshPhongMaterial(color="red", flat_shading=False, side="FRONT"),
 )
 
+m.track_changes(mesh.geometry)
 
 camera = gfx.OrthographicCamera()
 camera.show_object((0, 0, 0, 8))

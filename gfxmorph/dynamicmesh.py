@@ -9,7 +9,7 @@ logger = logging.getLogger("meshmorph")
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
 
 
-class MeshUpdateReceiver:
+class MeshChangeTracker:
     """A class that is notified on changes to the DynamicMesh that it
     is subscribed to, so that a certain representation of the mesh can
     be updated.
@@ -71,7 +71,7 @@ class DynamicMesh:
     def __init__(self):
         self.version_verts = 0
         self.version_faces = 0
-        self._update_receivers = []
+        self._change_trackers = []
         self.reset()
 
     @property
@@ -108,6 +108,26 @@ class DynamicMesh:
         """
         return self._vertex2faces
 
+    def track_changes(self, tracker):
+        """The given object is notified of updates of this mesh, e.g.
+        to maintain a representation of the mesh.
+        """
+        if not isinstance(tracker, MeshChangeTracker):
+            raise TypeError("Expected a MeshChangeTracker subclass.")
+        while tracker in self._change_trackers:
+            self._change_trackers.remove(tracker)
+        self._change_trackers.append(tracker)
+        self._init_change_tracker(tracker)
+
+    def _init_change_tracker(self, tracker):
+        with Safecall():
+            tracker.set_face_array(self._faces_buf)
+            tracker.set_vertex_arrays(
+                self._positions_buf, self._normals_buf, self._colors_buf
+            )
+            tracker.set_n_vertices(len(self._positions))
+            tracker.set_n_faces(len(self._faces))
+
     def reset(self, *, vertices=None, faces=None):
         """Remove all vertices and faces and add the given ones (if any)."""
 
@@ -143,14 +163,8 @@ class DynamicMesh:
         self._colors = self._colors_buf[:0]
 
         # Notify
-        for receiver in self._update_receivers:
-            with Safecall():
-                receiver.set_face_array(self._faces_buf)
-                receiver.set_vertex_arrays(
-                    self._positions_buf, self._normals_buf, self._colors_buf
-                )
-                receiver.set_n_vertices(0)
-                receiver.set_n_faces(0)
+        for tracker in self._change_trackers:
+            self._init_change_tracker(tracker)
 
         # Reverse map
         # This array is jagged, because the number of faces incident
@@ -220,17 +234,17 @@ class DynamicMesh:
             self._faces_buf[:nfaces1] = self._faces
             self._faces_normals_buf = np.zeros((new_size, 3), np.float32)
             self._faces_normals_buf[:nfaces1] = self._faces_normals
-            for receiver in self._update_receivers:
+            for tracker in self._change_trackers:
                 with Safecall():
-                    receiver.set_face_array(self._faces_buf)
+                    tracker.set_face_array(self._faces_buf)
         # Reset views
         self._faces = self._faces_buf[:nfaces2]
         self._faces_normals = self._faces_normals_buf[:nfaces2]
         self._faces_r = self._faces_buf[:nfaces2]
         self._faces_r.flags.writeable = False
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.set_n_faces(nfaces2)
+                tracker.set_n_faces(nfaces2)
 
     def _deallocate_faces(self, n):
         """ "Decrease the size of the faces view, discarting the n faces
@@ -247,9 +261,9 @@ class DynamicMesh:
             self._faces_buf[:nfaces] = self._faces[:nfaces]
             self._faces_normals_buf = np.zeros((new_size, 3), np.float32)
             self._faces_normals_buf[:nfaces] = self._faces_normals[:nfaces]
-            for receiver in self._update_receivers:
+            for tracker in self._change_trackers:
                 with Safecall():
-                    receiver.set_face_array(self._faces_buf)
+                    tracker.set_face_array(self._faces_buf)
         else:
             # Tidy up
             self._faces_buf[nfaces:] = 0
@@ -259,9 +273,9 @@ class DynamicMesh:
         self._faces_normals = self._faces_normals_buf[:nfaces]
         self._faces_r = self._faces_buf[:nfaces]
         self._faces_r.flags.writeable = False
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.set_n_faces(nfaces)
+                tracker.set_n_faces(nfaces)
 
     def _allocate_vertices(self, n):
         """Increase the vertex views to hold n free vertices at the end. If
@@ -282,18 +296,18 @@ class DynamicMesh:
             self._normals_buf[:nverts1] = self._normals
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts1] = self._colors
-            for receiver in self._update_receivers:
+            for tracker in self._change_trackers:
                 with Safecall():
-                    receiver.set_vertex_arrays(
+                    tracker.set_vertex_arrays(
                         self._positions_buf, self._normals_buf, self._colors_buf
                     )
         # Reset views
         self._positions = self._positions_buf[:nverts2]
         self._normals = self._normals_buf[:nverts2]
         self._colors = self._colors_buf[:nverts2]
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.set_n_vertices(nverts2)
+                tracker.set_n_vertices(nverts2)
 
     def _deallocate_vertices(self, n):
         """Decrease the size of the vertices views, discarting the n vertices
@@ -313,9 +327,9 @@ class DynamicMesh:
             self._normals_buf[:nverts] = self._normals[:nverts]
             self._colors_buf = np.zeros((new_size, 4), np.float32)
             self._colors_buf[:nverts] = self._colors[:nverts]
-            for receiver in self._update_receivers:
+            for tracker in self._change_trackers:
                 with Safecall():
-                    receiver.set_vertex_arrays(
+                    tracker.set_vertex_arrays(
                         self._positions_buf, self._normals_buf, self._colors_buf
                     )
         else:
@@ -327,9 +341,9 @@ class DynamicMesh:
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.set_n_vertices(nverts)
+                tracker.set_n_vertices(nverts)
 
     def _update_face_normals(self, face_indices):
         """Update the selected face normals."""
@@ -354,7 +368,7 @@ class DynamicMesh:
         #   which we then use to update the normals for the vertex_indices (and more)
         #   and then only update vertex_indices. Also likely slow.
         # * Only update the face normals and vertex normals of connected components.
-        # * Or we just update all vertex normals, but notify receivers
+        # * Or we just update all vertex normals, but notify trackers
         #   with the indices of vertices who's normal actually changed.
         # * Note: we could implement some form of lazy computation for the
         #   normals, or an option to turn all this off if no normals are needed.
@@ -367,9 +381,9 @@ class DynamicMesh:
 
         # Pass on the update
         # todo: would a mask also be fine?
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.update_normals(vertex_indices)
+                tracker.update_normals(vertex_indices)
 
     def _update_vertex_normals(self):
         """Update all vertex normals."""
@@ -407,11 +421,12 @@ class DynamicMesh:
             raise TypeError(
                 f"The {what_for} must be given as int, list, or 1D int array, not {typ}."
             )
-        elif len(result) == 0:
+        result = np.asarray(result, np.int32)
+        if len(result) == 0:
             raise ValueError(f"The {what_for} must not be empty.")
-        elif min(result) < 0:
+        elif result.min() < 0:
             raise ValueError("Negative indices not allowed.")
-        elif max(result) >= n:
+        elif result.max() >= n:
             raise ValueError("Index out of bounds.")
 
         return result
@@ -472,9 +487,10 @@ class DynamicMesh:
 
         # Bump version
         self.version_faces += 1
-        for receiver in self._update_receivers:
-            with Safecall():
-                receiver.update_faces(np.concatenate([indices1, indices2]))
+        if len(indices1) > 0:
+            for tracker in self._change_trackers:
+                with Safecall():
+                    tracker.update_faces(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -552,9 +568,10 @@ class DynamicMesh:
 
         # Bump version
         self.version_verts += 1
-        for receiver in self._update_receivers:
-            with Safecall():
-                receiver.update_positions(np.concatenate([indices1, indices2]))
+        if len(indices1) > 0:
+            for tracker in self._change_trackers:
+                with Safecall():
+                    tracker.update_positions(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -610,9 +627,9 @@ class DynamicMesh:
 
         # Bump version
         self.version_faces += 1
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.update_faces(np.arange(n1, n1 + n))
+                tracker.update_faces(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -652,9 +669,9 @@ class DynamicMesh:
 
         # Bump version
         self.version_verts += 1
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.update_positions(np.arange(n1, n1 + n))
+                tracker.update_positions(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
 
@@ -707,9 +724,9 @@ class DynamicMesh:
 
         # Bump version
         self.version_faces += 1
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.update_faces(indices)
+                tracker.update_faces(indices)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -746,8 +763,8 @@ class DynamicMesh:
 
         # Bump version
         self.version_verts += 1
-        for receiver in self._update_receivers:
+        for tracker in self._change_trackers:
             with Safecall():
-                receiver.update_positions(indices)
+                tracker.update_positions(indices)
         if self._debug_mode:
             self._check_internal_state()

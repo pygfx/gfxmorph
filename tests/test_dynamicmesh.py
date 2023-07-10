@@ -1,11 +1,67 @@
 import numpy as np
 from testutils import run_tests, get_sphere
-from gfxmorph import DynamicMesh as OriDynamicMesh
+from gfxmorph.dynamicmesh import DynamicMesh as OriDynamicMesh, MeshChangeTracker
 import pytest
 
 
+class CustomChangeTracker(MeshChangeTracker):
+    """During these tests, we also track changes, to make sure that
+    the change tracking mechanism works as it should.
+    """
+
+    def set_vertex_arrays(self, positions, normals, colors):
+        assert isinstance(positions, np.ndarray)
+        assert isinstance(normals, np.ndarray)
+        assert isinstance(colors, np.ndarray)
+        self.positions_buf1 = positions
+        self.normals_buf1 = normals
+        self.positions_buf2 = self.positions_buf1.copy()
+        self.normals_buf2 = self.normals_buf1.copy()
+
+    def set_face_array(self, faces):
+        assert isinstance(faces, np.ndarray)
+        self.faces_buf1 = faces
+        self.faces_buf2 = self.faces_buf1.copy()
+
+    def set_n_vertices(self, n):
+        assert isinstance(n, int)
+        self.positions = self.positions_buf2[:n]
+        self.normals = self.normals_buf2[:n]
+
+    def set_n_faces(self, n):
+        assert isinstance(n, int)
+        self.faces = self.faces_buf2[:n]
+
+    def update_positions(self, indices):
+        assert isinstance(indices, np.ndarray)
+        self.positions_buf2[indices] = self.positions_buf1[indices]
+
+    def update_normals(self, indices):
+        assert isinstance(indices, np.ndarray)
+        self.normals_buf2[indices] = self.normals_buf1[indices]
+
+    def update_faces(self, indices):
+        assert isinstance(indices, np.ndarray)
+        self.faces_buf2[indices] = self.faces_buf1[indices]
+
+
 class DynamicMesh(OriDynamicMesh):
+    """A custom mesh subclass that has debug mode on, so that the
+    internal state is validated at each change. Plus we track changes
+    and check them at each step too."""
+
     _debug_mode = True
+
+    def __init__(self):
+        super().__init__()
+        self.mesh_copy = CustomChangeTracker()
+        self.track_changes(self.mesh_copy)
+
+    def _check_internal_state(self):
+        super()._check_internal_state()
+        assert np.all(self._faces == self.mesh_copy.faces)
+        assert np.all(self._positions == self.mesh_copy.positions)
+        assert np.all(self._normals == self.mesh_copy.normals)
 
 
 def check_mesh(m, nverts, nfaces):
