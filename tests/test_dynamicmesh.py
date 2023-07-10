@@ -4,6 +4,13 @@ from gfxmorph.dynamicmesh import DynamicMesh as OriDynamicMesh, MeshChangeTracke
 import pytest
 
 
+# If MeshChangeTracker implementation raises an error it is reported
+# but should not affect the mesh. This flag is intended for occasional
+# local testing, just to make sure we did not forget the Safecall() in
+# any spots.
+BROKEN_TRACKER = False
+
+
 class CustomChangeTracker(MeshChangeTracker):
     """During these tests, we also track changes, to make sure that
     the change tracking mechanism works as it should.
@@ -17,32 +24,46 @@ class CustomChangeTracker(MeshChangeTracker):
         self.normals_buf1 = normals
         self.positions_buf2 = self.positions_buf1.copy()
         self.normals_buf2 = self.normals_buf1.copy()
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def set_face_array(self, faces):
         assert isinstance(faces, np.ndarray)
         self.faces_buf1 = faces
         self.faces_buf2 = self.faces_buf1.copy()
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def set_n_vertices(self, n):
         assert isinstance(n, int)
         self.positions = self.positions_buf2[:n]
         self.normals = self.normals_buf2[:n]
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def set_n_faces(self, n):
         assert isinstance(n, int)
         self.faces = self.faces_buf2[:n]
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def update_positions(self, indices):
         assert isinstance(indices, np.ndarray)
         self.positions_buf2[indices] = self.positions_buf1[indices]
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def update_normals(self, indices):
         assert isinstance(indices, np.ndarray)
         self.normals_buf2[indices] = self.normals_buf1[indices]
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
     def update_faces(self, indices):
         assert isinstance(indices, np.ndarray)
         self.faces_buf2[indices] = self.faces_buf1[indices]
+        if BROKEN_TRACKER:
+            raise RuntimeError()
 
 
 class DynamicMesh(OriDynamicMesh):
@@ -59,9 +80,10 @@ class DynamicMesh(OriDynamicMesh):
 
     def _check_internal_state(self):
         super()._check_internal_state()
-        assert np.all(self._faces == self.mesh_copy.faces)
-        assert np.all(self._positions == self.mesh_copy.positions)
-        assert np.all(self._normals == self.mesh_copy.normals)
+        if not BROKEN_TRACKER:
+            assert np.all(self._faces == self.mesh_copy.faces)
+            assert np.all(self._positions == self.mesh_copy.positions)
+            assert np.all(self._normals == self.mesh_copy.normals)
 
 
 def check_mesh(m, nverts, nfaces):
