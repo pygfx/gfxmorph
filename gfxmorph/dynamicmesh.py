@@ -108,16 +108,18 @@ class DynamicMesh:
         """
         return self._vertex2faces
 
-    def track_changes(self, tracker):
+    def track_changes(self, tracker, *, remove=False):
         """The given object is notified of updates of this mesh, e.g.
-        to maintain a representation of the mesh.
+        to maintain a representation of the mesh. If ``remove`` is True,
+        the tracker is removed instead.
         """
         if not isinstance(tracker, MeshChangeTracker):
             raise TypeError("Expected a MeshChangeTracker subclass.")
         while tracker in self._change_trackers:
             self._change_trackers.remove(tracker)
-        self._change_trackers.append(tracker)
-        self._init_change_tracker(tracker)
+        if not remove:
+            self._change_trackers.append(tracker)
+            self._init_change_tracker(tracker)
 
     def _init_change_tracker(self, tracker):
         with Safecall():
