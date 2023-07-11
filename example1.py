@@ -1,6 +1,6 @@
 import numpy as np
 import pygfx as gfx  # noqa
-from gfxmorph.maybe_pygfx import smooth_sphere_geometry  # noqa
+from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry  # noqa
 from gfxmorph import DynamicMesh, AbstractMesh, MeshChangeTracker  # noqa
 
 # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
@@ -14,13 +14,6 @@ from gfxmorph import DynamicMesh, AbstractMesh, MeshChangeTracker  # noqa
 # morph = MorphLogic(m)
 # geo = DynamicMeshGeometry()
 # m.track_changes(geo)
-
-
-# TODO TODO:
-#     * Implement MeshChangeTracker in tests to check that all updates are applied.
-#     * Add tests to get full coverage again.
-#     * Include dedupe logic in repair_closed, but applied only to boundary vertices.
-#     * more towards gfx and morphing.
 
 
 m = AbstractMesh(None, None)
@@ -64,38 +57,6 @@ def breakit():
 d = None
 for i in range(0):
     add_mesh()
-
-
-class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
-    def set_vertex_arrays(self, positions, normals, colors):
-        self.positions = gfx.Buffer(positions)
-        self.normals = gfx.Buffer(normals)
-        # self.colors = gfx.Buffer(colors)
-        print("new vertices")
-
-    def set_face_array(self, array):
-        self.indices = gfx.Buffer(array)
-        print("new faces")
-
-    def set_n_vertices(self, n):
-        pass  # no need
-
-    def set_n_faces(self, n):
-        print("number of faces", n)
-        self.indices.view = 0, n
-
-    def update_positions(self, indices):
-        # todo: optimize
-        # We can update positions more fine-grained,
-        # but the normals are actually updates in full.
-        # Also, if we render with flat_shading, we don't need the normals!
-        self.positions.update_range(indices.min(), indices.max())
-
-    def update_normals(self, indices):
-        self.normals.update_range(indices.min(), indices.max())
-
-    def update_faces(self, indices):
-        self.indices.update_range(indices.min(), indices.max())
 
 
 mesh = gfx.Mesh(
