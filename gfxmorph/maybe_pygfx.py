@@ -3,11 +3,12 @@ import pylinalg as la
 import pygfx as gfx
 
 from .dynamicmesh import MeshChangeTracker
+
 # todo: why not make all polyhedrons in gfx solid, and use flat-shading to show their sharp edges?
 
 
 class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
-    """ A geometry specifically for representing dynamic meshes. It provides an API
+    """A geometry specifically for representing dynamic meshes. It provides an API
     that gfxmorph can then use to update the GPU representation.
     """
 

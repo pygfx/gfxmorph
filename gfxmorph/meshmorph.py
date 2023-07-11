@@ -24,15 +24,15 @@ from . import meshfuncs
 
 
 # todo: better name
-class AbstractMesh:
+# maybe this should be DynamicMesh and DynamicMesh should be BaseDynamicMesh
+class AbstractMesh(DynamicMesh):
     """Representation of a mesh, with utilities to modify it.
     The idea is that this can be subclassed to hook it up in a visualization
     system (like pygfx), e.g. process updates in a granular way.
     """
 
     def __init__(self, vertices, faces):
-        self._data = DynamicMesh()
-
+        super().__init__()
         self._props = {}
         self._props_faces = (
             "is_edge_manifold",
@@ -50,31 +50,24 @@ class AbstractMesh:
             self.add_mesh(vertices, faces)
 
     def _check_prop(self, name):
+        # todo: I guess now that we subclass, DynamicMesh can simply clear dicts instead of bumping versions?
         assert name in self._props_faces or name in self._props_verts
-        if self._props.get("version_faces", 0) != self._data.version_faces:
-            self._props["version_faces"] = self._data.version_faces
+        if self._props.get("version_faces", 0) != self.version_faces:
+            self._props["version_faces"] = self.version_faces
             for x in self._props_faces + self._props_verts_and_faces:
                 self._props.pop(x, None)
-        if self._props.get("version_verts", 0) != self._data.version_verts:
-            self._props["version_verts"] = self._data.version_verts
+        if self._props.get("version_verts", 0) != self.version_verts:
+            self._props["version_verts"] = self.version_verts
             for x in self._props_verts + self._props_verts_and_faces:
                 self._props.pop(x, None)
         return name in self._props
-
-    @property
-    def faces(self):
-        return self._data.faces
-
-    @property
-    def vertices(self):
-        return self._data.vertices
 
     @property
     def component_labels(self):
         """A tuple of connected components that this mesh consists of."""
         if not self._check_prop("component_labels"):
             component_labels = meshfuncs.mesh_get_component_labels(
-                self._data.faces, self._data.vertex2faces
+                self.faces, self.vertex2faces
             )
             self._props["component_labels"] = component_labels
         return self._props["component_labels"]
@@ -94,7 +87,7 @@ class AbstractMesh:
         to be manifold.
         """
         if not self._check_prop("is_edge_manifold"):
-            nonmanifold_edges = meshfuncs.mesh_get_non_manifold_edges(self._data.faces)
+            nonmanifold_edges = meshfuncs.mesh_get_non_manifold_edges(self.faces)
             self._props["nonmanifold_edges"] = nonmanifold_edges
         return len(self._props["nonmanifold_edges"]) == 0
 
@@ -111,7 +104,7 @@ class AbstractMesh:
         """
         if not self._check_prop("nonmanifold_vertices"):
             nonmanifold_vertices = meshfuncs.mesh_get_non_manifold_vertices(
-                self._data.faces, self._data.vertex2faces
+                self.faces, self.vertex2faces
             )
             self._props["nonmanifold_vertices"] = nonmanifold_vertices
         return self.is_edge_manifold and len(self._props["nonmanifold_vertices"]) == 0
@@ -130,7 +123,7 @@ class AbstractMesh:
         edges.
         """
         if not self._check_prop("is_closed"):
-            _, is_closed = meshfuncs.mesh_is_edge_manifold_and_closed(self._data.faces)
+            _, is_closed = meshfuncs.mesh_is_edge_manifold_and_closed(self.faces)
             self._props["is_closed"] = is_closed
         return self._props["is_closed"]
 
@@ -143,7 +136,7 @@ class AbstractMesh:
         same orientation. This can only be true if the mesh is edge-manifold.
         """
         if not self._check_prop("is_oriented"):
-            is_oriented = meshfuncs.mesh_is_oriented(self._data.faces)
+            is_oriented = meshfuncs.mesh_is_oriented(self.faces)
             self._props["is_oriented"] = is_oriented
         return self._props["is_oriented"]
 
@@ -158,7 +151,6 @@ class AbstractMesh:
             the ith edge is the edge opposite from the ith vertex of the face
 
         """
-        # todo: only use valid faces, maybe per component?
         array = self.faces[:, [[1, 2], [2, 0], [0, 1]]]
         array.setflags(write=False)
         return array
@@ -166,25 +158,28 @@ class AbstractMesh:
     @property
     def metadata(self):
         """A dict with metadata about the mesh."""
-        arrays = self._faces, self._vertices, self._colors, self._normals
+        arrays = (
+            self._faces_buf,
+            self._positions_buf,
+            self._normals_buf,
+            self._colors_buf,
+        )
         nb = sum([a.nbytes for a in arrays if a is not None])
+        mem = f"{nb/2**20:0.2f} MiB" if nb > 2**20 else f"{nb/2**10:0.2f} KiB"
 
         return {
+            "is_edge_manifold": self.is_edge_manifold,
+            "is_vertex_manifold": self.is_vertex_manifold,
             "is_closed": self.is_closed,
-            "components": self._component_count,
-            "vertices": self._nvertices,
-            "faces": self._nfaces,
-            "free_vertices": len(self._free_vertices),
-            "free_faces": len(self._free_faces),
-            "approx_mem": f"{nb/2**20:0.2f} MiB"
-            if nb > 2**20
-            else f"{nb/2**10:0.2f} KiB",
+            "is_oriented": self.is_oriented,
+            "nfaces": len(self.faces),
+            "nvertices": len(self.vertices),
+            "free_vertices": len(self._positions_buf) - len(self._positions),
+            "free_faces": len(self._faces_buf) - len(self._faces),
+            "approx_mem": mem,
         }
 
     # %%
-
-    def track_changes(self, tracker):
-        return self._data.track_changes(tracker)
 
     def get_volume(self):
         """The volume of the mesh.
@@ -197,7 +192,7 @@ class AbstractMesh:
             raise RuntimeError(
                 "Cannot get volume of a mesh that is not manifold, oriented and closed."
             )
-        return meshfuncs.mesh_get_volume(self._data.vertices, self._data.faces)
+        return meshfuncs.mesh_get_volume(self.vertices, self.faces)
 
     def add_mesh(self, vertices, faces):
         """Add vertex and face data.
@@ -214,9 +209,9 @@ class AbstractMesh:
                 "The faces array containes indices that are out of bounds."
             )
 
-        vertex_index_offset = len(self._data.vertices)
-        self._data.add_vertices(vertices)
-        self._data.add_faces(faces + vertex_index_offset)
+        vertex_index_offset = len(self.vertices)
+        self.add_vertices(vertices)
+        self.add_faces(faces + vertex_index_offset)
 
     # todo: questions:
     # Do we want to keep track of components?
@@ -244,22 +239,20 @@ class AbstractMesh:
         """
 
         # Remove collapsed faces
-        collapsed_faces = np.array(
-            [len(set(f)) != len(f) for f in self._data.faces], bool
-        )
+        collapsed_faces = np.array([len(set(f)) != len(f) for f in self.faces], bool)
         (indices,) = np.where(collapsed_faces)
         if len(indices):
-            self._data.delete_faces(indices)
+            self.delete_faces(indices)
 
         # Remove duplicate faces
         while True:
-            sorted_buf = np.frombuffer(np.sort(self._data.faces, axis=1), dtype="V12")
+            sorted_buf = np.frombuffer(np.sort(self.faces, axis=1), dtype="V12")
             _, index, counts = np.unique(
                 sorted_buf, axis=0, return_index=True, return_counts=True
             )
             indices = index[counts > 1]
             if len(indices):
-                self._data.delete_faces(indices)
+                self.delete_faces(indices)
             else:
                 break
 
@@ -271,7 +264,7 @@ class AbstractMesh:
         for edge, fii in nonmanifold_edges.items():
             indices.extend(fii)
         if len(indices):
-            self._data.delete_faces(indices)
+            self.delete_faces(indices)
 
     def repair_vertex_manifold(self):
         """Repair vertices that are non-manifold.
@@ -298,13 +291,13 @@ class AbstractMesh:
             assert len(groups) >= 2
             for face_indices in groups[1:]:
                 # Add vertex
-                self._data.add_vertices([self._data.vertices[vi]])
-                vi2 = len(self._data.vertices) - 1
+                self.add_vertices([self.vertices[vi]])
+                vi2 = len(self.vertices) - 1
                 # Update faces
-                faces = self._data.faces[face_indices, :]
+                faces = self.faces[face_indices, :]
                 # faces = faces if faces.base is None else faces.copy()
                 faces[faces == vi] = vi2  # todo: must be disallowed!
-                self._data.update_faces(face_indices, faces)
+                self.update_faces(face_indices, faces)
 
     def repair_oriented(self):
         """Repair the winding of individual faces so that it is consistent.
@@ -332,10 +325,10 @@ class AbstractMesh:
         # and speed matters less in a repair function, I suppose.
 
         # Make a copy of the faces, so we can reverse them in-place. We'll later update the real faces.
-        faces = self._data.faces.copy()
+        faces = self.faces.copy()
 
         reversed_faces = []
-        vertex2faces = self._data.vertex2faces
+        vertex2faces = self.vertex2faces
         faces_to_check = set(range(len(faces)))
 
         while len(faces_to_check) > 0:
@@ -410,17 +403,17 @@ class AbstractMesh:
                 new_faces[:, 2] = new_faces[:, 1]
                 new_faces[:, 1] = tmp
             # Update
-            self._data.update_faces(reversed_faces, new_faces)
+            self.update_faces(reversed_faces, new_faces)
 
         # Reverse all the faces if this is an oriented closed manifold with a negative volume.
         if self.is_manifold and self.is_oriented and self.is_closed:
             if self.get_volume() < 0:
-                new_faces = self._data.faces.copy()
+                new_faces = self.faces.copy()
                 tmp = new_faces[:, 2].copy()
                 new_faces[:, 2] = new_faces[:, 1]
                 new_faces[:, 1] = tmp
                 reversed_faces = np.arange(len(new_faces), dtype=np.int32)
-                self._data.update_faces(reversed_faces, new_faces)
+                self.update_faces(reversed_faces, new_faces)
 
         return len(reversed_faces)
 
@@ -432,7 +425,7 @@ class AbstractMesh:
         if not self.is_manifold:
             raise RuntimeError("Repairing open meshes requires them to be manifold.")
 
-        faces = self._data.faces
+        faces = self.faces
         new_faces = []
 
         # Detect boundaries
@@ -452,7 +445,7 @@ class AbstractMesh:
                 # holes as well. Leaving this open for now.
 
         if new_faces:
-            self._data.add_faces(new_faces)
+            self.add_faces(new_faces)
 
     def deduplicate_vertices(self, *, atol=None):
         """Merge vertices that are the same or close together according to the given tolerance.
@@ -462,8 +455,8 @@ class AbstractMesh:
         topology of the mesh, especially if you specify a tolerance.
         """
 
-        faces = self._data.faces.copy()
-        vertices = self._data.vertices
+        faces = self.faces.copy()
+        vertices = self.vertices
 
         # Collect duplicate vertices
         duplicate_map = {}
@@ -485,13 +478,13 @@ class AbstractMesh:
                 faces[faces == vi2] = vi1
 
         # Check what faces have been changed in our copy.
-        changed = faces != self._data.faces  # Nx3
+        changed = faces != self.faces  # Nx3
         changed_count = changed.sum(axis=1)
         (indices,) = np.where(changed_count > 0)
 
         if len(indices):
             # Update the faces
-            self._data.update_faces(indices, faces[indices])
+            self.update_faces(indices, faces[indices])
             # We could trace all the vertices that we eventually popped
             # this way, but let's do it the easy (and robust) way.
             self.remove_unused_vertices()
@@ -504,14 +497,14 @@ class AbstractMesh:
         these should clean up after themselves (though they could use
         this method for that).
         """
-        faces = self._data.faces
+        faces = self.faces
 
-        vertices_mask = np.zeros((len(self._data.vertices),), bool)
+        vertices_mask = np.zeros((len(self.vertices),), bool)
         vii = np.unique(faces.flatten())
         vertices_mask[vii] = True
 
         vii_not_used = np.where(~vertices_mask)[0]
-        self._data.delete_vertices(vii_not_used)
+        self.delete_vertices(vii_not_used)
 
     def remove_small_components(self, min_faces=4):
         """Remove small connected components from the mesh."""
@@ -534,7 +527,7 @@ class AbstractMesh:
                 faces_to_remove.extend(np.where(component_labels == label)[0])
 
         # Determine what vertices to remove - important to be vertex-manifold!
-        vertices_to_remove = np.unique(self._data.faces[faces_to_remove].flatten())
+        vertices_to_remove = np.unique(self.faces[faces_to_remove].flatten())
 
         # check
         for vi in vertices_to_remove:
@@ -544,8 +537,8 @@ class AbstractMesh:
 
         # Apply
         if len(faces_to_remove):
-            self._data.delete_faces(faces_to_remove)
-            self._data.delete_vertices(vertices_to_remove)
+            self.delete_faces(faces_to_remove)
+            self.delete_vertices(vertices_to_remove)
 
     def split(self):
         """Return a list of Mesh objects, one for each connected component."""
