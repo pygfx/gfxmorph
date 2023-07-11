@@ -2,7 +2,41 @@ import numpy as np
 import pylinalg as la
 import pygfx as gfx
 
+from .dynamicmesh import MeshChangeTracker
 # todo: why not make all polyhedrons in gfx solid, and use flat-shading to show their sharp edges?
+
+
+class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
+    """ A geometry specifically for representing dynamic meshes. It provides an API
+    that gfxmorph can then use to update the GPU representation.
+    """
+
+    def set_vertex_arrays(self, positions, normals, colors):
+        self.positions = gfx.Buffer(positions)
+        self.normals = gfx.Buffer(normals)
+        # self.colors = gfx.Buffer(colors)
+
+    def set_face_array(self, array):
+        self.indices = gfx.Buffer(array)
+
+    def set_n_vertices(self, n):
+        pass  # no need
+
+    def set_n_faces(self, n):
+        self.indices.view = 0, n
+
+    def update_positions(self, indices):
+        # todo: optimize
+        # We can update positions more fine-grained,
+        # but the normals are actually updates in full.
+        # Also, if we render with flat_shading, we don't need the normals!
+        self.positions.update_range(indices.min(), indices.max())
+
+    def update_normals(self, indices):
+        self.normals.update_range(indices.min(), indices.max())
+
+    def update_faces(self, indices):
+        self.indices.update_range(indices.min(), indices.max())
 
 
 def solid_tetrahedon():
