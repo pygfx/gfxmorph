@@ -70,7 +70,8 @@ def benchmark():
             t.toc("check v-manifold")
 
             t.tic()
-            v = m.get_volume()
+            # v = m.get_volume() -> slow because it checks for manifoldness, because a volume of a nonmanifold or nonmanifold mesh means nothing.
+            v = meshfuncs.mesh_get_volume(m.vertices, m.faces)
             t.toc("volume")
             t.add_data("", v)
 
