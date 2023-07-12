@@ -60,6 +60,11 @@ class BaseDynamicMesh:
     It manages buffers that are oversized so the vertex and face array
     can grow. When the buffer is full, a larger buffer is allocated.
     The exposed arrays are contiguous views onto these buffers.
+
+    It also maintains a vertex2faces incidence map, and keeps the vertex
+    normals up to date. It can notify other object of changes, so that
+    any representation of the mesh  (e.g. a visualization on the GPU)
+    can be kept in sync.
     """
 
     # We assume meshes with triangles (not quads)

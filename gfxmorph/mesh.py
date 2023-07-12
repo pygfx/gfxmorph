@@ -23,8 +23,10 @@ from . import meshfuncs
 
 class DynamicMesh(BaseDynamicMesh):
     """Representation of a mesh, with utilities to modify it.
-    The idea is that this can be subclassed to hook it up in a visualization
-    system (like pygfx), e.g. process updates in a granular way.
+
+    In addition to BaseDynamicMesh, this class adds higher level logic
+    to detect certain properties of the mesh, make repairs, and other
+    (higher level) modifications.
     """
 
     def __init__(self, vertices, faces):
