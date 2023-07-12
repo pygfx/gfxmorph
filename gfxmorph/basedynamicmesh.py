@@ -10,7 +10,7 @@ EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atom
 
 
 class MeshChangeTracker:
-    """A class that is notified on changes to the DynamicMesh that it
+    """A class that is notified on changes to the BaseDynamicMesh that it
     is subscribed to, so that a certain representation of the mesh can
     be updated.
     """
@@ -54,7 +54,7 @@ class Safecall:
         return True  # Yes, we handled the exception
 
 
-class DynamicMesh:
+class BaseDynamicMesh:
     """A mesh object that can be modified in-place.
 
     It manages buffers that are oversized so the vertex and face array

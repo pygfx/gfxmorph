@@ -1,6 +1,9 @@
 import numpy as np
 from testutils import run_tests, get_sphere
-from gfxmorph.dynamicmesh import DynamicMesh as OriDynamicMesh, MeshChangeTracker
+from gfxmorph.basedynamicmesh import (
+    BaseDynamicMesh as OriDynamicMesh,
+    MeshChangeTracker,
+)
 import pytest
 
 

@@ -2,7 +2,7 @@ import numpy as np
 import pylinalg as la
 import pygfx as gfx
 
-from .dynamicmesh import MeshChangeTracker
+from .basedynamicmesh import MeshChangeTracker
 
 # todo: why not make all polyhedrons in gfx solid, and use flat-shading to show their sharp edges?
 
