@@ -107,7 +107,7 @@ def test_non_manifold_collapse_face_1():
         if len(faces) <= 4:
             continue
 
-        m.repair_edge_manifold()  # We can detect and remove collapsed faces!
+        m.repair_manifold()  # We can detect and remove collapsed faces!
 
         assert m.is_manifold
         assert not m.is_closed  # there's a hole in the mesh
@@ -133,7 +133,7 @@ def test_non_manifold_collapse_face_2():
     assert not m.is_closed
     assert m.is_oriented  # the collapsed face maket is non-orientable
 
-    m.repair_edge_manifold()  # We can detect and remove collapsed faces!
+    m.repair_manifold()  # We can detect and remove collapsed faces!
 
     assert m.is_manifold
     assert not m.is_closed
@@ -160,7 +160,7 @@ def test_non_manifold_add_face_1():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_edge_manifold()
+        m.repair_manifold()
 
         assert m.is_manifold
         assert m.is_closed == (False if len(m.faces) > 0 else True)
@@ -181,7 +181,7 @@ def test_non_manifold_add_face_2():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_edge_manifold()  # We can detect and remove duplicate faces!
+        m.repair_manifold()  # We can detect and remove duplicate faces!
 
         assert m.is_edge_manifold
         assert m.is_manifold
@@ -203,7 +203,7 @@ def test_non_manifold_add_face_3():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_edge_manifold()
+        m.repair_manifold()
 
         assert m.is_manifold
         assert m.is_closed == (False if len(m.faces) > 0 else True)
@@ -234,7 +234,7 @@ def test_non_manifold_add_face_4():
 
         # Repair it
 
-        m.repair_vertex_manifold()
+        m.repair_manifold()
 
         assert m.is_manifold
         assert not m.is_closed
@@ -276,7 +276,7 @@ def test_non_manifold_add_face_5():
 
         # Repair it
 
-        m.repair_vertex_manifold()
+        m.repair_manifold()
 
         assert m.is_manifold
         assert not m.is_closed
@@ -323,7 +323,7 @@ def test_non_manifold_weakly_connected_1():
 
             # Repair it
 
-            m.repair_vertex_manifold()
+            m.repair_manifold()
 
             assert m.is_manifold
             assert m.is_closed
@@ -367,7 +367,7 @@ def test_non_manifold_weakly_connected_2():
 
                 # Repair it
 
-                m.repair_vertex_manifold()
+                m.repair_manifold()
 
                 assert m.is_manifold
                 assert m.is_closed == (closed1 and closed2)
@@ -414,7 +414,7 @@ def test_non_manifold_weakly_connected_3():
 
             # Repair it
 
-            m.repair_vertex_manifold()
+            m.repair_manifold()
 
             assert m.is_manifold
             assert not m.is_closed
@@ -567,7 +567,7 @@ def test_non_closed_sphere():
     # top to bottom, by deduping vertices. However, this introduces
     # some collapsed faces, which we'll need to remove.
     m.repair_touching_boundaries()
-    m.repair_edge_manifold()
+    m.repair_manifold()
 
     assert m.is_manifold
     assert m.is_closed

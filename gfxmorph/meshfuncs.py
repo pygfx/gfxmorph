@@ -393,7 +393,8 @@ def mesh_get_boundaries(faces):
     connected via a boundary edge), and the order of vertices is in the
     appropriate winding direction.
 
-    The
+    This function can raise a RuntimeError if it runs into a part of
+    the mesh that is non-manifold.
     """
     # Special case
     if len(faces) == 0:
@@ -528,9 +529,7 @@ def mesh_get_consistent_face_orientation(faces, vertex2faces):
         while front:
             fi_check = front.popleft()
             vi1, vi2, vi3 = faces[fi_check]
-            _, neighbours = face_get_neighbours2(
-                faces, vertex2faces, fi_check
-            )
+            _, neighbours = face_get_neighbours2(faces, vertex2faces, fi_check)
             for fi in neighbours:
                 if fi in faces_to_check:
                     faces_to_check.remove(fi)

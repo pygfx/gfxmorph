@@ -226,29 +226,39 @@ class AbstractMesh(DynamicMesh):
 
     # %% Repairs
 
-    def repair_edge_manifold(self):
-        """Repair the mesh to maybe make it manifold.
+    def repair_manifold(self):
+        """Repair the mesh to make it manifold.
+
+        This method includes a number of steps:
 
         * Remove collapsed faces.
         * Remove duplicate faces.
         * Remove faces incident to edges that have more than 2 incident faces.
+        * Duplicate non-manifold vertices and assign them to the respective faces.
 
-        The repair always produces an edge-manifold mesh but it may
-        have less faces (it could even be empty) and the mesh may have
-        holes where it previously attached to other parts of the mesh.
+        The result is always a manifold mesh, but it may have less faces
+        (it could even be empty) and the mesh may have holes where it
+        previously attached to other parts of the mesh.
+
+        Returns the number of deleted/updated faces.
         """
+        n_updated = 0
 
-        # Remove collapsed faces
+        if self.is_manifold:
+            return n_updated
+
+        # Remove collapsed faces. A collapsed face results in the mesh
+        # being either not vertex- or not edge- manifold, depending on
+        # whether it is at a boundary.
         collapsed_faces = np.array([len(set(f)) != len(f) for f in self.faces], bool)
         (indices,) = np.where(collapsed_faces)
         if len(indices):
             self.delete_faces(indices)
+            n_updated += len(indices)
 
-        # Remove duplicate faces
+        # Remove duplicate faces.
         sorted_buf = np.frombuffer(np.sort(self.faces, axis=1), dtype="V12")
-        unique_buf, index, counts = np.unique(
-            sorted_buf, axis=0, return_index=True, return_counts=True
-        )
+        unique_buf, counts = np.unique(sorted_buf, axis=0, return_counts=True)
         duplicate_values = unique_buf[counts > 1]
         indices = []
         for value in duplicate_values:
@@ -256,67 +266,71 @@ class AbstractMesh(DynamicMesh):
             indices.extend(indices_for_value[1:])
         if len(indices):
             self.delete_faces(indices)
+            n_updated += len(indices)
 
-        # Remove non-manifold faces
-        # todo: maybe the edge-info can be used to stitch the mesh back up?
-        self.is_edge_manifold
-        nonmanifold_edges = self._props["nonmanifold_edges"]
-        indices = []
-        for edge, fii in nonmanifold_edges.items():
-            indices.extend(fii)
-        if len(indices):
-            self.delete_faces(indices)
+        # Remove non-manifold edges.
+        # Use the is_edge_manifold prop to trigger 'nonmanifold_edges' to be up to date.
+        if not self.is_edge_manifold:
+            # todo: maybe the edge-info can be used to stitch the mesh back up?
+            nonmanifold_edges = self._props["nonmanifold_edges"]
+            indices = []
+            for edge, fii in nonmanifold_edges.items():
+                indices.extend(fii)
+            if len(indices):
+                self.delete_faces(indices)
+                n_updated += len(indices)
 
-    def repair_vertex_manifold(self):
-        """Repair vertices that are non-manifold.
+        # Fix non-manifold vertices.
+        # Non-manifold vertices are vertices who's incident faces do not
+        # form a single (open or closed) fan. It's tricky to find such
+        # vertices, but it's easy to repair them, once found. The vertices
+        # are duplicated and assigned to the respective fans.
+        # Use the is_vertex_manifold prop to trigger 'nonmanifold_edges' to be up to date.
+        if not self.is_vertex_manifold:
+            # We update each group individually. It may be more efficient
+            # to collect changes, but it'd also make the code more complex.
+            # Note that we can safely do this because no vertices/faces are
+            # deleted in this process, so the indices in
+            # 'nonmanifold_vertices' remain valid.
+            for vi, groups in self._props["nonmanifold_vertices"].items():
+                assert len(groups) >= 2
+                for face_indices in groups[1:]:
+                    # Add vertex
+                    self.add_vertices([self.vertices[vi]])
+                    vi2 = len(self.vertices) - 1
+                    # Update faces
+                    faces = self.faces[face_indices, :]
+                    # faces = faces if faces.base is None else faces.copy()
+                    faces[faces == vi] = vi2  # todo: must be disallowed!
+                    self.update_faces(face_indices, faces)
+                    n_updated += len(face_indices)
 
-        Non-manifold vertices are vertices who's incident faces do not
-        form a single (open or closed) fan. It's tricky to find such
-        vertices, but it's easy to repair them, once found. The vertices
-        are duplicated and assigned to the fans so that the
-        vertex-manifold condition is attained.
-
-        The repair can only fail is the mesh is not edge-manifold.
-        """
-
-        # Trigger 'nonmanifold_vertices' to be available
-        self.is_vertex_manifold
-
-        # Process all required changes
-        # We update each group individually. It may be more efficient
-        # to collect changes, but it'd also make the code more complex.
-        # Note that we can safely do this because no vertices/faces are
-        # deleted in this process, so the indices in
-        # 'nonmanifold_vertices' remain valid.
-        for vi, groups in self._props["nonmanifold_vertices"].items():
-            assert len(groups) >= 2
-            for face_indices in groups[1:]:
-                # Add vertex
-                self.add_vertices([self.vertices[vi]])
-                vi2 = len(self.vertices) - 1
-                # Update faces
-                faces = self.faces[face_indices, :]
-                # faces = faces if faces.base is None else faces.copy()
-                faces[faces == vi] = vi2  # todo: must be disallowed!
-                self.update_faces(face_indices, faces)
+        return n_updated
 
     def repair_orientation(self):
-        """Repair the winding of individual faces so that it is consistent.
+        """Repair the winding of individual faces to make the mesh oriented.
 
-        Returns the number of faces that are flipped.
+        Faces that do not match the winding of their neighbours are
+        flipped in a recursive algorithm. If the mesh is a close and
+        oriented manifold, but it has a negative volume, all faces are
+        flipped.
 
         The repair can only fail if the mesh is not manifold or when
         it is not orientable (i.e. a Mobius strip or Klein bottle).
-        """
 
-        # Try making the winding consistent
-        modified_faces = meshfuncs.mesh_get_consistent_face_orientation(
-            self.faces, self.vertex2faces
-        )
-        (indices,) = np.where(modified_faces[:, 2] != self.faces[:, 2])
-        if len(indices) > 0:
-            self.update_faces(indices, modified_faces[indices])
-        n_flipped = len(indices)
+        Returns the number of faces that are flipped.
+        """
+        n_flipped = 0
+
+        if not self.is_oriented:
+            # Try making the winding consistent
+            modified_faces = meshfuncs.mesh_get_consistent_face_orientation(
+                self.faces, self.vertex2faces
+            )
+            (indices,) = np.where(modified_faces[:, 2] != self.faces[:, 2])
+            if len(indices) > 0:
+                self.update_faces(indices, modified_faces[indices])
+            n_flipped = len(indices)
 
         # Reverse all the faces if this is an oriented closed manifold with a negative volume.
         if self.is_manifold and self.is_oriented and self.is_closed:
@@ -331,43 +345,29 @@ class AbstractMesh(DynamicMesh):
 
         return n_flipped
 
-    def repair_holes(self):
-        """Repair holes in the mesh.
-
-        At the moment this only repairs holes of a single face, but this can be improved.
-        """
-        if not self.is_manifold:
-            raise RuntimeError("Repairing open meshes requires them to be manifold.")
-
-        faces = self.faces
-        new_faces = []
-
-        # Detect boundaries
-        boundaries = meshfuncs.mesh_get_boundaries(faces)
-
-        # Now we check all boundaries
-        for boundary in boundaries:
-            assert len(boundary) >= 3  # I don't think they can be smaller, right?
-            if len(boundary) == 3:
-                new_faces.append(boundary)
-            elif len(boundary) == 4:
-                new_faces.append(boundary[:3])
-                new_faces.append(boundary[2:] + boundary[:1])
-            else:
-                pass
-                # We can apply the earcut algororithm to fill larger
-                # holes as well. Leaving this open for now.
-
-        if new_faces:
-            self.add_faces(new_faces)
-
     def repair_touching_boundaries(self, *, atol=1e-5):
-        """Merge vertices that are the same or close together according to the given tolerance.
+        """Repair open meshes by stitching boundary vertices that are close together.
 
-        Note that this method can cause the mesh to become non-manifold.
+        Vertices (on boundaries) that are the same or close together
+        (according to the given tolerance) are de-duplicated, thereby
+        stitching the mesh parts together. The purpose is for meshes
+        that are visually closed but mathematically open, to become
+        mathematically closed.
+
+        There is no guarantee that this results in a closed mesh,
+        because that depends entirely on the presence of near-touching
+        boundaries. Also note that this method can cause the mesh to
+        become non-manifold if the wrong faces are stitched together.
         You should probably only apply this method if you know the
-        topology of the mesh, especially if you specify a tolerance.
+        topology of the mesh.
+
+        Returns the number of updated faces.
         """
+
+        n_updated = 0
+
+        if self.is_closed:
+            return n_updated
 
         faces = self.faces.copy()
         # vertices = self.vertices
@@ -409,12 +409,61 @@ class AbstractMesh(DynamicMesh):
         changed_count = changed.sum(axis=1)
         (indices,) = np.where(changed_count > 0)
 
+        # todo: prevent this step from creating non-manifold meshes!
+
         if len(indices):
             # Update the faces
             self.update_faces(indices, faces[indices])
+            n_updated += len(indices)
             # We could trace all the vertices that we eventually popped
             # this way, but let's do it the easy (and robust) way.
             self.remove_unused_vertices()
+
+        return n_updated
+
+    def repair_holes(self):
+        """Repair holes in the mesh.
+
+        Small boundaries are removed by filling these holes with new faces.
+
+        At the moment this only repairs holes of 3 or 4 vertices (i.e.
+        1  or 2 faces), but this can later be improved. So if only small
+        holes are present, the result will be a closed mesh. However,
+        if the mesh is not manifold, this method may not be able to
+        repair all holes.
+
+        Returns the number of added faces.
+        """
+
+        if self.is_closed:
+            return 0
+
+        # Detect boundaries.
+        try:
+            boundaries = meshfuncs.mesh_get_boundaries(self.faces)
+        except RuntimeError:
+            # The mesh probably has non-manifold edges/vertices near the boundaries,
+            # causing the algorithm in `mesh_get_boundaries()` to fail.
+            return 0
+
+        # Now we check all boundaries
+        new_faces = []
+        for boundary in boundaries:
+            assert len(boundary) >= 3  # I don't think they can be smaller, right?
+            if len(boundary) == 3:
+                new_faces.append(boundary)
+            elif len(boundary) == 4:
+                new_faces.append(boundary[:3])
+                new_faces.append(boundary[2:] + boundary[:1])
+            else:
+                pass
+                # We can apply the earcut algororithm to fill larger
+                # holes as well. Leaving this open for now.
+
+        if new_faces:
+            self.add_faces(new_faces)
+
+        return len(new_faces)
 
     def remove_unused_vertices(self):
         """Delete vertices that are not used by the faces.
@@ -437,10 +486,7 @@ class AbstractMesh(DynamicMesh):
         """Remove small connected components from the mesh."""
 
         # We need the mesh to be manifold to do this
-        if not self.is_edge_manifold:
-            self.repair_edge_manifold()
-        if not self.is_vertex_manifold:
-            self.repair_edge_manifold()
+        self.repair_manifold()
         assert self.is_manifold
 
         # Get labels and their counts
