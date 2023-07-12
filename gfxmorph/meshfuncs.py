@@ -484,3 +484,102 @@ def mesh_get_boundaries(faces):
         # assert boundary[1] == original_edge[0]
 
     return boundaries
+
+
+def mesh_get_consistent_face_orientation(faces, vertex2faces):
+    """Make the orientation of the faces consistent.
+
+    Returns a modified copy of the faces which may have some of the
+    faces flipped. Faces are flipped by swapping the 2nd and 3d value.
+    Note that the winding of the returned array may still not be
+    consistent, when the mesh is not manifold or when it is not
+    orientable (i.e. a Mobius strip or Klein bottle).
+    """
+
+    # This implementation walks over the surface using a front. The
+    # algorithm is similar to the one for splitting the mesh in
+    # connected components, except it does more work at the deepest
+    # nesting.
+    #
+    # It starts out from one face, and reverses the neighboring
+    # faces that don't match the winding of the current face. And
+    # so on. Faces that have been been processed cannot be reversed
+    # again. So the fix operates as a wave that flows over the mesh,
+    # with the first face defining the winding.
+    #
+    # A closed form solution for this problem does not exist. The skcg
+    # lib uses pycosat to find the solution. The below might be slower
+    # (being implemented in pure Python), but it's free of dependencies
+    # and speed matters less in a repair function, I suppose.
+
+    # Make a copy of the faces, so we can reverse them in-place.
+    faces = faces.copy()
+
+    reversed_faces = []
+    faces_to_check = set(range(len(faces)))
+
+    while len(faces_to_check) > 0:
+        # Create new front - once for each connected component in the mesh
+        vi_next = faces_to_check.pop()
+        front = queue.deque()
+        front.append(vi_next)
+
+        # Walk along the front
+        while front:
+            fi_check = front.popleft()
+            vi1, vi2, vi3 = faces[fi_check]
+            _, neighbours = face_get_neighbours2(
+                faces, vertex2faces, fi_check
+            )
+            for fi in neighbours:
+                if fi in faces_to_check:
+                    faces_to_check.remove(fi)
+                    front.append(fi)
+
+                    vj1, vj2, vj3 = faces[fi]
+                    matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
+                    if len(matching_vertices) == 2:
+                        if vi3 not in matching_vertices:
+                            # vi1 in matching_vertices and vi2 in matching_vertices
+                            if (
+                                (vi1 == vj1 and vi2 == vj2)
+                                or (vi1 == vj2 and vi2 == vj3)
+                                or (vi1 == vj3 and vi2 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+                        elif vi1 not in matching_vertices:
+                            # vi2 in matching_vertices and vi3 in matching_vertices
+                            if (
+                                (vi2 == vj1 and vi3 == vj2)
+                                or (vi2 == vj2 and vi3 == vj3)
+                                or (vi2 == vj3 and vi3 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+                        elif vi2 not in matching_vertices:
+                            # vi3 in matching_vertices and vi1 in matching_vertices
+                            if (
+                                (vi3 == vj1 and vi1 == vj2)
+                                or (vi3 == vj2 and vi1 == vj3)
+                                or (vi3 == vj3 and vi1 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+
+        # If over half the faces were flipped, we flip the hole thing.
+        if len(reversed_faces) > 0.5 * len(faces):
+            tmp = faces[:, 2].copy()
+            faces[:, 2] = faces[:, 1]
+            faces[:, 1] = tmp
+
+        return faces

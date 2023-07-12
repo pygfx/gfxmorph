@@ -12,8 +12,6 @@
 #
 # Vertex indices are denoted with vi, face indices with fi.
 
-import queue
-
 import numpy as np
 
 from .dynamicmesh import DynamicMesh
@@ -195,9 +193,11 @@ class AbstractMesh(DynamicMesh):
         return meshfuncs.mesh_get_volume(self.vertices, self.faces)
 
     def add_mesh(self, vertices, faces):
-        """Add vertex and face data.
+        """Add a (partial) mesh.
 
-        The data is copied and the internal data structure.
+        The vertices and faces are appended to the end. The values of
+        the faces are modified to still target the appropriate vertices
+        (which may now have an offset).
         """
         faces = np.asarray(faces, np.int32)
 
@@ -226,7 +226,7 @@ class AbstractMesh(DynamicMesh):
 
     # %% Repairs
 
-    def repair_manifold(self):
+    def repair_edge_manifold(self):
         """Repair the mesh to maybe make it manifold.
 
         * Remove collapsed faces.
@@ -245,16 +245,17 @@ class AbstractMesh(DynamicMesh):
             self.delete_faces(indices)
 
         # Remove duplicate faces
-        while True:
-            sorted_buf = np.frombuffer(np.sort(self.faces, axis=1), dtype="V12")
-            _, index, counts = np.unique(
-                sorted_buf, axis=0, return_index=True, return_counts=True
-            )
-            indices = index[counts > 1]
-            if len(indices):
-                self.delete_faces(indices)
-            else:
-                break
+        sorted_buf = np.frombuffer(np.sort(self.faces, axis=1), dtype="V12")
+        unique_buf, index, counts = np.unique(
+            sorted_buf, axis=0, return_index=True, return_counts=True
+        )
+        duplicate_values = unique_buf[counts > 1]
+        indices = []
+        for value in duplicate_values:
+            (indices_for_value,) = np.where(sorted_buf == value)
+            indices.extend(indices_for_value[1:])
+        if len(indices):
+            self.delete_faces(indices)
 
         # Remove non-manifold faces
         # todo: maybe the edge-info can be used to stitch the mesh back up?
@@ -299,111 +300,23 @@ class AbstractMesh(DynamicMesh):
                 faces[faces == vi] = vi2  # todo: must be disallowed!
                 self.update_faces(face_indices, faces)
 
-    def repair_oriented(self):
+    def repair_orientation(self):
         """Repair the winding of individual faces so that it is consistent.
 
-        Returns the number of faces that are reversed.
+        Returns the number of faces that are flipped.
 
         The repair can only fail if the mesh is not manifold or when
         it is not orientable (i.e. a Mobius strip or Klein bottle).
         """
 
-        # This implementation walks over the surface using a front. The
-        # algorithm is similar to the one for splitting the mesh in
-        # connected components, except it does more work at the deepest
-        # nesting.
-        #
-        # It starts out from one face, and reverses the neighboring
-        # faces that don't match the winding of the current face. And
-        # so on. Faces that have been been processed cannot be reversed
-        # again. So the fix operates as a wave that flows over the mesh,
-        # with the first face defining the winding.
-        #
-        # A closed form solution for this problem does not exist. The skcg
-        # lib uses pycosat to find the solution. The below might be slower
-        # (being implemented in pure Python), but it's free of dependencies
-        # and speed matters less in a repair function, I suppose.
-
-        # Make a copy of the faces, so we can reverse them in-place. We'll later update the real faces.
-        faces = self.faces.copy()
-
-        reversed_faces = []
-        vertex2faces = self.vertex2faces
-        faces_to_check = set(range(len(faces)))
-
-        while len(faces_to_check) > 0:
-            # Create new front - once for each connected component in the mesh
-            vi_next = faces_to_check.pop()
-            front = queue.deque()
-            front.append(vi_next)
-
-            # Walk along the front
-            while front:
-                fi_check = front.popleft()
-                vi1, vi2, vi3 = faces[fi_check]
-                _, neighbours = meshfuncs.face_get_neighbours2(
-                    faces, vertex2faces, fi_check
-                )
-                for fi in neighbours:
-                    if fi in faces_to_check:
-                        faces_to_check.remove(fi)
-                        front.append(fi)
-
-                        vj1, vj2, vj3 = faces[fi]
-                        matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
-                        if len(matching_vertices) == 2:
-                            if vi3 not in matching_vertices:
-                                # vi1 in matching_vertices and vi2 in matching_vertices
-                                if (
-                                    (vi1 == vj1 and vi2 == vj2)
-                                    or (vi1 == vj2 and vi2 == vj3)
-                                    or (vi1 == vj3 and vi2 == vj1)
-                                ):
-                                    reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = (
-                                        faces[fi, 2],
-                                        faces[fi, 1],
-                                    )
-                            elif vi1 not in matching_vertices:
-                                # vi2 in matching_vertices and vi3 in matching_vertices
-                                if (
-                                    (vi2 == vj1 and vi3 == vj2)
-                                    or (vi2 == vj2 and vi3 == vj3)
-                                    or (vi2 == vj3 and vi3 == vj1)
-                                ):
-                                    reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = (
-                                        faces[fi, 2],
-                                        faces[fi, 1],
-                                    )
-                            elif vi2 not in matching_vertices:
-                                # vi3 in matching_vertices and vi1 in matching_vertices
-                                if (
-                                    (vi3 == vj1 and vi1 == vj2)
-                                    or (vi3 == vj2 and vi1 == vj3)
-                                    or (vi3 == vj3 and vi1 == vj1)
-                                ):
-                                    reversed_faces.append(fi)
-                                    faces[fi, 1], faces[fi, 2] = (
-                                        faces[fi, 2],
-                                        faces[fi, 1],
-                                    )
-
-        if reversed_faces:
-            # Get faces to update. If over half was reversed,
-            # we take the other half and reverse that instead.
-            if len(reversed_faces) < 0.5 * len(faces):
-                new_faces = faces[reversed_faces]
-            else:
-                mask = np.ones(len(faces), np.int32)
-                mask[reversed_faces] = 0
-                reversed_faces = np.where(mask)[0]
-                new_faces = faces[reversed_faces]
-                tmp = new_faces[:, 2].copy()
-                new_faces[:, 2] = new_faces[:, 1]
-                new_faces[:, 1] = tmp
-            # Update
-            self.update_faces(reversed_faces, new_faces)
+        # Try making the winding consistent
+        modified_faces = meshfuncs.mesh_get_consistent_face_orientation(
+            self.faces, self.vertex2faces
+        )
+        (indices,) = np.where(modified_faces[:, 2] != self.faces[:, 2])
+        if len(indices) > 0:
+            self.update_faces(indices, modified_faces[indices])
+        n_flipped = len(indices)
 
         # Reverse all the faces if this is an oriented closed manifold with a negative volume.
         if self.is_manifold and self.is_oriented and self.is_closed:
@@ -412,12 +325,13 @@ class AbstractMesh(DynamicMesh):
                 tmp = new_faces[:, 2].copy()
                 new_faces[:, 2] = new_faces[:, 1]
                 new_faces[:, 1] = tmp
-                reversed_faces = np.arange(len(new_faces), dtype=np.int32)
-                self.update_faces(reversed_faces, new_faces)
+                indices = np.arange(len(new_faces), dtype=np.int32)
+                self.update_faces(indices, new_faces)
+                n_flipped = len(new_faces)
 
-        return len(reversed_faces)
+        return n_flipped
 
-    def repair_closed(self):
+    def repair_holes(self):
         """Repair holes in the mesh.
 
         At the moment this only repairs holes of a single face, but this can be improved.
@@ -447,7 +361,7 @@ class AbstractMesh(DynamicMesh):
         if new_faces:
             self.add_faces(new_faces)
 
-    def deduplicate_vertices(self, *, atol=None):
+    def repair_touching_boundaries(self, *, atol=1e-5):
         """Merge vertices that are the same or close together according to the given tolerance.
 
         Note that this method can cause the mesh to become non-manifold.
@@ -456,24 +370,37 @@ class AbstractMesh(DynamicMesh):
         """
 
         faces = self.faces.copy()
-        vertices = self.vertices
+        # vertices = self.vertices
+
+        # Detect boundaries, and put all vertices in one array
+        boundaries = meshfuncs.mesh_get_boundaries(faces)
+        boundary_vertices = np.concatenate(boundaries)
+        boundary_positions = self.vertices[boundary_vertices]
 
         # Collect duplicate vertices
         duplicate_map = {}
-        duplicate_mask = np.zeros((len(vertices),), bool)
-        for vi in range(len(vertices)):
-            if not duplicate_mask[vi]:
+        duplicate_mask = np.zeros((len(boundary_positions),), bool)
+        for i in range(len(boundary_positions)):
+            if not duplicate_mask[i]:
                 if atol is None:
-                    mask3 = vertices == vertices[vi]
+                    mask3 = boundary_positions == boundary_positions[i]
                 else:
-                    mask3 = np.isclose(vertices, vertices[vi], atol=atol)
+                    mask3 = np.isclose(
+                        boundary_positions, boundary_positions[i], atol=atol
+                    )
                 mask = mask3.sum(axis=1) == 3  # all positions of a vertex must match
                 if mask.sum() > 1:
                     duplicate_mask[mask] = True
-                    mask[vi] = False
-                    duplicate_map[vi] = np.where(mask)[0]
+                    mask[i] = False
+                    duplicate_map[i] = np.where(mask)[0]
+
+        # Convert map to the global vertices
+        duplicate_map2 = {}
+        for i1, ii in duplicate_map.items():
+            duplicate_map2[boundary_vertices[i1]] = boundary_vertices[ii]
+
         # Now we can apply them. Some heavy iterations here ...
-        for vi1, vii in duplicate_map.items():
+        for vi1, vii in duplicate_map2.items():
             for vi2 in vii:
                 faces[faces == vi2] = vi1
 

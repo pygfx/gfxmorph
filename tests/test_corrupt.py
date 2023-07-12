@@ -107,13 +107,13 @@ def test_non_manifold_collapse_face_1():
         if len(faces) <= 4:
             continue
 
-        m.repair_manifold()  # We can detect and remove collapsed faces!
+        m.repair_edge_manifold()  # We can detect and remove collapsed faces!
 
         assert m.is_manifold
         assert not m.is_closed  # there's a hole in the mesh
         assert m.is_oriented
 
-        m.repair_closed()
+        m.repair_holes()
 
         assert m.is_manifold
         assert m.is_closed
@@ -133,7 +133,7 @@ def test_non_manifold_collapse_face_2():
     assert not m.is_closed
     assert m.is_oriented  # the collapsed face maket is non-orientable
 
-    m.repair_manifold()  # We can detect and remove collapsed faces!
+    m.repair_edge_manifold()  # We can detect and remove collapsed faces!
 
     assert m.is_manifold
     assert not m.is_closed
@@ -160,7 +160,7 @@ def test_non_manifold_add_face_1():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_manifold()
+        m.repair_edge_manifold()
 
         assert m.is_manifold
         assert m.is_closed == (False if len(m.faces) > 0 else True)
@@ -172,6 +172,7 @@ def test_non_manifold_add_face_2():
 
     for vertices, faces, is_closed in iter_test_meshes():
         faces.append(faces[0])
+        faces.append(faces[0])  # add two, to make sure both are removed
 
         m = MeshClass(vertices, faces)
 
@@ -180,7 +181,7 @@ def test_non_manifold_add_face_2():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_manifold()  # We can detect and remove duplicate faces!
+        m.repair_edge_manifold()  # We can detect and remove duplicate faces!
 
         assert m.is_edge_manifold
         assert m.is_manifold
@@ -202,7 +203,7 @@ def test_non_manifold_add_face_3():
         assert not m.is_closed
         assert not m.is_oriented
 
-        m.repair_manifold()
+        m.repair_edge_manifold()
 
         assert m.is_manifold
         assert m.is_closed == (False if len(m.faces) > 0 else True)
@@ -242,7 +243,7 @@ def test_non_manifold_add_face_4():
         # Repair harder
 
         if is_closed:
-            m.repair_closed()
+            m.repair_holes()
 
             assert m.is_manifold
             assert m.is_closed
@@ -439,7 +440,7 @@ def test_non_closed_remove_face():
         assert not m.is_closed
         assert m.is_oriented
 
-        m.repair_closed()
+        m.repair_holes()
 
         assert m.is_manifold
         assert m.is_closed
@@ -478,7 +479,7 @@ def test_non_closed_planes_2():
         assert m.is_oriented
 
         # We can stitch the individual planes together!
-        m.deduplicate_vertices(atol=1e-6)
+        m.repair_touching_boundaries(atol=1e-6)
 
         assert m.is_manifold
         assert m.is_closed
@@ -512,8 +513,12 @@ def test_non_closed_knot():
     assert not m.is_closed
     assert m.is_oriented
 
-    # Note: I've been unable to stitch the mesh using deduplicate_vertices().
-    # It either stays open or becomes non-manifold.
+    # Stitch the mesh back up
+    m.repair_touching_boundaries()
+
+    assert m.is_manifold
+    assert m.is_closed
+    assert m.is_oriented
 
 
 def test_non_closed_cube():
@@ -537,7 +542,7 @@ def test_non_closed_cube():
         assert m.is_oriented
 
         # This shape is easy to stitch into a closed manifold by deduping vertices.
-        m.deduplicate_vertices(atol=1e-6)
+        m.repair_touching_boundaries()
 
         assert m.is_manifold
         assert m.is_closed
@@ -561,8 +566,8 @@ def test_non_closed_sphere():
     # We can can stitch up the top, bottom and the seam that runs from
     # top to bottom, by deduping vertices. However, this introduces
     # some collapsed faces, which we'll need to remove.
-    m.deduplicate_vertices(atol=1e-6)
-    m.repair_manifold()
+    m.repair_touching_boundaries()
+    m.repair_edge_manifold()
 
     assert m.is_manifold
     assert m.is_closed
@@ -591,7 +596,7 @@ def test_non_oriented_change_winding_1():
             assert m.is_closed == is_closed
             assert not m.is_oriented
 
-            n_reversed = m.repair_oriented()
+            n_reversed = m.repair_orientation()
 
             assert n_reversed == 1
             assert m.is_manifold
@@ -632,7 +637,7 @@ def test_non_oriented_change_winding_2():
             assert m.is_closed == is_closed
             assert not m.is_oriented
 
-            n_reversed = m.repair_oriented()
+            n_reversed = m.repair_orientation()
 
             if len(faces) > 4:
                 assert n_reversed == 2
@@ -655,7 +660,7 @@ def test_non_oriented_inside_out():
         assert m.get_volume() < 0
         assert m.is_oriented  # still oriented ...
 
-        n_reversed = m.repair_oriented()
+        n_reversed = m.repair_orientation()
         assert n_reversed == len(faces)  # ... but inside out
 
         assert m.is_closed
@@ -688,7 +693,7 @@ def test_non_oriented_mobius():
     assert not m.is_closed
     assert not m.is_oriented
 
-    m.repair_oriented()
+    m.repair_orientation()
 
     assert m.is_manifold
     assert not m.is_closed
@@ -720,7 +725,7 @@ def test_non_oriented_klein_bottle():
     assert m.is_closed
     assert not m.is_oriented
 
-    m.repair_oriented()
+    m.repair_orientation()
 
     assert m.is_manifold
     assert m.is_closed
