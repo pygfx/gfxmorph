@@ -1,5 +1,5 @@
 """
-We cover most mesh funcs via test_corrupt.py and test_abstractmesh.py.
+We cover most mesh funcs via e.g. test_corrupt.py.
 Here we have a few more tests to test some functions more directly.
 """
 

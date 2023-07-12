@@ -27,7 +27,7 @@ if USE_SKCG:
 
     MeshClass = skcg.Mesh
 else:
-    MeshClass = gfxmorph.AbstractMesh
+    MeshClass = gfxmorph.DynamicMesh
 
 
 # todo: include is_edge_maniforld

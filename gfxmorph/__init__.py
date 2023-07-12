@@ -1,5 +1,5 @@
 from .basedynamicmesh import BaseDynamicMesh, MeshChangeTracker  # noqa: F401
-from .meshmorph import AbstractMesh  # noqa: F401
+from .mesh import DynamicMesh  # noqa: F401
 
 from . import meshfuncs  # noqa: F401
 

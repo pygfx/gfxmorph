@@ -1,13 +1,13 @@
 import numpy as np
 import pygfx as gfx  # noqa
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry  # noqa
-from gfxmorph import DynamicMesh, AbstractMesh, MeshChangeTracker  # noqa
+from gfxmorph import DynamicMesh, MeshChangeTracker  # noqa
 
 # geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
 # geo = gfx.sphere_geometry(1)
 # geo = gfx.geometries.tetrahedron_geometry()
 # geo = smooth_sphere_geometry(1)
-# m = AbstractMesh(geo.positions.data, geo.indices.data)
+# m = DynamicMesh(geo.positions.data, geo.indices.data)
 
 # Pseudo code:
 # m = DynamicMesh() or higher level so we have manifold props etc.
@@ -16,7 +16,7 @@ from gfxmorph import DynamicMesh, AbstractMesh, MeshChangeTracker  # noqa
 # m.track_changes(geo)
 
 
-m = AbstractMesh(None, None)
+m = DynamicMesh(None, None)
 
 
 def add_mesh():

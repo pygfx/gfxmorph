@@ -21,9 +21,7 @@ from .basedynamicmesh import BaseDynamicMesh
 from . import meshfuncs
 
 
-# todo: better name
-# maybe this should be DynamicMesh and DynamicMesh should be BaseDynamicMesh
-class AbstractMesh(BaseDynamicMesh):
+class DynamicMesh(BaseDynamicMesh):
     """Representation of a mesh, with utilities to modify it.
     The idea is that this can be subclassed to hook it up in a visualization
     system (like pygfx), e.g. process updates in a granular way.

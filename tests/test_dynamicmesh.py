@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from gfxmorph import maybe_pygfx
-from gfxmorph import AbstractMesh
+from gfxmorph import DynamicMesh
 from testutils import run_tests
 
 
@@ -18,19 +18,19 @@ def test_abstract_mesh_basics():
 
     # Create a silly mesh consisting of a single triangle
     triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
-    m = AbstractMesh(triangle, [[0, 1, 2]])
+    m = DynamicMesh(triangle, [[0, 1, 2]])
     assert not m.is_closed
 
     # Cannot creata a null mesh
     with pytest.raises(ValueError):
-        AbstractMesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.int32))
+        DynamicMesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.int32))
     with pytest.raises(ValueError):
-        AbstractMesh(triangle, np.zeros((0, 3), np.int32))
+        DynamicMesh(triangle, np.zeros((0, 3), np.int32))
     with pytest.raises(ValueError):
-        AbstractMesh(np.zeros((0, 3), np.float32), [[0, 1, 2]])
+        DynamicMesh(np.zeros((0, 3), np.float32), [[0, 1, 2]])
 
     # Creat mesh and check its volume
-    m = AbstractMesh(vertices, faces)
+    m = DynamicMesh(vertices, faces)
     expected_volume = (4 / 3) * np.pi
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
     assert m._n_reversed_faces == 0
@@ -42,7 +42,7 @@ def test_abstract_mesh_basics():
     faces2 = np.row_stack([faces, faces + len(vertices)])
 
     # Check its volume
-    m = AbstractMesh(vertices2, faces2)
+    m = DynamicMesh(vertices2, faces2)
     expected_volume = 2 * (4 / 3) * np.pi
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
     assert m._n_reversed_faces == 0
@@ -54,7 +54,7 @@ def test_abstract_mesh_basics():
     faces2[:n, 1], faces2[:n, 2] = faces2[:n, 2].copy(), faces2[:n, 1].copy()
 
     # The auto-correction mechanism will flip exactly what's needed to fix up the mesh!
-    m = AbstractMesh(vertices2, faces2)
+    m = DynamicMesh(vertices2, faces2)
     expected_volume = 2 * (4 / 3) * np.pi
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
     assert m._n_reversed_faces == 3840  # 60*4**3
@@ -69,7 +69,7 @@ def test_mesh_selection():
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)
     vertices = geo.positions.data
     faces = geo.indices.data
-    m = AbstractMesh(vertices, faces)
+    m = DynamicMesh(vertices, faces)
 
     # Select a vertex, twice
     i1, d1 = m.get_closest_vertex((-2, 0, 0))

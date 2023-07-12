@@ -2,7 +2,7 @@ import time
 
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry
-from gfxmorph import AbstractMesh
+from gfxmorph import DynamicMesh
 from gfxmorph import meshfuncs
 from skcg.core.mesh import Mesh
 
@@ -48,7 +48,7 @@ def benchmark():
         if True:
             t.add_data("NEW", "")
             t.tic()
-            m = AbstractMesh(vertices, faces)
+            m = DynamicMesh(vertices, faces)
             t.toc("init")
 
             t.tic()
