@@ -383,122 +383,32 @@ class AbstractMesh(DynamicMesh):
         Returns the number of updated faces.
         """
 
-        n_updated = 0
-
         if self.is_closed:
-            return n_updated
+            return 0
 
-        # Make a copy of the faces that we can modify
-        faces = self.faces.copy()
-
-        # Detect boundaries. A list of vertex indices (vi's)
-        boundaries = meshfuncs.mesh_get_boundaries(faces)
-
-        # Combine to get a subset of vertices for faster checking.
-        boundary_vertices = np.concatenate(boundaries)
-        boundary_positions = self.vertices[boundary_vertices]
-
-        # Keep track of what vi's were already handled as a duplicate
-        duplicate_mask = np.zeros((len(self.vertices),), bool)
-
-        # Create a mask so we can look up the boundary index from a vi
-        boundary_mask = np.empty((len(self.vertices),), np.int32)
-        boundary_mask.fill(-1)
-        for i, boundary in enumerate(boundaries):
-            boundary_mask[boundary] = i
-
-        # The deduplication can cause the mesh to become non-manifold.
-        # To prevent this we appy the changes in chunks and validate
-        # the change before it is applied. These "chunks" are groups
-        # of boundaries that connect. To handle these groups we use a
-        # stack-based algorithm simular to those used to traverse over
-        # the surface of the mesh.
-
-        boundary_indices_to_check = set(range(len(boundaries)))
-
-        while boundary_indices_to_check:
-            boundary_indices_in_this_group = [boundary_indices_to_check.pop()]
-
-            faces_for_this_group = faces.copy()
-
-            while boundary_indices_in_this_group:
-                boundary = boundaries[boundary_indices_in_this_group.pop(0)]
-
-                # The next two pieces of code are the heart of the algorithm,
-                # most of the rest is to apply the grouping and preventing non-manifoldness.
-
-                # Collect duplicate vertices.
-                duplicate_map = {}
-                for vi in boundary:
-                    if not duplicate_mask[vi]:
-                        if atol is None:
-                            mask3 = boundary_positions == self.vertices[vi]
-                        else:
-                            mask3 = np.isclose(
-                                boundary_positions, self.vertices[vi], atol=atol
-                            )
-                        mask = (
-                            mask3.sum(axis=1) == 3
-                        )  # all positions of a vertex must match
-                        if mask.sum() > 1:
-                            vii = boundary_vertices[mask]
-                            duplicate_mask[vii] = True
-                            duplicate_map[vi] = vii
-
-                # Now we apply them to a copy of the faces array. Some heavy iterations here ...
-                for vi1, vii in duplicate_map.items():
-                    for vi2 in vii:
-                        if vi2 != vi1:
-                            faces_for_this_group[faces == vi2] = vi1
-
-                # See if we need to process more boundaries in this group
-                group = set()
-                for vii in duplicate_map.values():
-                    group.update(boundary_mask[vii])
-                group = group & boundary_indices_to_check
-                boundary_indices_to_check.difference_update(group)
-                boundary_indices_in_this_group.extend(group)
-
-            # We've now processed one group of boundaries ...
-
-            # Check whether the new face array is manifold, taking collapsed faces into account
-            not_collapsed = np.array(
-                [len(set(f)) == len(f) for f in faces_for_this_group], bool
-            )
-            tmp_faces = faces_for_this_group[not_collapsed]
-            v2f = meshfuncs.make_vertex2faces(tmp_faces)
-            is_edge_manifold, _ = meshfuncs.mesh_is_edge_manifold_and_closed(tmp_faces)
-            non_manifold_verts = meshfuncs.mesh_get_non_manifold_vertices(
-                tmp_faces, v2f
-            )
-            is_manifold = is_edge_manifold and not non_manifold_verts
-
-            # If it is, apply!
-            if is_manifold:
-                faces = faces_for_this_group
+        # Stitch, getting a copy of the faces
+        faces = meshfuncs.mesh_stitch_boundaries(self.vertices, self.faces, atol=atol)
 
         # Check what faces have been changed in our copy.
         changed = faces != self.faces  # Nx3
         changed_count = changed.sum(axis=1)
         (indices,) = np.where(changed_count > 0)
 
-        if len(indices):
-            # Update the faces
-            self.update_faces(indices, faces[indices])
-            n_updated += len(indices)
-            # Clean up collapsed faces
-            collapsed_faces = np.array(
-                [len(set(f)) != len(f) for f in self.faces], bool
-            )
-            if np.any(collapsed_faces):
-                self.delete_faces(np.where(collapsed_faces)[0])
-            # We could trace all the vertices that we eventually popped,
-            # but let's do it the easy (and robust) way.
-            self.remove_unused_vertices()
-            # This should now hold
-            assert self.is_manifold
+        if len(indices) == 0:
+            return 0
 
-        return n_updated
+        # Update the faces
+        self.update_faces(indices, faces[indices])
+
+        # Clean up collapsed faces
+        collapsed_faces = np.array([len(set(f)) != len(f) for f in self.faces], bool)
+        if np.any(collapsed_faces):
+            self.delete_faces(np.where(collapsed_faces)[0])
+
+        # Clean up any vertices that are no longer in use
+        self.remove_unused_vertices()
+
+        return len(indices)
 
     def repair_holes(self):
         """Repair holes in the mesh.
