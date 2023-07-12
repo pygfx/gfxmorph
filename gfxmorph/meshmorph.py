@@ -231,6 +231,21 @@ class AbstractMesh(DynamicMesh):
 
     # %% Repairs
 
+    def repair(self, close=False):
+        """Perform various repairs to the mesh.
+
+        If close is given and True, also try to close the mesh. The
+        resulting mesh is guaranteed to be manifold, but may not be
+        closed. It will be oriented if the topology allows it (e.g. not
+        a Klein bottle).
+        """
+        self.repair_manifold()
+        if close:
+            self.repair_touching_boundaries()
+            self.repair_holes()
+        self.repair_orientation()
+        self.remove_unused_vertices()
+
     def repair_manifold(self):
         """Repair the mesh to make it manifold.
 
@@ -494,7 +509,8 @@ class AbstractMesh(DynamicMesh):
         1  or 2 faces), but this can later be improved. So if only small
         holes are present, the result will be a closed mesh. However,
         if the mesh is not manifold, this method may not be able to
-        repair all holes.
+        repair all holes. Also note that e.g. the four courners of a
+        rectangular surface would be connected with new faces.
 
         Returns the number of added faces.
         """
