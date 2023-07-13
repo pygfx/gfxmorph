@@ -149,7 +149,7 @@ class BaseDynamicMesh:
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
         # todo: Maybe face colors are more convenient?
-        # todo: also, can colors be managed outside of this class? What about normals?
+        # todo: also, are colors better managed outside of this class?
 
         # We set unused positions to nan, so that code that uses the
         # full buffer does not accidentally use invalid vertex positions.
@@ -387,7 +387,6 @@ class BaseDynamicMesh:
         vertex_indices = np.where(vertex_mask)[0]
 
         # Pass on the update
-        # todo: would a mask also be fine?
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_normals(vertex_indices)
@@ -682,7 +681,6 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
-    # todo: maybe rename to change_faces?
     def update_faces(self, face_indices, new_faces):
         """Update the value of the given faces."""
 

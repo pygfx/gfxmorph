@@ -115,7 +115,6 @@ def benchmark():
             t.toc("Split components")
 
             t.tic()
-            # todo: mmm, this used to be very fast and now it seems slow?
             v = m2.computed_interior_volume
             t.toc("Volume")
             t.add_data("", v)

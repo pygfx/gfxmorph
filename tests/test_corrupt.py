@@ -30,8 +30,6 @@ else:
     MeshClass = gfxmorph.DynamicMesh
 
 
-# todo: include is_edge_maniforld
-
 # %% Some basic tests first
 
 

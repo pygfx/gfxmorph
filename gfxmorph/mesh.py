@@ -218,17 +218,6 @@ class DynamicMesh(BaseDynamicMesh):
         self.add_vertices(vertices)
         self.add_faces(faces + vertex_index_offset)
 
-    # todo: questions:
-    # Do we want to keep track of components?
-    # Is so, how would we keep track?
-    # If you add faces / vertices, would you add them to a specific component?
-    #  -> but what if you add stuff making it no longer connected??
-    #  -> and what if you add a face that connects two components?
-    #  -> this is a more general question: when you modify the mesh, it may be (temporary) non-manifold, un-closed, etc.
-    #  -> so even if you mark an added face as belonging to a specific component, we cannot really rely on it?
-    # Why would we want to keep track of components? How would we use it?
-    # In an UI you could show components in a list. Also e.g. highlight a specific component when selected, or make others transparent.
-
     # %% Repairs
 
     def repair(self, close=False):
@@ -291,7 +280,6 @@ class DynamicMesh(BaseDynamicMesh):
         # Remove non-manifold edges.
         # Use the is_edge_manifold prop to trigger 'nonmanifold_edges' to be up to date.
         if not self.is_edge_manifold:
-            # todo: maybe the edge-info can be used to stitch the mesh back up?
             nonmanifold_edges = self._props["nonmanifold_edges"]
             indices = []
             for edge, fii in nonmanifold_edges.items():
@@ -320,8 +308,7 @@ class DynamicMesh(BaseDynamicMesh):
                     vi2 = len(self.vertices) - 1
                     # Update faces
                     faces = self.faces[face_indices, :]
-                    # faces = faces if faces.base is None else faces.copy()
-                    faces[faces == vi] = vi2  # todo: must be disallowed!
+                    faces[faces == vi] = vi2
                     self.update_faces(face_indices, faces)
                     n_updated += len(face_indices)
 
