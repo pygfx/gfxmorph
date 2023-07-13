@@ -188,15 +188,16 @@ def mesh_get_non_manifold_edges(faces):
 
     # Code above is same as first part in mesh_is_edge_manifold_and_closed()
 
-    # Collect faces for each corrupt unique edge, one by one
-    # todo: maybe vectorize-able
+    # Collect faces for each corrupt unique edge. This happens one by
+    # one. Maybe this can be vectorized, but it only hurts performance
+    # for corrupt meshes, so not a big deal.
     nonmanifold_edges = {}
     corrupt_indices = np.where(edge_counts > 2)[0]
     for i in corrupt_indices:
         eii = np.where(edges_blob == unique_blob[i])[0]
-        for ei in eii:
-            edge = tuple(edges[ei])
-            nonmanifold_edges[edge] = [fi for fi in eii // 3]
+        edge = tuple(edges[eii[0]])  # Eeach ei in eii refers to the same edge
+        fii = list(set(fi for fi in eii // 3))
+        nonmanifold_edges[edge] = fii
 
     return nonmanifold_edges
 
