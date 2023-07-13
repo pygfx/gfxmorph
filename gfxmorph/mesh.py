@@ -31,44 +31,20 @@ class DynamicMesh(BaseDynamicMesh):
 
     def __init__(self, vertices, faces):
         super().__init__()
-        self._props = {}
-        self._props_faces = (
-            "is_edge_manifold",
-            "is_closed",
-            "is_oriented",
-            "component_labels",
-            "is_only_connected_by_edges",
-            "nonmanifold_vertices",
-        )
-        self._props_verts = ()
-        self._props_verts_and_faces = "volume", "surface"
-
         # Delegate initialization
         if vertices is not None or faces is not None:
             self.add_mesh(vertices, faces)
 
-    def _check_prop(self, name):
-        # todo: I guess now that we subclass, DynamicMesh can simply clear dicts instead of bumping versions?
-        assert name in self._props_faces or name in self._props_verts
-        if self._props.get("version_faces", 0) != self.version_faces:
-            self._props["version_faces"] = self.version_faces
-            for x in self._props_faces + self._props_verts_and_faces:
-                self._props.pop(x, None)
-        if self._props.get("version_verts", 0) != self.version_verts:
-            self._props["version_verts"] = self.version_verts
-            for x in self._props_verts + self._props_verts_and_faces:
-                self._props.pop(x, None)
-        return name in self._props
-
     @property
     def component_labels(self):
         """A tuple of connected components that this mesh consists of."""
-        if not self._check_prop("component_labels"):
-            component_labels = meshfuncs.mesh_get_component_labels(
+        cache = self._cache_depending_on_faces
+        key = "component_labels"
+        if key not in cache:
+            cache[key] = meshfuncs.mesh_get_component_labels(
                 self.faces, self.vertex2faces
             )
-            self._props["component_labels"] = component_labels
-        return self._props["component_labels"]
+        return cache[key]
 
     @property
     def n_components(self):
@@ -89,10 +65,11 @@ class DynamicMesh(BaseDynamicMesh):
         either 1 or 2 faces. It is one of the two condition for a mesh
         to be manifold.
         """
-        if not self._check_prop("is_edge_manifold"):
-            nonmanifold_edges = meshfuncs.mesh_get_non_manifold_edges(self.faces)
-            self._props["nonmanifold_edges"] = nonmanifold_edges
-        return len(self._props["nonmanifold_edges"]) == 0
+        cache = self._cache_depending_on_faces
+        key = "nonmanifold_edges"
+        if key not in cache:
+            cache[key] = meshfuncs.mesh_get_non_manifold_edges(self.faces)
+        return len(cache[key]) == 0
 
     @property
     def is_vertex_manifold(self):
@@ -105,12 +82,13 @@ class DynamicMesh(BaseDynamicMesh):
         In contrast to edge-manifoldness, a mesh being non-vertex-manifold,
         can still be closed and oriented.
         """
-        if not self._check_prop("nonmanifold_vertices"):
-            nonmanifold_vertices = meshfuncs.mesh_get_non_manifold_vertices(
+        cache = self._cache_depending_on_faces
+        key = "nonmanifold_vertices"
+        if key not in cache:
+            cache[key] = meshfuncs.mesh_get_non_manifold_vertices(
                 self.faces, self.vertex2faces
             )
-            self._props["nonmanifold_vertices"] = nonmanifold_vertices
-        return self.is_edge_manifold and len(self._props["nonmanifold_vertices"]) == 0
+        return self.is_edge_manifold and len(cache[key]) == 0
 
     @property
     def is_manifold(self):
@@ -125,10 +103,12 @@ class DynamicMesh(BaseDynamicMesh):
         implies that the mesh is edge-manifold, and has no boundary
         edges.
         """
-        if not self._check_prop("is_closed"):
+        cache = self._cache_depending_on_faces
+        key = "is_closed"
+        if key not in cache:
             _, is_closed = meshfuncs.mesh_is_edge_manifold_and_closed(self.faces)
-            self._props["is_closed"] = is_closed
-        return self._props["is_closed"]
+            cache[key] = is_closed
+        return cache[key]
 
     @property
     def is_oriented(self):
@@ -138,10 +118,11 @@ class DynamicMesh(BaseDynamicMesh):
         winding) is consistent - each two neighbouring faces have the
         same orientation. This can only be true if the mesh is edge-manifold.
         """
-        if not self._check_prop("is_oriented"):
-            is_oriented = meshfuncs.mesh_is_oriented(self.faces)
-            self._props["is_oriented"] = is_oriented
-        return self._props["is_oriented"]
+        cache = self._cache_depending_on_faces
+        key = "is_oriented"
+        if key not in cache:
+            cache[key] = meshfuncs.mesh_is_oriented(self.faces)
+        return cache[key]
 
     @property
     def edges(self):
@@ -154,7 +135,7 @@ class DynamicMesh(BaseDynamicMesh):
             the ith edge is the edge opposite from the ith vertex of the face
 
         """
-        array = self.faces[:, [[1, 2], [2, 0], [0, 1]]]
+        array = self.faces[:, [[0, 1], [1, 2], [2, 0]]]
         array.setflags(write=False)
         return array
 
@@ -280,7 +261,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Remove non-manifold edges.
         # Use the is_edge_manifold prop to trigger 'nonmanifold_edges' to be up to date.
         if not self.is_edge_manifold:
-            nonmanifold_edges = self._props["nonmanifold_edges"]
+            nonmanifold_edges = self._cache_depending_on_faces["nonmanifold_edges"]
             indices = []
             for edge, fii in nonmanifold_edges.items():
                 indices.extend(fii)
@@ -300,7 +281,10 @@ class DynamicMesh(BaseDynamicMesh):
             # Note that we can safely do this because no vertices/faces are
             # deleted in this process, so the indices in
             # 'nonmanifold_vertices' remain valid.
-            for vi, groups in self._props["nonmanifold_vertices"].items():
+            nonmanifold_vertices = self._cache_depending_on_faces[
+                "nonmanifold_vertices"
+            ]
+            for vi, groups in nonmanifold_vertices.items():
                 assert len(groups) >= 2
                 for face_indices in groups[1:]:
                     # Add vertex

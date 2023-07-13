@@ -74,9 +74,14 @@ class BaseDynamicMesh:
     _debug_mode = False
 
     def __init__(self):
-        self.version_verts = 0
-        self.version_faces = 0
+        # Caches that subclasses can use to cache stuff. When the
+        # vertices/faces change, the respective caches are cleared.
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        # A list of trackers that are notified of changes.
         self._change_trackers = []
+        # Init!
         self.reset()
 
     @property
@@ -491,8 +496,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         if len(indices1) > 0:
             for tracker in self._change_trackers:
                 with Safecall():
@@ -572,8 +579,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         if len(indices1) > 0:
             for tracker in self._change_trackers:
                 with Safecall():
@@ -631,8 +640,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_faces(np.arange(n1, n1 + n))
@@ -673,8 +684,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_positions(np.arange(n1, n1 + n))
@@ -727,8 +740,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_faces(indices)
@@ -766,8 +781,10 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_positions(indices)
