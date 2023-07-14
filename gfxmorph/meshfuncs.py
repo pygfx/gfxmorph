@@ -19,6 +19,17 @@ def make_vertex2faces(faces):
     return vertex2faces
 
 
+def vertex_get_neighbours(faces, vertex2faces, vi):
+    """Get a set of vertex indices that neighbour the given vertex index.
+
+    Connectedness is via the edges.
+    """
+    neighbour_vertices = set()
+    for fi in vertex2faces[vi]:
+        neighbour_vertices.update(faces[fi])
+    return neighbour_vertices
+
+
 def face_get_neighbours1(faces, vertex2faces, fi):
     """Get a set of face indices that neighbour the given face index.
 
@@ -312,11 +323,11 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
     the faces incident to that vertex form a closed or an open fan.
 
     """
-    # This implementation literally performs this test for each vertex.
-    # Since the per-vertex test involves querying neighbours a lit, it
+    # This implementation literally performs a test for each vertex.
+    # Since the per-vertex test involves querying neighbours a lot, it
     # is somewhat slow. I've tried a few things to check
-    # vertex-manifoldness faster, but failed. I'll summerize here for furure
-    # reference and maybe help others that walk a similar path:
+    # vertex-manifoldness faster, without success. I'll summerize here
+    # for furure reference and maybe help others that walk a similar path:
     #
     # By splitting the mesh in connected components twice, once using
     # vertex-connectedness, and once using edge-connectedness, it's

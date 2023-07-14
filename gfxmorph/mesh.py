@@ -47,7 +47,7 @@ class DynamicMesh(BaseDynamicMesh):
         return cache[key]
 
     @property
-    def n_components(self):
+    def component_count(self):
         """The number of components that this mesh consists of."""
         # Note that connectedness is defined as going via edges, not vertices.
         return self.component_labels.max() + 1
@@ -55,7 +55,7 @@ class DynamicMesh(BaseDynamicMesh):
     @property
     def is_connected(self):
         """Whether the mesh is a single connected component."""
-        return self.n_components == 1
+        return self.component_count == 1
 
     @property
     def is_edge_manifold(self):
@@ -501,6 +501,9 @@ class DynamicMesh(BaseDynamicMesh):
         Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
         """
         vertices = self.vertices
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
         vi0 = int(ref_vertex)
         # p0 = vertices[vi0]
         # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
@@ -509,7 +512,7 @@ class DynamicMesh(BaseDynamicMesh):
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
             p1 = vertices[vi1]
-            for vi2 in self.get_neighbour_vertices(vi1):
+            for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
                 if vi2 not in selected_vertices:
                     p2 = vertices[vi2]
                     sdist = cumdist + np.linalg.norm(p2 - p1)

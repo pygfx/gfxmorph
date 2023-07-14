@@ -6,12 +6,10 @@ from gfxmorph import DynamicMesh
 from testutils import run_tests
 
 
-# todo: there are probably more tests in arbiter
+# todo: there are probably more relevant tests in arbiter
 
 
-def test_abstract_mesh_basics():
-    return  # todo: these tests are outdated
-
+def test_mesh_basics():
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=3)
     vertices = geo.positions.data
     faces = geo.indices.data
@@ -33,7 +31,6 @@ def test_abstract_mesh_basics():
     m = DynamicMesh(vertices, faces)
     expected_volume = (4 / 3) * np.pi
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
-    assert m._n_reversed_faces == 0
     assert m.is_closed
     assert m.component_count == 1
 
@@ -45,26 +42,23 @@ def test_abstract_mesh_basics():
     m = DynamicMesh(vertices2, faces2)
     expected_volume = 2 * (4 / 3) * np.pi
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
-    assert m._n_reversed_faces == 0
     assert m.is_closed
     assert m.component_count == 2
 
-    # Now flip one inside out
-    n = len(faces)
-    faces2[:n, 1], faces2[:n, 2] = faces2[:n, 2].copy(), faces2[:n, 1].copy()
+    # Now the meshes inside out
+    faces2[:, 1], faces2[:, 2] = faces2[:, 2].copy(), faces2[:, 1].copy()
 
-    # The auto-correction mechanism will flip exactly what's needed to fix up the mesh!
+    # The repair mechanism will flip exactly what's needed to fix up the mesh!
     m = DynamicMesh(vertices2, faces2)
     expected_volume = 2 * (4 / 3) * np.pi
+    assert m.get_volume() < 0
+    m.repair()
     assert 0.9 * expected_volume < m.get_volume() < expected_volume
-    assert m._n_reversed_faces == 3840  # 60*4**3
     assert m.is_closed
     assert m.component_count == 2
 
 
 def test_mesh_selection():
-    return  # todo: these tests are outdated
-
     # Create a mesh
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)
     vertices = geo.positions.data
