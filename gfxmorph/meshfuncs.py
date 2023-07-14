@@ -237,7 +237,7 @@ def mesh_is_oriented(faces):
     # the edges orientations would appear twice. The reverse is not
     # necessarily true though: a mesh can be edge-manifold but not
     # oriented.
-    is_oriented = edge_counts.max() == 1
+    is_oriented = bool(edge_counts.max() == 1)
 
     return is_oriented
 

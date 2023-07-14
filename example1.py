@@ -1,22 +1,26 @@
+"""
+Example for demonstrating the dynamic mesh.
+
+Key bindings:
+
+* 1: add sphere mesh
+* 2: add 2 spheres connected by a corrupt face
+* b: remove a random face
+* r: repair (note, can only repair small holes)
+* m: print metadata
+
+"""
+
+import json
+
 import numpy as np
-import pygfx as gfx  # noqa
-from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry  # noqa
-from gfxmorph import DynamicMesh, MeshChangeTracker  # noqa
-
-# geo = gfx.torus_knot_geometry(tubular_segments=640, radial_segments=180)
-# geo = gfx.sphere_geometry(1)
-# geo = gfx.geometries.tetrahedron_geometry()
-# geo = smooth_sphere_geometry(1)
-# m = DynamicMesh(geo.positions.data, geo.indices.data)
-
-# Pseudo code:
-# m = DynamicMesh() or higher level so we have manifold props etc.
-# morph = MorphLogic(m)
-# geo = DynamicMeshGeometry()
-# m.track_changes(geo)
+import pygfx as gfx
+from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
+from gfxmorph import DynamicMesh
+from wgpu.gui.auto import WgpuCanvas
 
 
-m = DynamicMesh(None, None)
+# -- Functions to modify the mesh
 
 
 def add_mesh():
@@ -26,9 +30,8 @@ def add_mesh():
 
     m.add_mesh(vertices, faces)
 
-    if d:
-        d.camera.show_object(d.scene)
-        d.renderer.request_draw()
+    camera.show_object(scene)
+    renderer.request_draw()
 
 
 def add_broken_mesh():
@@ -45,28 +48,70 @@ def add_broken_mesh():
         np.concatenate([vertices1, vertices2]), np.concatenate([faces1, faces2, faces3])
     )
 
-    d.camera.show_object(d.scene)
-    d.renderer.request_draw()
+    camera.show_object(scene)
+    renderer.request_draw()
 
 
 def breakit():
-    # Remove a face, use m.repair_closed() to fix!
-    m._data.delete_faces(np.random.randint(0, len(m.faces)))
+    m.delete_faces(np.random.randint(0, len(m.faces)))
 
 
-d = None
-for i in range(0):
-    add_mesh()
+# -- Setup the mesh
 
+# Create the dynamicmesh instance that we will work with
+m = DynamicMesh(None, None)
 
-mesh = gfx.Mesh(
-    DynamicMeshGeometry(),  # gfx.geometries.DynamicMeshGeometry
-    gfx.materials.MeshPhongMaterial(color="red", flat_shading=False, side="FRONT"),
+# Create the geometry object, and set it up to receive updates from the DynamicMesh
+geo = DynamicMeshGeometry()
+m.track_changes(geo)
+
+# Two world objects, one for the front and one for the back (so we can clearly see holes)
+mesh1 = gfx.Mesh(
+    geo,
+    gfx.materials.MeshPhongMaterial(color="green", flat_shading=False, side="FRONT"),
+)
+mesh2 = gfx.Mesh(
+    geo,
+    gfx.materials.MeshPhongMaterial(color="red", flat_shading=False, side="BACK"),
 )
 
-m.track_changes(mesh.geometry)
+
+# -- Setup the viz
+
+renderer = gfx.WgpuRenderer(WgpuCanvas())
 
 camera = gfx.OrthographicCamera()
 camera.show_object((0, 0, 0, 8))
-d = gfx.Display(camera=camera)
-d.show(mesh)
+
+scene = gfx.Scene()
+scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
+scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
+scene.add(mesh1, mesh2)
+
+# -- Make it responsive
+
+print(__doc__)
+
+
+@renderer.add_event_handler("key_down")
+def on_key(e):
+    if e.key == "1":
+        print("Adding a sphere.")
+        add_mesh()
+    elif e.key == "2":
+        print("Adding 2 spheres connected with a corrupt face.")
+        add_broken_mesh()
+    elif e.key == "h":
+        print("Creating a hole.")
+        breakit()
+    elif e.key == "r":
+        print("Repairing.")
+        m.repair(True)
+    elif e.key == "m":
+        print("Metadata:")
+        print(json.dumps(m.metadata, indent=2))
+
+
+# -- Run
+
+gfx.show(scene, camera=camera, renderer=renderer)
