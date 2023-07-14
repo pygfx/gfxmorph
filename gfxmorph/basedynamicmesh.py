@@ -10,7 +10,7 @@ EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atom
 
 
 class MeshChangeTracker:
-    """A class that is notified on changes to the DynamicMesh that it
+    """A class that is notified on changes to the BaseDynamicMesh that it
     is subscribed to, so that a certain representation of the mesh can
     be updated.
     """
@@ -54,12 +54,17 @@ class Safecall:
         return True  # Yes, we handled the exception
 
 
-class DynamicMesh:
+class BaseDynamicMesh:
     """A mesh object that can be modified in-place.
 
     It manages buffers that are oversized so the vertex and face array
     can grow. When the buffer is full, a larger buffer is allocated.
     The exposed arrays are contiguous views onto these buffers.
+
+    It also maintains a vertex2faces incidence map, and keeps the vertex
+    normals up to date. It can notify other object of changes, so that
+    any representation of the mesh  (e.g. a visualization on the GPU)
+    can be kept in sync.
     """
 
     # We assume meshes with triangles (not quads)
@@ -69,9 +74,14 @@ class DynamicMesh:
     _debug_mode = False
 
     def __init__(self):
-        self.version_verts = 0
-        self.version_faces = 0
+        # Caches that subclasses can use to cache stuff. When the
+        # vertices/faces change, the respective caches are cleared.
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        # A list of trackers that are notified of changes.
         self._change_trackers = []
+        # Init!
         self.reset()
 
     @property
@@ -144,7 +154,7 @@ class DynamicMesh:
         self._normals_buf = np.zeros((initial_size, 3), np.float32)
         self._colors_buf = np.zeros((initial_size, 4), np.float32)
         # todo: Maybe face colors are more convenient?
-        # todo: also, can colors be managed outside of this class? What about normals?
+        # todo: also, are colors better managed outside of this class?
 
         # We set unused positions to nan, so that code that uses the
         # full buffer does not accidentally use invalid vertex positions.
@@ -382,7 +392,6 @@ class DynamicMesh:
         vertex_indices = np.where(vertex_mask)[0]
 
         # Pass on the update
-        # todo: would a mask also be fine?
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_normals(vertex_indices)
@@ -487,8 +496,10 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         if len(indices1) > 0:
             for tracker in self._change_trackers:
                 with Safecall():
@@ -568,8 +579,10 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         if len(indices1) > 0:
             for tracker in self._change_trackers:
                 with Safecall():
@@ -627,8 +640,10 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_faces(np.arange(n1, n1 + n))
@@ -669,15 +684,16 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_positions(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
 
-    # todo: maybe rename to change_faces?
     def update_faces(self, face_indices, new_faces):
         """Update the value of the given faces."""
 
@@ -724,8 +740,10 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_faces += 1
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_faces(indices)
@@ -763,8 +781,10 @@ class DynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
-        # Bump version
-        self.version_verts += 1
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
                 tracker.update_positions(indices)

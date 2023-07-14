@@ -19,6 +19,17 @@ def make_vertex2faces(faces):
     return vertex2faces
 
 
+def vertex_get_neighbours(faces, vertex2faces, vi):
+    """Get a set of vertex indices that neighbour the given vertex index.
+
+    Connectedness is via the edges.
+    """
+    neighbour_vertices = set()
+    for fi in vertex2faces[vi]:
+        neighbour_vertices.update(faces[fi])
+    return neighbour_vertices
+
+
 def face_get_neighbours1(faces, vertex2faces, fi):
     """Get a set of face indices that neighbour the given face index.
 
@@ -188,15 +199,16 @@ def mesh_get_non_manifold_edges(faces):
 
     # Code above is same as first part in mesh_is_edge_manifold_and_closed()
 
-    # Collect faces for each corrupt unique edge, one by one
-    # todo: maybe vectorize-able
+    # Collect faces for each corrupt unique edge. This happens one by
+    # one. Maybe this can be vectorized, but it only hurts performance
+    # for corrupt meshes, so not a big deal.
     nonmanifold_edges = {}
     corrupt_indices = np.where(edge_counts > 2)[0]
     for i in corrupt_indices:
         eii = np.where(edges_blob == unique_blob[i])[0]
-        for ei in eii:
-            edge = tuple(edges[ei])
-            nonmanifold_edges[edge] = [fi for fi in eii // 3]
+        edge = tuple(edges[eii[0]])  # Eeach ei in eii refers to the same edge
+        fii = list(set(fi for fi in eii // 3))
+        nonmanifold_edges[edge] = fii
 
     return nonmanifold_edges
 
@@ -242,6 +254,9 @@ def mesh_get_volume(vertices, faces):
     if len(faces) == 0:
         return 0
 
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32)
+
     # This code is surprisingly fast, over 10x faster than the other
     # checks. I also checked out skcg's computed_interior_volume,
     # which uses Gauss' theorem of calculus, but that is
@@ -250,9 +265,16 @@ def mesh_get_volume(vertices, faces):
 
 
 def mesh_get_surface_area(vertices, faces):
-    # see skcg computed_surface_area
-    # Or simply calculate area of each triangle (vectorized)
-    raise NotImplementedError()
+    """Calculate the surface area of the mesh."""
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32)
+
+    r1 = vertices[faces[:, 0], :]
+    r2 = vertices[faces[:, 1], :]
+    r3 = vertices[faces[:, 2], :]
+    face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
+    faces_areas = 0.5 * np.linalg.norm(face_normals, axis=1)
+    return faces_areas.sum()
 
 
 def mesh_get_component_labels(faces, vertex2faces, *, via_edges_only=True):
@@ -311,11 +333,11 @@ def mesh_get_non_manifold_vertices(faces, vertex2faces):
     the faces incident to that vertex form a closed or an open fan.
 
     """
-    # This implementation literally performs this test for each vertex.
-    # Since the per-vertex test involves querying neighbours a lit, it
+    # This implementation literally performs a test for each vertex.
+    # Since the per-vertex test involves querying neighbours a lot, it
     # is somewhat slow. I've tried a few things to check
-    # vertex-manifoldness faster, but failed. I'll summerize here for furure
-    # reference and maybe help others that walk a similar path:
+    # vertex-manifoldness faster, without success. I'll summerize here
+    # for furure reference and maybe help others that walk a similar path:
     #
     # By splitting the mesh in connected components twice, once using
     # vertex-connectedness, and once using edge-connectedness, it's
@@ -393,7 +415,8 @@ def mesh_get_boundaries(faces):
     connected via a boundary edge), and the order of vertices is in the
     appropriate winding direction.
 
-    The
+    This function can raise a RuntimeError if it runs into a part of
+    the mesh that is non-manifold.
     """
     # Special case
     if len(faces) == 0:
@@ -429,7 +452,7 @@ def mesh_get_boundaries(faces):
     # Edge-manifoldness is less of an issue, because it means an edge
     # has more than 2 faces, which makes it not a boundary anyway.
     for vi in range(nvertices):
-        if len(vertex2edges[vi]) > 2:
+        if len(vertex2edges[vi]) > 2:  # pragma: no cover
             raise RuntimeError("The mesh is not vertex-manifold.")
 
     # Now group them into boundaries ...
@@ -466,7 +489,9 @@ def mesh_get_boundaries(faces):
             if ei in eii_to_check:
                 eii_to_check.remove(ei)
             else:
-                if not (ei == ei_first and boundary[0] == boundary[-1]):
+                if not (
+                    ei == ei_first and boundary[0] == boundary[-1]
+                ):  # pragma: no cover
                     raise RuntimeError(
                         "This should not happen, but if it does, I think the mesh is not manifold."
                     )
@@ -484,3 +509,196 @@ def mesh_get_boundaries(faces):
         # assert boundary[1] == original_edge[0]
 
     return boundaries
+
+
+def mesh_get_consistent_face_orientation(faces, vertex2faces):
+    """Make the orientation of the faces consistent.
+
+    Returns a modified copy of the faces which may have some of the
+    faces flipped. Faces are flipped by swapping the 2nd and 3d value.
+    Note that the winding of the returned array may still not be
+    consistent, when the mesh is not manifold or when it is not
+    orientable (i.e. a Mobius strip or Klein bottle).
+    """
+
+    # This implementation walks over the surface using a front. The
+    # algorithm is similar to the one for splitting the mesh in
+    # connected components, except it does more work at the deepest
+    # nesting.
+    #
+    # It starts out from one face, and reverses the neighboring
+    # faces that don't match the winding of the current face. And
+    # so on. Faces that have been been processed cannot be reversed
+    # again. So the fix operates as a wave that flows over the mesh,
+    # with the first face defining the winding.
+    #
+    # A closed form solution for this problem does not exist. The skcg
+    # lib uses pycosat to find the solution. The below might be slower
+    # (being implemented in pure Python), but it's free of dependencies
+    # and speed matters less in a repair function, I suppose.
+
+    # Make a copy of the faces, so we can reverse them in-place.
+    faces = faces.copy()
+
+    reversed_faces = []
+    faces_to_check = set(range(len(faces)))
+
+    while len(faces_to_check) > 0:
+        # Create new front - once for each connected component in the mesh
+        vi_next = faces_to_check.pop()
+        front = queue.deque()
+        front.append(vi_next)
+
+        # Walk along the front
+        while front:
+            fi_check = front.popleft()
+            vi1, vi2, vi3 = faces[fi_check]
+            _, neighbours = face_get_neighbours2(faces, vertex2faces, fi_check)
+            for fi in neighbours:
+                if fi in faces_to_check:
+                    faces_to_check.remove(fi)
+                    front.append(fi)
+
+                    vj1, vj2, vj3 = faces[fi]
+                    matching_vertices = {vj1, vj2, vj3} & {vi1, vi2, vi3}
+                    if len(matching_vertices) == 2:
+                        if vi3 not in matching_vertices:
+                            # vi1 in matching_vertices and vi2 in matching_vertices
+                            if (
+                                (vi1 == vj1 and vi2 == vj2)
+                                or (vi1 == vj2 and vi2 == vj3)
+                                or (vi1 == vj3 and vi2 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+                        elif vi1 not in matching_vertices:
+                            # vi2 in matching_vertices and vi3 in matching_vertices
+                            if (
+                                (vi2 == vj1 and vi3 == vj2)
+                                or (vi2 == vj2 and vi3 == vj3)
+                                or (vi2 == vj3 and vi3 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+                        elif vi2 not in matching_vertices:
+                            # vi3 in matching_vertices and vi1 in matching_vertices
+                            if (
+                                (vi3 == vj1 and vi1 == vj2)
+                                or (vi3 == vj2 and vi1 == vj3)
+                                or (vi3 == vj3 and vi1 == vj1)
+                            ):
+                                reversed_faces.append(fi)
+                                faces[fi, 1], faces[fi, 2] = (
+                                    faces[fi, 2],
+                                    faces[fi, 1],
+                                )
+
+        # If over half the faces were flipped, we flip the hole thing.
+        if len(reversed_faces) > 0.5 * len(faces):
+            tmp = faces[:, 2].copy()
+            faces[:, 2] = faces[:, 1]
+            faces[:, 1] = tmp
+
+        return faces
+
+
+def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
+    """Stitch touching boundaries together by de-deuplicating vertices.
+
+    Stitching only happens when it does not result in a non-manifold
+    mesh. Returns the modified faces array.
+
+    It is up to the caller to remove collapsed faces and any vertices
+    that are no longer used.
+    """
+
+    # Make a copy of the faces that we can modify
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32).copy()
+
+    # Detect boundaries. A list of vertex indices (vi's)
+    boundaries = mesh_get_boundaries(faces)
+
+    # Combine to get a subset of vertices for faster checking.
+    boundary_vertices = np.concatenate(boundaries)
+    boundary_positions = vertices[boundary_vertices]
+
+    # Keep track of what vi's were already handled as a duplicate
+    duplicate_mask = np.zeros((len(vertices),), bool)
+
+    # Create a mask so we can look up the boundary index from a vi
+    boundary_mask = np.empty((len(vertices),), np.int32)
+    boundary_mask.fill(-1)
+    for i, boundary in enumerate(boundaries):
+        boundary_mask[boundary] = i
+
+    # The deduplication can cause the mesh to become non-manifold.
+    # To prevent this we appy the changes in chunks and validate
+    # the change before it is applied. These "chunks" are groups
+    # of boundaries that connect. To handle these groups we use a
+    # stack-based algorithm simular to those used to traverse over
+    # the surface of the mesh.
+
+    boundary_indices_to_check = set(range(len(boundaries)))
+
+    while boundary_indices_to_check:
+        boundary_indices_in_this_group = [boundary_indices_to_check.pop()]
+
+        faces_for_this_group = faces.copy()
+
+        while boundary_indices_in_this_group:
+            boundary = boundaries[boundary_indices_in_this_group.pop(0)]
+
+            # The next two pieces of code are the heart of the algorithm,
+            # most of the rest is to apply the grouping and preventing non-manifoldness.
+
+            # Collect duplicate vertices.
+            duplicate_map = {}
+            for vi in boundary:
+                if not duplicate_mask[vi]:
+                    mask3 = np.isclose(
+                        boundary_positions, vertices[vi], atol=atol or 0, rtol=0
+                    )
+                    mask = mask3.sum(axis=1) == 3  # all el's of a vertex must match
+                    if mask.sum() > 1:
+                        vii = boundary_vertices[mask]
+                        duplicate_mask[vii] = True
+                        duplicate_map[vi] = vii
+
+            # Now we apply them to a copy of the faces array. Some heavy iterations here ...
+            for vi1, vii in duplicate_map.items():
+                for vi2 in vii:
+                    if vi2 != vi1:
+                        faces_for_this_group[faces == vi2] = vi1
+
+            # See if we need to process more boundaries in this group
+            group = set()
+            for vii in duplicate_map.values():
+                group.update(boundary_mask[vii])
+            group = group & boundary_indices_to_check
+            boundary_indices_to_check.difference_update(group)
+            boundary_indices_in_this_group.extend(group)
+
+        # We've now processed one group of boundaries ...
+
+        # Check whether the new face array is manifold, taking collapsed faces into account
+        not_collapsed = np.array(
+            [len(set(f)) == len(f) for f in faces_for_this_group], bool
+        )
+        tmp_faces = faces_for_this_group[not_collapsed]
+        v2f = make_vertex2faces(tmp_faces)
+        is_edge_manifold, _ = mesh_is_edge_manifold_and_closed(tmp_faces)
+        non_manifold_verts = mesh_get_non_manifold_vertices(tmp_faces, v2f)
+        is_manifold = is_edge_manifold and not non_manifold_verts
+
+        # If it is, apply!
+        if is_manifold:
+            faces = faces_for_this_group
+
+    return faces

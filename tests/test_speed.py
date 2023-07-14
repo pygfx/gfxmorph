@@ -2,7 +2,7 @@ import time
 
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry
-from gfxmorph import AbstractMesh
+from gfxmorph import DynamicMesh
 from gfxmorph import meshfuncs
 from skcg.core.mesh import Mesh
 
@@ -48,7 +48,7 @@ def benchmark():
         if True:
             t.add_data("NEW", "")
             t.tic()
-            m = AbstractMesh(vertices, faces)
+            m = DynamicMesh(vertices, faces)
             t.toc("init")
 
             t.tic()
@@ -62,11 +62,11 @@ def benchmark():
             t.toc("check oriented")
 
             t.tic()
-            meshfuncs.mesh_get_component_labels(m.faces, m._data.vertex2faces)
+            meshfuncs.mesh_get_component_labels(m.faces, m.vertex2faces)
             t.toc("split components")
 
             t.tic()
-            meshfuncs.mesh_get_non_manifold_vertices(m.faces, m._data.vertex2faces)
+            meshfuncs.mesh_get_non_manifold_vertices(m.faces, m.vertex2faces)
             t.toc("check v-manifold")
 
             t.tic()
@@ -115,7 +115,6 @@ def benchmark():
             t.toc("Split components")
 
             t.tic()
-            # todo: mmm, this used to be very fast and now it seems slow?
             v = m2.computed_interior_volume
             t.toc("Volume")
             t.add_data("", v)
