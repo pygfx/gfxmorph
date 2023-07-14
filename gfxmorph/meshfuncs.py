@@ -254,6 +254,9 @@ def mesh_get_volume(vertices, faces):
     if len(faces) == 0:
         return 0
 
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32)
+
     # This code is surprisingly fast, over 10x faster than the other
     # checks. I also checked out skcg's computed_interior_volume,
     # which uses Gauss' theorem of calculus, but that is
@@ -262,9 +265,16 @@ def mesh_get_volume(vertices, faces):
 
 
 def mesh_get_surface_area(vertices, faces):
-    # see skcg computed_surface_area
-    # Or simply calculate area of each triangle (vectorized)
-    raise NotImplementedError()
+    """Calculate the surface area of the mesh."""
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32)
+
+    r1 = vertices[faces[:, 0], :]
+    r2 = vertices[faces[:, 1], :]
+    r3 = vertices[faces[:, 2], :]
+    face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
+    faces_areas = 0.5 * np.linalg.norm(face_normals, axis=1)
+    return faces_areas.sum()
 
 
 def mesh_get_component_labels(faces, vertex2faces, *, via_edges_only=True):
@@ -442,7 +452,7 @@ def mesh_get_boundaries(faces):
     # Edge-manifoldness is less of an issue, because it means an edge
     # has more than 2 faces, which makes it not a boundary anyway.
     for vi in range(nvertices):
-        if len(vertex2edges[vi]) > 2:
+        if len(vertex2edges[vi]) > 2:  # pragma: no cover
             raise RuntimeError("The mesh is not vertex-manifold.")
 
     # Now group them into boundaries ...
@@ -479,7 +489,9 @@ def mesh_get_boundaries(faces):
             if ei in eii_to_check:
                 eii_to_check.remove(ei)
             else:
-                if not (ei == ei_first and boundary[0] == boundary[-1]):
+                if not (
+                    ei == ei_first and boundary[0] == boundary[-1]
+                ):  # pragma: no cover
                     raise RuntimeError(
                         "This should not happen, but if it does, I think the mesh is not manifold."
                     )
@@ -605,8 +617,10 @@ def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
     It is up to the caller to remove collapsed faces and any vertices
     that are no longer used.
     """
+
     # Make a copy of the faces that we can modify
-    faces = faces.copy()
+    vertices = np.asarray(vertices, np.float32)
+    faces = np.asarray(faces, np.int32).copy()
 
     # Detect boundaries. A list of vertex indices (vi's)
     boundaries = mesh_get_boundaries(faces)
@@ -648,13 +662,10 @@ def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
             duplicate_map = {}
             for vi in boundary:
                 if not duplicate_mask[vi]:
-                    if atol is None:
-                        mask3 = boundary_positions == vertices[vi]
-                    else:
-                        mask3 = np.isclose(boundary_positions, vertices[vi], atol=atol)
-                    mask = (
-                        mask3.sum(axis=1) == 3
-                    )  # all positions of a vertex must match
+                    mask3 = np.isclose(
+                        boundary_positions, vertices[vi], atol=atol or 0, rtol=0
+                    )
+                    mask = mask3.sum(axis=1) == 3  # all el's of a vertex must match
                     if mask.sum() > 1:
                         vii = boundary_vertices[mask]
                         duplicate_mask[vii] = True

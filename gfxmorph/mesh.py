@@ -135,7 +135,7 @@ class DynamicMesh(BaseDynamicMesh):
             the ith edge is the edge opposite from the ith vertex of the face
 
         """
-        array = self.faces[:, [[0, 1], [1, 2], [2, 0]]]
+        array = self.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
         array.setflags(write=False)
         return array
 
@@ -165,8 +165,12 @@ class DynamicMesh(BaseDynamicMesh):
 
     # %%
 
+    def get_surface_area(self):
+        """Get the surface area of the mesh."""
+        return meshfuncs.mesh_get_surface_area(self.vertices, self.faces)
+
     def get_volume(self):
-        """The volume of the mesh.
+        """Get the volume of the mesh.
 
         CCW winding is assumed. If this is negative, the mesh is
         probably inside-out. If the mesh is not manifold, oriented, and closed,
