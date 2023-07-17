@@ -75,26 +75,37 @@ def repair():
 # below. We store the full arrays of vertices and faces and reset them
 # when undo/redo is invoked.
 #
+# We should also think whether we want to facilitate undo as part of
+# the basedynamicmesh or a utility of sorts, or whether we just show
+# how to do it in an example.
+#
+# ### Taking a full-mesh snapshot at each undo-version
+#
 # This is a simple and effective solution, that works well in principle,
-# but can cost a lot of memory for deep undo stack. A solution to
-# mitigate the memory problem is to offload older snapshots to disk,
-# to a temporary file. I think making the copies of the arrays, even
-# when there are a lot of vertices and faces, does not introduce a lot
-# of overhead, but we may want to double-check that.
+# but can cost a lot of memory for a deep undo stack.
+#
+# A mesh of 100k vertices takes about 8MiB, so with 100 actions you
+# reach 800MiB. Seems large but manageable, though if any of these
+# number become higher, memory becoming a problem is not far off.
+#
+# Exporting the mesh by making copies of the data does not take a lot
+# of time. However, resetting to that data costs about a quarter of a
+# second for a mesh with 100k vertices. Most of that is spent on
+# recreating the vertex2faces array and normals. Again manageable, but
+# if the mesh gets larger this delay may become anoying.
+#
+# A solution to mitigate the memory problem is to offload older
+# snapshots to disk, to a temporary file. The time-aspect can be
+# mitigated by allowing the export to create an opaque object that
+# includes some internal state (like the vertices2faces and the
+# normals). This does introduce some complexity as to how to serialize
+# all that data ...
 #
 # A more sophisticated solution would be to store objects that
 # represents diffs that can be applied to travel between states of the
 # mesh. This should be more memory efficient, especially in the case
 # with an undo stack of many small changes, as can be expected with
 # morphing.
-#
-# I know we talked about this, but I forgot what the deal was with
-# storing numpy arrays right into an observ store. If that's possible,
-# that could make the implementation cleaner.
-#
-# We should also think whether we want to facilitate undo as part of
-# the basedynamicmesh or a utility of sorts, or whether we just show
-# how to do it in an example.
 
 
 class MeshStack:

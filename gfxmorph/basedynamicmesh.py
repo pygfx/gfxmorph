@@ -158,7 +158,7 @@ class BaseDynamicMesh:
 
         # We set unused positions to nan, so that code that uses the
         # full buffer does not accidentally use invalid vertex positions.
-        self._positions_buf[:] = np.nan
+        self._positions_buf.fill(np.nan)
 
         # Create faces array views. The internals operate on the ._faces
         # array. We publicly expose the readonly ._faces_r array, because
@@ -197,6 +197,14 @@ class BaseDynamicMesh:
 
         if faces is not None:
             self.add_faces(faces)
+
+    def export(self):
+        """Get a copy of the array of vertices and faces.
+
+        Note that the arrays are copied because the originals are
+        modified in place when e.g. faces are removed or updated.
+        """
+        return self.vertices.copy(), self.faces.copy()
 
     def _check_internal_state(self):
         """Method to validate the integrity of the internal state. In
@@ -399,10 +407,12 @@ class BaseDynamicMesh:
     def _update_vertex_normals(self):
         """Update all vertex normals."""
         vertex_normals = self._normals
-        vertex_normals[:] = 0.0
+        vertex_normals.fill(0.0)
         for i in range(3):
             np.add.at(vertex_normals, self._faces[:, i], self._faces_normals)
+
         norms = np.linalg.norm(vertex_normals, axis=1)
+
         (zeros,) = np.where(norms == 0)
         norms[zeros] = 1.0  # prevent divide-by-zero
         vertex_normals /= norms[:, np.newaxis]
@@ -629,9 +639,8 @@ class BaseDynamicMesh:
             self._update_face_normals(indices)
 
             # Update reverse map
-            for i in range(len(faces)):
+            for i, face in enumerate(faces):
                 fi = i + n1
-                face = faces[i]
                 vertex2faces[face[0]].append(fi)
                 vertex2faces[face[1]].append(fi)
                 vertex2faces[face[2]].append(fi)
