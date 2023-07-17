@@ -33,7 +33,7 @@ def add_mesh():
     camera.show_object(scene)
     renderer.request_draw()
 
-    store.set_mesh_state(stack.save())
+    save_state()
 
 
 def add_broken_mesh():
@@ -53,28 +53,23 @@ def add_broken_mesh():
     camera.show_object(scene)
     renderer.request_draw()
 
-    store.set_mesh_state(stack.save())
+    save_state()
 
 
 def breakit():
     m.delete_faces(np.random.randint(0, len(m.faces)))
 
-    store.set_mesh_state(stack.save())
+    save_state()
 
 
 def repair():
     m.repair(True)
 
-    store.set_mesh_state(stack.save())
+    save_state()
 
 
 # -- Setup the undo/redo
 
-# We use observ to store the mesh state, but this state is only a
-# "version number". The real state is stored in the simple Stack class
-# below. We store the full arrays of vertices and faces and reset them
-# when undo/redo is invoked.
-#
 # We should also think whether we want to facilitate undo as part of
 # the basedynamicmesh or a utility of sorts, or whether we just show
 # how to do it in an example.
@@ -108,28 +103,26 @@ def repair():
 # morphing.
 
 
-class MeshStack:
-    """Simply a stack of full vertices and faces arrays."""
+class OpaqueState:
+    """Enable putting e.g. numpy array in a state without observ seeing them."""
 
-    def __init__(self):
-        self.index = 0
-        self.stack = [(None, None)]
+    ver = 0
 
-    def save(self):
-        self.index += 1
-        self.stack[self.index :] = []
-        self.stack.append((m.vertices.copy(), m.faces.copy()))
-        return self.index
+    def __init__(self, *args):
+        self.args = args
+        OpaqueState.ver += 1
+        self.ver = OpaqueState.ver
 
-    def apply(self, i):
-        if i == self.index:
-            return
-        self.index = i
-        vertices, faces = self.stack[self.index]
+
+def save_state():
+    store.set_mesh_state(OpaqueState(*m.export()))
+
+
+def restore_state(state):
+    if state.ver != OpaqueState.ver:
+        vertices, faces = state.args
         m.reset(vertices=vertices, faces=faces)
 
-
-stack = MeshStack()
 
 # A Store object has undo functionality (in contrast to a normal state
 # object obtained with observ.reactive). But it's readonly so we need to
@@ -140,22 +133,22 @@ class Store(observ.store.Store):
     """The observ store to track thet 'mesh state'."""
 
     @observ.store.mutation
-    def set_mesh_state(self, val):
-        self.state["mesh_state"] = val
+    def set_mesh_state(self, state):
+        self.state["mesh_state"] = state
 
     @observ.store.computed
     def mesh_state(self):
         return self.state["mesh_state"]
 
 
-store = Store({"mesh_state": 0})
+store = Store({"mesh_state": OpaqueState(None, None)})
 
 # The watch() function re-calls the first function whenever any
 # observables that it uses change, and then passes the result to the
 # second function. I guess immediate determines when this happens?
 _ = observ.watch(
     lambda: store.mesh_state,
-    lambda val: stack.apply(val),  # noqa: T201
+    restore_state,  # noqa: T201
     sync=True,
     immediate=True,
 )
