@@ -28,15 +28,18 @@ def add_mesh():
     vertices, faces = geo.positions.data, geo.indices.data
     vertices += np.random.normal(0, 5, size=(3,))
 
-    m.add_mesh(vertices, faces)
+    # undo_step = m.add_mesh(vertices, faces)
+    undo_step = []
+    undo_step += m.add_vertices(vertices)
+    undo_step += m.add_faces(faces + (len(m.vertices) - len(vertices)))
+    save_state(undo_step)
 
     camera.show_object(scene)
     renderer.request_draw()
 
-    save_state()
-
 
 def add_broken_mesh():
+    1 / 0  # also the func is broken for now ;)
     geo = smooth_sphere_geometry()
     vertices1, faces1 = geo.positions.data, geo.indices.data
     vertices1 += np.random.normal(0, 5, size=(3,))
@@ -52,17 +55,16 @@ def add_broken_mesh():
 
     camera.show_object(scene)
     renderer.request_draw()
-
     save_state()
 
 
 def breakit():
-    m.delete_faces(np.random.randint(0, len(m.faces)))
-
-    save_state()
+    undo_step = m.delete_faces(np.random.randint(0, len(m.faces)))
+    save_state(undo_step)
 
 
 def repair():
+    1 / 0
     m.repair(True)
 
     save_state()
@@ -103,25 +105,47 @@ def repair():
 # morphing.
 
 
-class OpaqueState:
-    """Enable putting e.g. numpy array in a state without observ seeing them."""
+class MeshUndoStack:
+    def __init__(self):
+        self._undo = []
+        self._redo = []
 
-    ver = 0
+    def append(self, undo_step):
+        self._undo.append(undo_step)
+        self._redo = []
+        return len(self._undo)
 
-    def __init__(self, *args):
-        self.args = args
-        OpaqueState.ver += 1
-        self.ver = OpaqueState.ver
+    def apply_version(self, version):
+        while self._undo and version < len(self._undo):
+            self.undo()
+        while self._redo and version > len(self._undo):
+            self.redo()
+
+    def undo(self):
+        if self._undo:
+            undo_steps = self._undo.pop(-1)
+            undo_steps.reverse()
+            print([x[0] for x in undo_steps])
+            redo_steps = m.do(undo_steps)
+            self._redo.insert(0, redo_steps)
+
+    def redo(self):
+        if self._redo:
+            redo_steps = self._redo.pop(0)
+            redo_steps.reverse()
+            undo_steps = m.do(redo_steps)
+            self._undo.append(undo_steps)
 
 
-def save_state():
-    store.set_mesh_state(OpaqueState(*m.export()))
+undo_stack = MeshUndoStack()
+
+
+def save_state(undo_step):
+    store.set_mesh_state(undo_stack.append(undo_step))
 
 
 def restore_state(state):
-    if state.ver != OpaqueState.ver:
-        vertices, faces = state.args
-        m.reset(vertices=vertices, faces=faces)
+    undo_stack.apply_version(state)
 
 
 # A Store object has undo functionality (in contrast to a normal state
@@ -141,7 +165,7 @@ class Store(observ.store.Store):
         return self.state["mesh_state"]
 
 
-store = Store({"mesh_state": OpaqueState(None, None)})
+store = Store({"mesh_state": 0})
 
 # The watch() function re-calls the first function whenever any
 # observables that it uses change, and then passes the result to the

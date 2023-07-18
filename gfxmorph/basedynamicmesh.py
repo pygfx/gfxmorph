@@ -81,6 +81,9 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         # A list of trackers that are notified of changes.
         self._change_trackers = []
+        # Init two of attributes because reset uses them to create undo info
+        self._positions = None
+        self._faces = None
         # Init!
         self.reset()
 
@@ -140,8 +143,45 @@ class BaseDynamicMesh:
             tracker.set_n_vertices(len(self._positions))
             tracker.set_n_faces(len(self._faces))
 
-    def reset(self, *, vertices=None, faces=None):
+    def do(self, do_steps):
+        """Apply the given changes."""
+        # Convenience: allow step to be singleton
+        if isinstance(do_steps, tuple) and do_steps and isinstance(do_steps[0], str):
+            do_steps = [do_steps]
+        if not isinstance(do_steps, list):
+            raise TypeError("Do-steps must be a list.")
+
+        functions = [
+            self.reset,
+            self.delete_faces,
+            self.delete_vertices,
+            self.add_faces,
+            self.add_vertices,
+            self.update_faces,
+            self.update_vertices,
+            self._move_faces,
+        ]
+        func_map = {f.__name__: f for f in functions}
+
+        # Do (only) basic checks on each step.
+        for do_step in do_steps:
+            if not (isinstance(do_step, tuple) and len(do_step) >= 2):
+                raise TypeError("Do-step must be a tuple with at least two elements.")
+            if not (isinstance(do_step[0], str) and do_step[0] in func_map):
+                raise TypeError(f"Invalid action: {do_step[0]!r}")
+
+        undo_steps = []
+        for do_step in do_steps:
+            f = func_map[do_step[0]]
+            undo_step = f(*do_step[1:])
+            undo_steps.extend(undo_step)
+
+        return undo_steps
+
+    def reset(self, vertices=None, faces=None):
         """Remove all vertices and faces and add the given ones (if any)."""
+
+        undo_info = [("reset", self._positions, self._faces)]
 
         initial_size = 8
 
@@ -197,6 +237,9 @@ class BaseDynamicMesh:
 
         if faces is not None:
             self.add_faces(faces)
+
+        # Return undo info
+        return undo_info
 
     def export(self):
         """Get a copy of the array of vertices and faces.
@@ -452,6 +495,61 @@ class BaseDynamicMesh:
 
         return result
 
+    def _move_faces(self, indices1, indices2):
+        """Move the faces indicated by the given indices.
+
+        This method is for internal use to move faces to delete to the
+        end, and to be able to reverse that action for undo.
+        """
+
+        vertex2faces = self._vertex2faces
+        assert len(indices1) == len(indices2)
+
+        try:
+            # Update reverse map
+            for fi1, fi2 in zip(indices1, indices2):
+                face1 = self._faces[fi1]
+                fii = vertex2faces[face1[0]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                fii = vertex2faces[face1[1]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                fii = vertex2faces[face1[2]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                face2 = self._faces[fi2]
+                fii = vertex2faces[face2[0]]
+                fii.remove(fi2)
+                fii.append(fi1)
+                fii = vertex2faces[face2[1]]
+                fii.remove(fi2)
+                fii.append(fi1)
+                fii = vertex2faces[face2[2]]
+                fii.remove(fi2)
+                fii.append(fi1)
+
+            # Move vertices from the end into the slots of the deleted vertices
+            for a in [self._faces, self._faces_normals]:
+                a[indices1], a[indices2] = a[indices2], a[indices1]
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        if len(indices1) > 0:
+            for tracker in self._change_trackers:
+                with Safecall():
+                    tracker.update_faces(np.concatenate([indices1, indices2]))
+        if self._debug_mode:
+            self._check_internal_state()
+
+        # todo: when going back and forth with undo/redo, the number of steps should not increase
+        # because of extra move_faces calls. I think thet become empty, we need to check that and drop these.
+        return [("_move_faces", indices2, indices1)]
+
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
 
@@ -465,9 +563,10 @@ class BaseDynamicMesh:
 
         # --- Prepare / checks
 
-        to_delete = set(
-            self._get_indices(face_indices, len(self._faces), "face indices to delete")
+        indices = self._get_indices(
+            face_indices, len(self._faces), "face indices to delete"
         )
+        to_delete = set(indices)
 
         nfaces1 = len(self._faces)
         nfaces2 = nfaces1 - len(to_delete)
@@ -481,23 +580,20 @@ class BaseDynamicMesh:
 
         # --- Apply
 
+        original_faces = self._faces[indices]
+
+        undo_steps = []
+
+        # Do a move, so all faces to delete are at the end
+        undo_steps += self._move_faces(indices1, indices2)
+
         try:
             # Update reverse map
-            for fi in to_delete:
+            for fi in range(nfaces2, nfaces1):
                 face = self._faces[fi]
                 vertex2faces[face[0]].remove(fi)
                 vertex2faces[face[1]].remove(fi)
                 vertex2faces[face[2]].remove(fi)
-            for fi1, fi2 in zip(indices1, indices2):
-                face = self._faces[fi2]
-                for i in range(self._verts_per_face):
-                    fii = vertex2faces[face[i]]
-                    fii.remove(fi2)
-                    fii.append(fi1)
-
-            # Move vertices from the end into the slots of the deleted vertices
-            self._faces[indices1] = self._faces[indices2]
-            self._faces_normals[indices1] = self._faces_normals[indices2]
 
             # Adjust the array lengths (reset views)
             self._deallocate_faces(nfaces1 - nfaces2)
@@ -510,12 +606,14 @@ class BaseDynamicMesh:
 
         self._cache_depending_on_faces = {}
         self._cache_depending_on_verts_and_faces = {}
-        if len(indices1) > 0:
-            for tracker in self._change_trackers:
-                with Safecall():
-                    tracker.update_faces(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
+
+        # Return undo info
+        undo_steps += [("add_faces", original_faces)]
+        return undo_steps
+
+    # todo: def _move _vertices(indices1, indices2)
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -544,11 +642,10 @@ class BaseDynamicMesh:
 
         # --- Prepare / checcks
 
-        to_delete = set(
-            self._get_indices(
-                vertex_indices, len(self._positions), "vertex indices to delete"
-            )
+        indices = self._get_indices(
+            vertex_indices, len(self._positions), "vertex indices to delete"
         )
+        to_delete = set(indices)
 
         nverts1 = len(self._positions)
         nverts2 = nverts1 - len(to_delete)
@@ -565,6 +662,8 @@ class BaseDynamicMesh:
             raise ValueError("Vertex to delete is in use.")
 
         # --- Apply
+
+        original_positions = self._positions[indices]
 
         try:
             # Move vertices from the end into the slots of the deleted vertices
@@ -600,6 +699,9 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
+        # Return undo info
+        return [("add_vertices", original_positions)]
+
     def add_faces(self, new_faces):
         """Add the given faces to the mesh.
 
@@ -629,7 +731,7 @@ class BaseDynamicMesh:
 
         n = len(faces)
         n1 = len(self._faces)
-        indices = np.arange(n1, n1 + n)
+        indices = np.arange(n1, n1 + n, dtype=np.int32)
 
         # --- Apply
 
@@ -659,6 +761,9 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
+        # Return undo info
+        return [("delete_faces", indices)]
+
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
         vertex2faces = self._vertex2faces
@@ -678,6 +783,7 @@ class BaseDynamicMesh:
 
         n = len(positions)
         n1 = len(self._positions)
+        indices = np.arange(n1, n1 + n, dtype=np.int32)
 
         # --- Apply
 
@@ -702,6 +808,9 @@ class BaseDynamicMesh:
                 tracker.update_positions(np.arange(n1, n1 + n))
         if self._debug_mode:
             self._check_internal_state()
+
+        # Return undo info
+        return [("delete_vertices", indices)]
 
     def update_faces(self, face_indices, new_faces):
         """Update the value of the given faces."""
@@ -729,6 +838,8 @@ class BaseDynamicMesh:
         # self.add_faces(faces)
 
         # --- Apply
+
+        original_faces = self._faces[indices]
 
         try:
             # Update reverse map
@@ -759,6 +870,9 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
+        # Return undo info
+        return [("update_faces", indices, original_faces)]
+
     def update_vertices(self, vertex_indices, new_positions):
         """Update the value of the given vertices."""
 
@@ -775,6 +889,8 @@ class BaseDynamicMesh:
             raise ValueError("Indices and positions to update have different lengths.")
 
         # --- Apply
+
+        original_positions = self._positions[indices]
 
         try:
             self._positions[indices] = positions
@@ -799,3 +915,6 @@ class BaseDynamicMesh:
                 tracker.update_positions(indices)
         if self._debug_mode:
             self._check_internal_state()
+
+        # Return undo info
+        return [("update_vertices", indices, original_positions)]
