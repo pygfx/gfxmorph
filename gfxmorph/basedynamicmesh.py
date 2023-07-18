@@ -503,7 +503,18 @@ class BaseDynamicMesh:
         """
 
         vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
         assert len(indices1) == len(indices2)
+
+        # If there's nothing to move, then don't. This also avoids
+        # increasing the steps of an undo-action by repeated undo- and
+        # redo-actions.
+        if len(indices1) == 0:
+            return []
+
+        # --- Apply
 
         try:
             # Update reverse map
@@ -537,17 +548,16 @@ class BaseDynamicMesh:
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
+        # --- Notify
+
         self._cache_depending_on_faces = {}
         self._cache_depending_on_verts_and_faces = {}
-        if len(indices1) > 0:
-            for tracker in self._change_trackers:
-                with Safecall():
-                    tracker.update_faces(np.concatenate([indices1, indices2]))
+        for tracker in self._change_trackers:
+            with Safecall():
+                tracker.update_faces(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
-        # todo: when going back and forth with undo/redo, the number of steps should not increase
-        # because of extra move_faces calls. I think thet become empty, we need to check that and drop these.
         return [("_move_faces", indices2, indices1)]
 
     def delete_faces(self, face_indices):
