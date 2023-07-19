@@ -225,7 +225,6 @@ def on_key(e):
         else:
             store.undo()
 
-
 # -- Run
 
 gfx.show(scene, camera=camera, renderer=renderer)

@@ -1,5 +1,6 @@
 import time
 
+import numpy as np
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry
 from gfxmorph import DynamicMesh
@@ -84,6 +85,15 @@ def benchmark():
             m.reset()
             m.reset(vertices=vertices, faces=faces)
             t.toc(f"reset")
+
+            t.tic()
+            m.delete_faces(np.arange(0, len(m.faces), 2, np.int32))
+            t.toc(f"delete 50% faces")
+
+            m.reset(vertices, None)
+            t.tic()
+            m.delete_vertices(np.arange(0, len(m.vertices), 2, np.int32))
+            t.toc(f"delete 50% vertices")
 
             t.add_data("", "")
 

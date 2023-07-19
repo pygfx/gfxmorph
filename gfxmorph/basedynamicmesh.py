@@ -9,11 +9,42 @@ logger = logging.getLogger("meshmorph")
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
 
 
+# todo: test the undo mechanics in unit tests (maybe as part of test_corrupt)
+
+
 class MeshChangeTracker:
     """A class that is notified on changes to the BaseDynamicMesh that it
     is subscribed to, so that a certain representation of the mesh can
     be updated.
     """
+
+    # --- API similar to DynamicMesh
+
+    def add_faces(self, faces):
+        pass
+
+    def pop_faces(self, n, old):
+        pass
+
+    def swap_faces(self, indices1, indices2):
+        pass
+
+    def update_faces(self, indices, faces, old):
+        pass
+
+    def add_vertices(self, positions):
+        pass
+
+    def pop_vertices(self, n, old):
+        pass
+
+    def swap_vertices(self, indices1, indices2):
+        pass
+
+    def update_vertices(self, indices, positions, old):
+        pass
+
+    # Extra API for GPU viz
 
     def set_vertex_arrays(self, positions, normals, colors):
         pass
@@ -21,19 +52,9 @@ class MeshChangeTracker:
     def set_face_array(self, array):
         pass
 
-    def set_n_vertices(self, n):
-        pass
-
-    def set_n_faces(self, n):
-        pass
-
-    def update_positions(self, indices):
-        pass
-
-    def update_normals(self, indices):
-        pass
-
-    def update_faces(self, indices):
+    def update_normals(
+        self, indices
+    ):  # todo: include old and new normals for consistency?
         pass
 
 
@@ -153,13 +174,14 @@ class BaseDynamicMesh:
 
         functions = [
             self.reset,
-            self.delete_faces,
-            self.delete_vertices,
-            self.add_faces,
             self.add_vertices,
-            self.update_faces,
+            self.pop_vertices,
+            self.swap_vertices,
             self.update_vertices,
-            self._move_faces,
+            self.add_faces,
+            self.pop_faces,
+            self.swap_faces,
+            self.update_faces,
         ]
         func_map = {f.__name__: f for f in functions}
 
@@ -495,24 +517,29 @@ class BaseDynamicMesh:
 
         return result
 
-    def _move_faces(self, indices1, indices2):
-        """Move the faces indicated by the given indices.
+    def swap_faces(self, face_indices1, face_indices2):
+        """Swap the faces indicated by the given indices.
 
-        This method is for internal use to move faces to delete to the
-        end, and to be able to reverse that action for undo.
+        This method is mainly intended for internal use to move faces
+        to delete to the end, and to be able to reverse that action for
+        undo.
         """
+
+        # Technically this can also be done with update_faces, but
+        # swapping is faster and costs significantly less memory in an
+        # undo stack.
 
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
+        indices1 = self._get_indices(
+            face_indices1, len(self._faces), "face indices to swap (1)"
+        )
+        indices2 = self._get_indices(
+            face_indices2, len(self._faces), "face indices to swap (2)"
+        )
 
         assert len(indices1) == len(indices2)
-
-        # If there's nothing to move, then don't. This also avoids
-        # increasing the steps of an undo-action by repeated undo- and
-        # redo-actions.
-        if len(indices1) == 0:
-            return []
 
         # --- Apply
 
@@ -559,7 +586,52 @@ class BaseDynamicMesh:
             self._check_internal_state()
 
         # Return undo info
-        return [("_move_faces", indices2, indices1)]
+        return [("swap_faces", indices2, indices1)]
+
+    def pop_faces(self, n, _old=None):
+        """Remove the last n faces from the mesh."""
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        if n <= 0:
+            raise ValueError("Number of faces to pop must be larger than zero.")
+        if n > len(self._faces):
+            raise ValueError(
+                "Number of faces to pop is larger than the total number of faces."
+            )
+
+        nfaces1 = len(self.faces)
+        nfaces2 = nfaces1 - n
+
+        # --- Apply
+
+        original_faces = self._faces[nfaces2:].copy()
+
+        try:
+            # Update reverse map
+            for fi in range(nfaces2, nfaces1):
+                face = self._faces[fi]
+                vertex2faces[face[0]].remove(fi)
+                vertex2faces[face[1]].remove(fi)
+                vertex2faces[face[2]].remove(fi)
+
+            # Adjust the array lengths (reset views)
+            self._deallocate_faces(n)
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        if self._debug_mode:
+            self._check_internal_state()
+
+        # Return undo info
+        return [("add_faces", original_faces)]
 
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
@@ -570,7 +642,6 @@ class BaseDynamicMesh:
 
         An error can be raised if e.g. the indices are out of bounds.
         """
-        vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
 
@@ -589,42 +660,20 @@ class BaseDynamicMesh:
         indices2 = list(to_maybe_move - to_just_drop)
         assert len(indices1) == len(indices2), "Internal error"
 
-        # --- Apply
-
-        original_faces = self._faces[indices]
+        # --- Apply -> delegate
 
         undo_steps = []
 
         # Do a move, so all faces to delete are at the end
-        undo_steps += self._move_faces(indices1, indices2)
+        if len(indices1):
+            undo_steps += self.swap_faces(indices1, indices2)
 
-        try:
-            # Update reverse map
-            for fi in range(nfaces2, nfaces1):
-                face = self._faces[fi]
-                vertex2faces[face[0]].remove(fi)
-                vertex2faces[face[1]].remove(fi)
-                vertex2faces[face[2]].remove(fi)
+        # Pop from the end
+        undo_steps += self.pop_faces(len(to_delete))
 
-            # Adjust the array lengths (reset views)
-            self._deallocate_faces(nfaces1 - nfaces2)
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_faces = {}
-        self._cache_depending_on_verts_and_faces = {}
-        if self._debug_mode:
-            self._check_internal_state()
-
-        # Return undo info
-        undo_steps += [("add_faces", original_faces)]
         return undo_steps
 
-    def _move_vertices(self, indices1, indices2):
+    def swap_vertices(self, indices1, indices2):
         """Move the vertices indicated by the given indices.
 
         This method is for internal use to move vertices to delete to the
@@ -680,7 +729,48 @@ class BaseDynamicMesh:
             self._check_internal_state()
 
         # Return undo info
-        return [("_move_vertices", indices2, indices1)]
+        return [("swap_vertices", indices2, indices1)]
+
+    def pop_vertices(self, n, _old=None):
+        """Remove the last n vertices from the mesh."""
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        if n <= 0:
+            raise ValueError("Number of vertices to pop must be larger than zero.")
+        if n > len(self._positions):
+            raise ValueError(
+                "Number of vertices to pop is larger than the total number of vertices."
+            )
+
+        nverts1 = len(self._positions)
+        nverts2 = nverts1 - n
+
+        # --- Apply
+
+        original_positions = self._positions[nverts2:].copy()
+
+        try:
+            # Drop unused vertices at the end
+            self._deallocate_vertices(nverts1 - nverts2)
+
+            # Update reverse map
+            vertex2faces[nverts2:] = []
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
+        if self._debug_mode:
+            self._check_internal_state()
+
+        # Return undo info
+        return [("add_vertices", original_positions)]
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -730,33 +820,15 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        original_positions = self._positions[indices]
-
         undo_steps = []
 
         # Do a move, so all vertices to delete are at the end
-        undo_steps += self._move_vertices(indices1, indices2)
+        if len(indices1):
+            undo_steps += self.swap_vertices(indices1, indices2)
 
-        try:
-            # Drop unused vertices at the end
-            self._deallocate_vertices(nverts1 - nverts2)
+        # Pop from the end
+        undo_steps += self.pop_vertices(len(to_delete))
 
-            # Update reverse map
-            vertex2faces[nverts2:] = []
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_verts = {}
-        self._cache_depending_on_verts_and_faces = {}
-        if self._debug_mode:
-            self._check_internal_state()
-
-        # Return undo info
-        undo_steps += [("add_vertices", original_positions)]
         return undo_steps
 
     def add_faces(self, new_faces):
@@ -819,7 +891,7 @@ class BaseDynamicMesh:
             self._check_internal_state()
 
         # Return undo info
-        return [("delete_faces", indices)]
+        return [("pop_faces", n)]
 
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
@@ -840,7 +912,6 @@ class BaseDynamicMesh:
 
         n = len(positions)
         n1 = len(self._positions)
-        indices = np.arange(n1, n1 + n, dtype=np.int32)
 
         # --- Apply
 
@@ -867,10 +938,9 @@ class BaseDynamicMesh:
             self._check_internal_state()
 
         # Return undo info
-        # todo: if all indices are at the end, we don't need indices, only one index or a range
-        return [("delete_vertices", indices)]
+        return [("pop_vertices", n)]
 
-    def update_faces(self, face_indices, new_faces):
+    def update_faces(self, face_indices, new_faces, _old=None):
         """Update the value of the given faces."""
 
         vertex2faces = self._vertex2faces
@@ -931,7 +1001,7 @@ class BaseDynamicMesh:
         # Return undo info
         return [("update_faces", indices, original_faces)]
 
-    def update_vertices(self, vertex_indices, new_positions):
+    def update_vertices(self, vertex_indices, new_positions, _old=None):
         """Update the value of the given vertices."""
 
         vertex2faces = self._vertex2faces
