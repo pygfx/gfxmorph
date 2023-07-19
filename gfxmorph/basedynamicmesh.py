@@ -517,7 +517,7 @@ class BaseDynamicMesh:
         # --- Apply
 
         try:
-            # Update reverse map
+            # Update reverse map (unrolled loops for small performance bump)
             for fi1, fi2 in zip(indices1, indices2):
                 face1 = self._faces[fi1]
                 fii = vertex2faces[face1[0]]
@@ -540,7 +540,7 @@ class BaseDynamicMesh:
                 fii.remove(fi2)
                 fii.append(fi1)
 
-            # Move vertices from the end into the slots of the deleted vertices
+            # Swap the faces themselves
             for a in [self._faces, self._faces_normals]:
                 a[indices1], a[indices2] = a[indices2], a[indices1]
 
@@ -558,6 +558,7 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
+        # Return undo info
         return [("_move_faces", indices2, indices1)]
 
     def delete_faces(self, face_indices):
@@ -623,7 +624,63 @@ class BaseDynamicMesh:
         undo_steps += [("add_faces", original_faces)]
         return undo_steps
 
-    # todo: def _move _vertices(indices1, indices2)
+    def _move_vertices(self, indices1, indices2):
+        """Move the vertices indicated by the given indices.
+
+        This method is for internal use to move vertices to delete to the
+        end, and to be able to reverse that action for undo.
+        """
+
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        assert len(indices1) == len(indices2)
+
+        # If there's nothing to move, then don't. This also avoids
+        # increasing the steps of an undo-action by repeated undo- and
+        # redo-actions.
+        if len(indices1) == 0:
+            return []
+
+        # --- Apply
+
+        try:
+            # Swap the vertices themselves
+            for a in [self._positions, self._normals, self._colors]:
+                a[indices1], a[indices2] = a[indices2], a[indices1]
+
+            # Update the faces that refer to the moved indices
+            faces = self._faces
+            for vi1, vi2 in zip(indices1, indices2):
+                mask1 = faces == vi1
+                mask2 = faces == vi2
+                faces[mask2] = vi1
+                faces[mask1] = vi2
+
+            # Update reverse map
+            for vi1, vi2 in zip(indices1, indices2):
+                vertex2faces[vi1], vertex2faces[vi2] = (
+                    vertex2faces[vi2],
+                    vertex2faces[vi1],
+                )
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers:
+            with Safecall():
+                tracker.update_positions(np.concatenate([indices1, indices2]))
+        if self._debug_mode:
+            self._check_internal_state()
+
+        # Return undo info
+        return [("_move_vertices", indices2, indices1)]
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -675,23 +732,16 @@ class BaseDynamicMesh:
 
         original_positions = self._positions[indices]
 
-        try:
-            # Move vertices from the end into the slots of the deleted vertices
-            self._positions[indices1] = self._positions[indices2]
-            self._normals[indices1] = self._normals[indices2]
-            self._colors[indices1] = self._colors[indices2]
+        undo_steps = []
 
+        # Do a move, so all vertices to delete are at the end
+        undo_steps += self._move_vertices(indices1, indices2)
+
+        try:
             # Drop unused vertices at the end
             self._deallocate_vertices(nverts1 - nverts2)
 
-            # Update the faces that refer to the moved indices
-            faces = self._faces
-            for vi1, vi2 in zip(indices1, indices2):
-                faces[faces == vi2] = vi1
-
             # Update reverse map
-            for vi1, vi2 in zip(indices1, indices2):
-                vertex2faces[vi1] = vertex2faces[vi2]
             vertex2faces[nverts2:] = []
 
         except Exception:  # pragma: no cover
@@ -702,15 +752,12 @@ class BaseDynamicMesh:
 
         self._cache_depending_on_verts = {}
         self._cache_depending_on_verts_and_faces = {}
-        if len(indices1) > 0:
-            for tracker in self._change_trackers:
-                with Safecall():
-                    tracker.update_positions(np.concatenate([indices1, indices2]))
         if self._debug_mode:
             self._check_internal_state()
 
         # Return undo info
-        return [("add_vertices", original_positions)]
+        undo_steps += [("add_vertices", original_positions)]
+        return undo_steps
 
     def add_faces(self, new_faces):
         """Add the given faces to the mesh.
