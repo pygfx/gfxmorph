@@ -72,37 +72,25 @@ def repair():
 
 # -- Setup the undo/redo
 
-# We should also think whether we want to facilitate undo as part of
-# the basedynamicmesh or a utility of sorts, or whether we just show
-# how to do it in an example.
+# ### Implementing undo with diffs
 #
-# ### Taking a full-mesh snapshot at each undo-version
+# The idea is that for every action, the DynamicMesh gives us an object,
+# by which it can be undone. When you undo a collection of actions, you
+# get an object by which it can be re-done.
 #
-# This is a simple and effective solution, that works well in principle,
-# but can cost a lot of memory for a deep undo stack.
+# It's very important that the actions are done in-order, and that no
+# untracked actions are done in between.
 #
-# A mesh of 100k vertices takes about 8MiB, so with 100 actions you
-# reach 800MiB. Seems large but manageable, though if any of these
-# number become higher, memory becoming a problem is not far off.
+# This approach is very efficient, as the data that is stored on the
+# undo stack is quite minimal.
 #
-# Exporting the mesh by making copies of the data does not take a lot
-# of time. However, resetting to that data costs about a quarter of a
-# second for a mesh with 100k vertices. Most of that is spent on
-# recreating the vertex2faces array and normals. Again manageable, but
-# if the mesh gets larger this delay may become anoying.
+# However, undo steps do not represent "state", and will have to be
+# tracked separately, I suppose.
 #
-# A solution to mitigate the memory problem is to offload older
-# snapshots to disk, to a temporary file. The time-aspect can be
-# mitigated by allowing the export to create an opaque object that
-# includes some internal state (like the vertices2faces and the
-# normals). This does introduce some complexity as to how to serialize
-# all that data ...
-#
-# A more sophisticated solution would be to store objects that
-# represents diffs that can be applied to travel between states of the
-# mesh. This should be more memory efficient, especially in the case
-# with an undo stack of many small changes, as can be expected with
-# morphing.
+# A modification could be that the undo-objects already contain the
+# information to redo the operation. That would consume more memory,
+# but then we may not need an external stack. Are there any advantages
+# to that?
 
 
 class MeshUndoStack:

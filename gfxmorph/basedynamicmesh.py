@@ -867,6 +867,7 @@ class BaseDynamicMesh:
             self._check_internal_state()
 
         # Return undo info
+        # todo: if all indices are at the end, we don't need indices, only one index or a range
         return [("delete_vertices", indices)]
 
     def update_faces(self, face_indices, new_faces):
