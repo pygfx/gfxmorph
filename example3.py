@@ -88,11 +88,8 @@ def repair():
 
 
 class MeshUndoTracker(MeshChangeTracker):
-    def __init__(self):
-        self.clear()
-        self._doing = None
-
     def clear(self):
+        self._doing = None
         self._undo = []
         self._redo = []
 
@@ -197,6 +194,7 @@ undo_tracker = MeshUndoTracker()
 
 
 def save_state():
+    # todo: if we also put the mesh stack object here, we can support hot reload.
     store.set_mesh_state(undo_tracker.get_version())
     # store.set_mesh_state(undo_stack.append(undo_step))
 

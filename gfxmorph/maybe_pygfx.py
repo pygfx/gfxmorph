@@ -52,13 +52,13 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         #   So if the normal-updates are a bottleneck, it could be made optional.
         self.positions.update_range(indices.min(), indices.max())
 
-    def set_vertex_arrays(self, positions, normals, colors):
-        self.positions = gfx.Buffer(positions)
-        self.normals = gfx.Buffer(normals)
+    def new_vertices_buffer(self, mesh):
+        self.positions = gfx.Buffer(mesh.vertices.base)
+        self.normals = gfx.Buffer(mesh.normals.base)
         # self.colors = gfx.Buffer(colors)
 
-    def set_face_array(self, array):
-        self.indices = gfx.Buffer(array)
+    def new_faces_buffer(self, mesh):
+        self.indices = gfx.Buffer(mesh.faces.base)
 
     def update_normals(self, indices):
         self.normals.update_range(indices.min(), indices.max())
