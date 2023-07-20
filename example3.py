@@ -92,15 +92,6 @@ class MeshUndoTracker(MeshChangeTracker):
         self.clear()
         self._doing = None
 
-    def _append(self, step):
-        if not self._doing:
-            self._undo.append(step)
-            self._redo.clear()
-        elif self._doing == "undo":
-            self._redo.append(step)
-        elif self._doing == "redo":
-            self._undo.append(step)
-
     def clear(self):
         self._undo = []
         self._redo = []
@@ -129,6 +120,19 @@ class MeshUndoTracker(MeshChangeTracker):
     def update_vertices(self, indices, positions, old):
         self._append(("update_vertices", indices, old))
 
+    def _append(self, step):
+        # Incoming changes pass through here.
+        if not self._doing:
+            # Normally they are added to the undo stack, and clear the redo stack.
+            self._undo.append(step)
+            self._redo.clear()
+        elif self._doing == "undo":
+            # But if we are un-doing, it should be added to the redo stack instead.
+            self._redo.append(step)
+        elif self._doing == "redo":
+            # And if we are re-doing, it's just added to the undo stack.
+            self._undo.append(step)
+
     def get_version(self):
         return len(self._undo)
 
@@ -138,19 +142,22 @@ class MeshUndoTracker(MeshChangeTracker):
         while self._redo and version > len(self._undo):
             self.redo()
 
+    def _do(self, step, what):
+        self._doing = what
+        try:
+            method_name, *args = step
+            f = getattr(m, method_name)
+            f(*args)
+        finally:
+            self._doing = None
+
     def undo(self):
         if self._undo:
-            undo_step = self._undo.pop(-1)
-            self._doing = "undo"
-            m.do([undo_step])
-            self._doing = None
+            self._do(self._undo.pop(-1), "undo")
 
     def redo(self):
         if self._redo:
-            redo_step = self._redo.pop(-1)
-            self._doing = "redo"
-            m.do([redo_step])
-            self._doing = None
+            self._do(self._redo.pop(-1), "redo")
 
 
 # class MeshUndoStack:
@@ -288,6 +295,7 @@ def on_key(e):
             store.redo()
         else:
             store.undo()
+
 
 # -- Run
 

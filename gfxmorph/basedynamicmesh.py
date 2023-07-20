@@ -13,12 +13,17 @@ EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atom
 
 
 class MeshChangeTracker:
-    """A class that is notified on changes to the BaseDynamicMesh that it
-    is subscribed to, so that a certain representation of the mesh can
-    be updated.
+    """A class that is notified of changes to a BaseDynamicMesh.
+
+    To use, this class must be subclassed, implementing (a subset of)
+    its methods. The instance of the subclass can then be subscribed
+    to a ``BaseDynamicMesh``object to process its changes.
+
+    Use-case for tracking mesh changes include e.g. logging, updating
+    a GPU representation of the mesh, or keeping an undo stack.
     """
 
-    # --- API similar to DynamicMesh
+    # --- API that is the same as changes to BaseDynamicMesh, except for the `old` argument
 
     def clear(self):
         pass
@@ -47,7 +52,7 @@ class MeshChangeTracker:
     def update_vertices(self, indices, positions, old):
         pass
 
-    # Extra API for GPU viz
+    # --- Extra API for e.g. GPU viz
 
     def set_vertex_arrays(self, positions, normals, colors):
         pass
@@ -55,15 +60,13 @@ class MeshChangeTracker:
     def set_face_array(self, array):
         pass
 
-    def update_normals(
-        self, indices
-    ):  # todo: include old and new normals for consistency?
+    def update_normals(self, indices):
         pass
 
 
 class Safecall:
     """Context manager for doing calls that should not raise. If an
-    exception is raised, it is caught, logged, and the context exists
+    exception is raised, it is caught, logged, and the context exits
     normally.
     """
 
@@ -76,6 +79,9 @@ class Safecall:
             msg = "Exception in update callback:\n" + "".join(lines)
             logger.error(msg)
         return True  # Yes, we handled the exception
+
+
+# todo: The order of methods on this class can be better. Let's fix that in a separate pr.
 
 
 class BaseDynamicMesh:
@@ -91,7 +97,8 @@ class BaseDynamicMesh:
     can be kept in sync.
     """
 
-    # We assume meshes with triangles (not quads)
+    # We assume meshes with triangles (not quads).
+    # Note that there are a few places where loops are unrolled, and verts_per_face is thus hardcoded.
     _verts_per_face = 3
 
     # In debug mode, the mesh checks its internal state after each change
@@ -105,9 +112,6 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         # A list of trackers that are notified of changes.
         self._change_trackers = []
-        # Init two of attributes because reset uses them to create undo info
-        self._positions = None
-        self._faces = None
         # Init!
         self.clear()
 
@@ -171,42 +175,6 @@ class BaseDynamicMesh:
             if len(self._faces):
                 tracker.add_faces(self._faces)
 
-    def do(self, do_steps):
-        """Apply the given changes."""
-        # Convenience: allow step to be singleton
-        if isinstance(do_steps, tuple) and do_steps and isinstance(do_steps[0], str):
-            do_steps = [do_steps]
-        if not isinstance(do_steps, list):
-            raise TypeError("Do-steps must be a list.")
-
-        functions = [
-            self.reset,
-            self.add_vertices,
-            self.pop_vertices,
-            self.swap_vertices,
-            self.update_vertices,
-            self.add_faces,
-            self.pop_faces,
-            self.swap_faces,
-            self.update_faces,
-        ]
-        func_map = {f.__name__: f for f in functions}
-
-        # Do (only) basic checks on each step.
-        for do_step in do_steps:
-            if not (isinstance(do_step, tuple) and len(do_step) >= 2):
-                raise TypeError("Do-step must be a tuple with at least two elements.")
-            if not (isinstance(do_step[0], str) and do_step[0] in func_map):
-                raise TypeError(f"Invalid action: {do_step[0]!r}")
-
-        undo_steps = []
-        for do_step in do_steps:
-            f = func_map[do_step[0]]
-            undo_step = f(*do_step[1:])
-            undo_steps.extend(undo_step)
-
-        return undo_steps
-
     def clear(self):
         """Empty all vertices and faces."""
 
@@ -262,8 +230,6 @@ class BaseDynamicMesh:
     def reset(self, vertices=None, faces=None):
         """Remove all vertices and faces and add the given ones (if any)."""
 
-        undo_info = [("reset", self._positions, self._faces)]
-
         self.clear()
 
         if vertices is not None:
@@ -271,8 +237,6 @@ class BaseDynamicMesh:
 
         if faces is not None:
             self.add_faces(faces)
-
-        return undo_info
 
     def export(self):
         """Get a copy of the array of vertices and faces.
@@ -519,18 +483,19 @@ class BaseDynamicMesh:
     def swap_faces(self, face_indices1, face_indices2):
         """Swap the faces indicated by the given indices.
 
-        This method is mainly intended for internal use to move faces
-        to delete to the end, and to be able to reverse that action for
-        undo.
+        This method is public, but likely not generally useful by
+        itself. The ``delete_faces()`` method is a convenience
+        combination of ``swap_faces()`` and ``pop_faces()``.
         """
 
         # Technically this can also be done with update_faces, but
-        # swapping is faster and costs significantly less memory in an
-        # undo stack.
+        # swapping is faster and costs significantly less memory in
+        # e.g. an undo stack.
 
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
+
         indices1 = self._get_indices(
             face_indices1, len(self._faces), "face indices to swap (1)"
         )
@@ -538,7 +503,8 @@ class BaseDynamicMesh:
             face_indices2, len(self._faces), "face indices to swap (2)"
         )
 
-        assert len(indices1) == len(indices2)
+        if not len(indices1) == len(indices2):
+            raise ValueError("Both index arrays must have the same length.")
 
         # --- Apply
 
@@ -583,9 +549,6 @@ class BaseDynamicMesh:
                 tracker.swap_faces(indices1, indices2)
         if self._debug_mode:
             self._check_internal_state()
-
-        # Return undo info
-        return [("swap_faces", indices2, indices1)]
 
     def pop_faces(self, n, _old=None):
         """Remove the last n faces from the mesh."""
@@ -632,9 +595,6 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
-        # Return undo info
-        return [("add_faces", old_faces)]
-
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
 
@@ -664,35 +624,34 @@ class BaseDynamicMesh:
 
         # --- Apply -> delegate
 
-        undo_steps = []
-
         # Do a move, so all faces to delete are at the end
         if len(indices1):
-            undo_steps += self.swap_faces(indices1, indices2)
+            self.swap_faces(indices1, indices2)
 
         # Pop from the end
-        undo_steps += self.pop_faces(len(to_delete))
+        self.pop_faces(len(to_delete))
 
-        return undo_steps
-
-    def swap_vertices(self, indices1, indices2):
+    def swap_vertices(self, vertex_indices1, vertex_indices2):
         """Move the vertices indicated by the given indices.
 
-        This method is for internal use to move vertices to delete to the
-        end, and to be able to reverse that action for undo.
+        This method is public, but likely not generally useful by
+        itself. The ``delete_vertices()`` method is a convenience
+        combination of ``swap_vertices()`` and ``pop_vertices()``.
         """
 
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
 
-        assert len(indices1) == len(indices2)
+        indices1 = self._get_indices(
+            vertex_indices1, len(self._positions), "vertex indices to swap (1)"
+        )
+        indices2 = self._get_indices(
+            vertex_indices2, len(self._positions), "vertex indices to swap (2)"
+        )
 
-        # If there's nothing to move, then don't. This also avoids
-        # increasing the steps of an undo-action by repeated undo- and
-        # redo-actions.
-        if len(indices1) == 0:
-            return []
+        if not len(indices1) == len(indices2):
+            raise ValueError("Both index arrays must have the same length.")
 
         # --- Apply
 
@@ -729,9 +688,6 @@ class BaseDynamicMesh:
                 tracker.swap_vertices(indices1, indices2)
         if self._debug_mode:
             self._check_internal_state()
-
-        # Return undo info
-        return [("swap_vertices", indices2, indices1)]
 
     def pop_vertices(self, n, _old=None):
         """Remove the last n vertices from the mesh."""
@@ -773,9 +729,6 @@ class BaseDynamicMesh:
                 tracker.pop_vertices(n, old_positions)
         if self._debug_mode:
             self._check_internal_state()
-
-        # Return undo info
-        return [("add_vertices", old_positions)]
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -825,16 +778,12 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        undo_steps = []
-
         # Do a move, so all vertices to delete are at the end
         if len(indices1):
-            undo_steps += self.swap_vertices(indices1, indices2)
+            self.swap_vertices(indices1, indices2)
 
         # Pop from the end
-        undo_steps += self.pop_vertices(len(to_delete))
-
-        return undo_steps
+        self.pop_vertices(len(to_delete))
 
     def add_faces(self, new_faces):
         """Add the given faces to the mesh.
@@ -895,9 +844,6 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
-        # Return undo info
-        return [("pop_faces", n)]
-
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
         vertex2faces = self._vertex2faces
@@ -941,9 +887,6 @@ class BaseDynamicMesh:
                 tracker.add_vertices(positions)
         if self._debug_mode:
             self._check_internal_state()
-
-        # Return undo info
-        return [("pop_vertices", n)]
 
     def update_faces(self, face_indices, new_faces, _old=None):
         """Update the value of the given faces."""
@@ -1003,9 +946,6 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
-        # Return undo info
-        return [("update_faces", indices, old_faces)]
-
     def update_vertices(self, vertex_indices, new_positions, _old=None):
         """Update the value of the given vertices."""
 
@@ -1048,6 +988,3 @@ class BaseDynamicMesh:
                 tracker.update_vertices(indices, old_positions)
         if self._debug_mode:
             self._check_internal_state()
-
-        # Return undo info
-        return [("update_vertices", indices, old_positions)]
