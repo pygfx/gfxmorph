@@ -16,7 +16,7 @@ import json
 import numpy as np
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
-from gfxmorph import DynamicMesh
+from gfxmorph import DynamicMesh, MeshChangeTracker
 from wgpu.gui.auto import WgpuCanvas
 import observ.store
 
@@ -28,18 +28,14 @@ def add_mesh():
     vertices, faces = geo.positions.data, geo.indices.data
     vertices += np.random.normal(0, 5, size=(3,))
 
-    # undo_step = m.add_mesh(vertices, faces)
-    undo_step = []
-    undo_step += m.add_vertices(vertices)
-    undo_step += m.add_faces(faces + (len(m.vertices) - len(vertices)))
-    save_state(undo_step)
+    m.add_mesh(vertices, faces)
+    save_state()
 
     camera.show_object(scene)
     renderer.request_draw()
 
 
 def add_broken_mesh():
-    1 / 0  # also the func is broken for now ;)
     geo = smooth_sphere_geometry()
     vertices1, faces1 = geo.positions.data, geo.indices.data
     vertices1 += np.random.normal(0, 5, size=(3,))
@@ -59,14 +55,12 @@ def add_broken_mesh():
 
 
 def breakit():
-    undo_step = m.delete_faces(np.random.randint(0, len(m.faces)))
-    save_state(undo_step)
+    m.delete_faces(np.random.randint(0, len(m.faces)))
+    save_state()
 
 
 def repair():
-    1 / 0
     m.repair(True)
-
     save_state()
 
 
@@ -93,14 +87,49 @@ def repair():
 # to that?
 
 
-class MeshUndoStack:
+class MeshUndoTracker(MeshChangeTracker):
     def __init__(self):
+        self.clear()
+        self._doing = None
+
+    def _append(self, step):
+        if not self._doing:
+            self._undo.append(step)
+            self._redo.clear()
+        elif self._doing == "undo":
+            self._redo.append(step)
+        elif self._doing == "redo":
+            self._undo.append(step)
+
+    def clear(self):
         self._undo = []
         self._redo = []
 
-    def append(self, undo_step):
-        self._undo.append(undo_step)
-        self._redo = []
+    def add_faces(self, faces):
+        self._append(("pop_faces", len(faces)))
+
+    def pop_faces(self, n, old):
+        self._append(("add_faces", old))
+
+    def swap_faces(self, indices1, indices2):
+        self._append(("swap_faces", indices2, indices1))
+
+    def update_faces(self, indices, faces, old):
+        self._append(("update_faces", indices, old))
+
+    def add_vertices(self, positions):
+        self._append(("pop_vertices", len(positions)))
+
+    def pop_vertices(self, n, old):
+        self._append(("add_vertices", old))
+
+    def swap_vertices(self, indices1, indices2):
+        self._append(("swap_vertices", indices2, indices1))
+
+    def update_vertices(self, indices, positions, old):
+        self._append(("update_vertices", indices, old))
+
+    def get_version(self):
         return len(self._undo)
 
     def apply_version(self, version):
@@ -111,29 +140,63 @@ class MeshUndoStack:
 
     def undo(self):
         if self._undo:
-            undo_steps = self._undo.pop(-1)
-            undo_steps.reverse()
-            print([x[0] for x in undo_steps])
-            redo_steps = m.do(undo_steps)
-            self._redo.insert(0, redo_steps)
+            undo_step = self._undo.pop(-1)
+            self._doing = "undo"
+            m.do([undo_step])
+            self._doing = None
 
     def redo(self):
         if self._redo:
-            redo_steps = self._redo.pop(0)
-            redo_steps.reverse()
-            undo_steps = m.do(redo_steps)
-            self._undo.append(undo_steps)
+            redo_step = self._redo.pop(-1)
+            self._doing = "redo"
+            m.do([redo_step])
+            self._doing = None
 
 
-undo_stack = MeshUndoStack()
+# class MeshUndoStack:
+#     def __init__(self):
+#         self._undo = []
+#         self._redo = []
+#
+#     def append(self, undo_step):
+#         self._undo.append(undo_step)
+#         self._redo = []
+#         return len(self._undo)
+#
+#     def apply_version(self, version):
+#         while self._undo and version < len(self._undo):
+#             self.undo()
+#         while self._redo and version > len(self._undo):
+#             self.redo()
+#
+#     def undo(self):
+#         if self._undo:
+#             undo_steps = self._undo.pop(-1)
+#             undo_steps.reverse()
+#             print([x[0] for x in undo_steps])
+#             redo_steps = m.do(undo_steps)
+#             self._redo.insert(0, redo_steps)
+#
+#     def redo(self):
+#         if self._redo:
+#             redo_steps = self._redo.pop(0)
+#             redo_steps.reverse()
+#             undo_steps = m.do(redo_steps)
+#             self._undo.append(undo_steps)
 
 
-def save_state(undo_step):
-    store.set_mesh_state(undo_stack.append(undo_step))
+# undo_stack = MeshUndoStack()
+undo_tracker = MeshUndoTracker()
+
+
+def save_state():
+    store.set_mesh_state(undo_tracker.get_version())
+    # store.set_mesh_state(undo_stack.append(undo_step))
 
 
 def restore_state(state):
-    undo_stack.apply_version(state)
+    undo_tracker.apply_version(state)
+    # undo_stack.apply_version(state)
 
 
 # A Store object has undo functionality (in contrast to a normal state
@@ -173,6 +236,7 @@ m = DynamicMesh(None, None)
 # Create the geometry object, and set it up to receive updates from the DynamicMesh
 geo = DynamicMeshGeometry()
 m.track_changes(geo)
+m.track_changes(undo_tracker)
 
 # Two world objects, one for the front and one for the back (so we can clearly see holes)
 mesh1 = gfx.Mesh(

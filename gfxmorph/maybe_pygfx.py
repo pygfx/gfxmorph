@@ -10,21 +10,40 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     that gfxmorph can then use to update the GPU representation.
     """
 
-    def set_vertex_arrays(self, positions, normals, colors):
-        self.positions = gfx.Buffer(positions)
-        self.normals = gfx.Buffer(normals)
-        # self.colors = gfx.Buffer(colors)
+    def clear(self):
+        self._nfaces = 0
+        self._nverts = 0
 
-    def set_face_array(self, array):
-        self.indices = gfx.Buffer(array)
+    def add_faces(self, faces):
+        old_n = self._nfaces
+        self._nfaces += len(faces)
+        self.indices.update_range(old_n, self._nfaces)
+        self.indices.view = 0, self._nfaces
 
-    def set_n_vertices(self, n):
-        pass  # no need
+    def pop_faces(self, n, old):
+        self._nfaces -= n
+        self.indices.view = 0, self._nfaces
 
-    def set_n_faces(self, n):
-        self.indices.view = 0, n
+    def swap_faces(self, indices1, indices2):
+        self.indices.update_range(indices1.min(), indices1.max())
+        self.indices.update_range(indices2.min(), indices2.max())
 
-    def update_positions(self, indices):
+    def update_faces(self, indices, faces, old):
+        self.indices.update_range(indices.min(), indices.max())
+
+    def add_vertices(self, positions):
+        old_n = self._nverts
+        self._nverts += len(positions)
+        self.positions.update_range(old_n, self._nverts)
+
+    def pop_vertices(self, n, old):
+        self._nverts -= n
+
+    def swap_vertices(self, indices1, indices2):
+        self.positions.update_range(indices1.min(), indices1.max())
+        self.positions.update_range(indices2.min(), indices2.max())
+
+    def update_vertices(self, indices, positions, old):
         # todo: Optimize this, both here and on the pygfx side.
         # - We can update positions more fine-grained (using chunking).
         # - Consider an API where a mask is passed (e.g. positions.update_mask()),
@@ -33,11 +52,16 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         #   So if the normal-updates are a bottleneck, it could be made optional.
         self.positions.update_range(indices.min(), indices.max())
 
+    def set_vertex_arrays(self, positions, normals, colors):
+        self.positions = gfx.Buffer(positions)
+        self.normals = gfx.Buffer(normals)
+        # self.colors = gfx.Buffer(colors)
+
+    def set_face_array(self, array):
+        self.indices = gfx.Buffer(array)
+
     def update_normals(self, indices):
         self.normals.update_range(indices.min(), indices.max())
-
-    def update_faces(self, indices):
-        self.indices.update_range(indices.min(), indices.max())
 
 
 def solid_tetrahedon():

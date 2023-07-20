@@ -20,6 +20,9 @@ class MeshChangeTracker:
 
     # --- API similar to DynamicMesh
 
+    def clear(self):
+        pass
+
     def add_faces(self, faces):
         pass
 
@@ -106,7 +109,7 @@ class BaseDynamicMesh:
         self._positions = None
         self._faces = None
         # Init!
-        self.reset()
+        self.clear()
 
     @property
     def faces(self):
@@ -157,12 +160,16 @@ class BaseDynamicMesh:
 
     def _init_change_tracker(self, tracker):
         with Safecall():
+            tracker.clear()
             tracker.set_face_array(self._faces_buf)
             tracker.set_vertex_arrays(
                 self._positions_buf, self._normals_buf, self._colors_buf
             )
-            tracker.set_n_vertices(len(self._positions))
-            tracker.set_n_faces(len(self._faces))
+            if len(self._positions):
+                tracker.add_vertices(self._positions)
+                tracker.update_normals(np.arange(len(self._positions), dtype=np.int32))
+            if len(self._faces):
+                tracker.add_faces(self._faces)
 
     def do(self, do_steps):
         """Apply the given changes."""
@@ -200,10 +207,8 @@ class BaseDynamicMesh:
 
         return undo_steps
 
-    def reset(self, vertices=None, faces=None):
-        """Remove all vertices and faces and add the given ones (if any)."""
-
-        undo_info = [("reset", self._positions, self._faces)]
+    def clear(self):
+        """Empty all vertices and faces."""
 
         initial_size = 8
 
@@ -254,13 +259,19 @@ class BaseDynamicMesh:
         # is slower due to the extra indirection.
         self._vertex2faces = []  # vi -> [fi1, fi2, ..]
 
+    def reset(self, vertices=None, faces=None):
+        """Remove all vertices and faces and add the given ones (if any)."""
+
+        undo_info = [("reset", self._positions, self._faces)]
+
+        self.clear()
+
         if vertices is not None:
             self.add_vertices(vertices)
 
         if faces is not None:
             self.add_faces(faces)
 
-        # Return undo info
         return undo_info
 
     def export(self):
@@ -327,9 +338,6 @@ class BaseDynamicMesh:
         self._faces_normals = self._faces_normals_buf[:nfaces2]
         self._faces_r = self._faces_buf[:nfaces2]
         self._faces_r.flags.writeable = False
-        for tracker in self._change_trackers:
-            with Safecall():
-                tracker.set_n_faces(nfaces2)
 
     def _deallocate_faces(self, n):
         """ "Decrease the size of the faces view, discarting the n faces
@@ -358,9 +366,6 @@ class BaseDynamicMesh:
         self._faces_normals = self._faces_normals_buf[:nfaces]
         self._faces_r = self._faces_buf[:nfaces]
         self._faces_r.flags.writeable = False
-        for tracker in self._change_trackers:
-            with Safecall():
-                tracker.set_n_faces(nfaces)
 
     def _allocate_vertices(self, n):
         """Increase the vertex views to hold n free vertices at the end. If
@@ -390,9 +395,6 @@ class BaseDynamicMesh:
         self._positions = self._positions_buf[:nverts2]
         self._normals = self._normals_buf[:nverts2]
         self._colors = self._colors_buf[:nverts2]
-        for tracker in self._change_trackers:
-            with Safecall():
-                tracker.set_n_vertices(nverts2)
 
     def _deallocate_vertices(self, n):
         """Decrease the size of the vertices views, discarting the n vertices
@@ -426,9 +428,6 @@ class BaseDynamicMesh:
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
         self._colors = self._colors_buf[:nverts]
-        for tracker in self._change_trackers:
-            with Safecall():
-                tracker.set_n_vertices(nverts)
 
     def _update_face_normals(self, face_indices):
         """Update the selected face normals."""
@@ -581,7 +580,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_faces(np.concatenate([indices1, indices2]))
+                tracker.swap_faces(indices1, indices2)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -606,7 +605,7 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        original_faces = self._faces[nfaces2:].copy()
+        old_faces = self._faces[nfaces2:].copy()
 
         try:
             # Update reverse map
@@ -627,11 +626,14 @@ class BaseDynamicMesh:
 
         self._cache_depending_on_faces = {}
         self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers:
+            with Safecall():
+                tracker.pop_faces(n, old_faces)
         if self._debug_mode:
             self._check_internal_state()
 
         # Return undo info
-        return [("add_faces", original_faces)]
+        return [("add_faces", old_faces)]
 
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
@@ -724,7 +726,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_positions(np.concatenate([indices1, indices2]))
+                tracker.swap_vertices(indices1, indices2)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -749,7 +751,7 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        original_positions = self._positions[nverts2:].copy()
+        old_positions = self._positions[nverts2:].copy()
 
         try:
             # Drop unused vertices at the end
@@ -766,11 +768,14 @@ class BaseDynamicMesh:
 
         self._cache_depending_on_verts = {}
         self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers:
+            with Safecall():
+                tracker.pop_vertices(n, old_positions)
         if self._debug_mode:
             self._check_internal_state()
 
         # Return undo info
-        return [("add_vertices", original_positions)]
+        return [("add_vertices", old_positions)]
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -886,7 +891,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_faces(np.arange(n1, n1 + n))
+                tracker.add_faces(faces)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -933,7 +938,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_positions(np.arange(n1, n1 + n))
+                tracker.add_vertices(positions)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -967,7 +972,7 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        original_faces = self._faces[indices]
+        old_faces = self._faces[indices]
 
         try:
             # Update reverse map
@@ -994,12 +999,12 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_faces(indices)
+                tracker.update_faces(indices, old_faces)
         if self._debug_mode:
             self._check_internal_state()
 
         # Return undo info
-        return [("update_faces", indices, original_faces)]
+        return [("update_faces", indices, old_faces)]
 
     def update_vertices(self, vertex_indices, new_positions, _old=None):
         """Update the value of the given vertices."""
@@ -1018,7 +1023,7 @@ class BaseDynamicMesh:
 
         # --- Apply
 
-        original_positions = self._positions[indices]
+        old_positions = self._positions[indices]
 
         try:
             self._positions[indices] = positions
@@ -1040,9 +1045,9 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers:
             with Safecall():
-                tracker.update_positions(indices)
+                tracker.update_vertices(indices, old_positions)
         if self._debug_mode:
             self._check_internal_state()
 
         # Return undo info
-        return [("update_vertices", indices, original_positions)]
+        return [("update_vertices", indices, old_positions)]
