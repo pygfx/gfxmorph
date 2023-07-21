@@ -6,13 +6,26 @@ from .basedynamicmesh import MeshChangeTracker
 
 
 class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
-    """A geometry specifically for representing dynamic meshes. It provides an API
-    that gfxmorph can then use to update the GPU representation.
+    """A geometry class specifically for representing dynamic meshes.
+
+    This class also inherits from ``gfxmorph.MeshChangeTracker`` so
+    that the geometry can do precise updates to the GPU buffers when
+    the mesh is changed dynamically.
     """
 
-    def clear(self):
-        self._nfaces = 0
-        self._nverts = 0
+    def init(self, mesh):
+        self._nverts = len(mesh.vertices)
+        self._nfaces = len(mesh.faces)
+        self.new_vertices_buffer(mesh)
+        self.new_faces_buffer(mesh)
+
+    def new_vertices_buffer(self, mesh):
+        self.positions = gfx.Buffer(mesh.vertices.base)
+        self.normals = gfx.Buffer(mesh.normals.base)
+        # self.colors = gfx.Buffer(colors)
+
+    def new_faces_buffer(self, mesh):
+        self.indices = gfx.Buffer(mesh.faces.base)
 
     def add_faces(self, faces):
         old_n = self._nfaces
@@ -51,14 +64,6 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         # - If we render with flat_shading, we don't need the normals!
         #   So if the normal-updates are a bottleneck, it could be made optional.
         self.positions.update_range(indices.min(), indices.max())
-
-    def new_vertices_buffer(self, mesh):
-        self.positions = gfx.Buffer(mesh.vertices.base)
-        self.normals = gfx.Buffer(mesh.normals.base)
-        # self.colors = gfx.Buffer(colors)
-
-    def new_faces_buffer(self, mesh):
-        self.indices = gfx.Buffer(mesh.faces.base)
 
     def update_normals(self, indices):
         self.normals.update_range(indices.min(), indices.max())

@@ -4,6 +4,8 @@ import logging
 
 import numpy as np
 
+from .tracker import MeshChangeTracker
+
 
 logger = logging.getLogger("meshmorph")
 
@@ -11,62 +13,6 @@ EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atom
 
 
 # todo: test the undo mechanics in unit tests (maybe as part of test_corrupt)
-
-
-class MeshChangeTracker:
-    """A class that is notified of changes to a BaseDynamicMesh.
-
-    To use, this class must be subclassed, implementing (a subset of)
-    its methods. The instance of the subclass can then be subscribed
-    to a ``BaseDynamicMesh``object to process its changes.
-
-    Use-case for tracking mesh changes include e.g. logging, updating
-    a GPU representation of the mesh, or keeping an undo stack.
-
-    """
-
-    def __init__(self):
-        self.clear()
-
-    # API that is the same as changes to BaseDynamicMesh, except for the `old` argument
-
-    def clear(self):
-        pass
-
-    def add_faces(self, faces):
-        pass
-
-    def pop_faces(self, n, old):
-        pass
-
-    def swap_faces(self, indices1, indices2):
-        pass
-
-    def update_faces(self, indices, faces, old):
-        pass
-
-    def add_vertices(self, positions):
-        pass
-
-    def pop_vertices(self, n, old):
-        pass
-
-    def swap_vertices(self, indices1, indices2):
-        pass
-
-    def update_vertices(self, indices, positions, old):
-        pass
-
-    # Bit of additional API
-
-    def new_faces_buffer(self, mesh):
-        pass
-
-    def new_vertices_buffer(self, mesh):
-        pass
-
-    def update_normals(self, indices):
-        pass
 
 
 class Safecall:
@@ -219,20 +165,10 @@ class BaseDynamicMesh:
             self._change_trackers[id(tracker)] = tracker
             # Init the tracker state so it starts up-to-date
             with Safecall():
-                tracker.clear()
-                tracker.new_vertices_buffer(self)
-                tracker.new_faces_buffer(self)
-                if len(self._positions):
-                    tracker.add_vertices(self._positions)
-                    tracker.update_normals(
-                        np.arange(len(self._positions), dtype=np.int32)
-                    )
-                if len(self._faces):
-                    tracker.add_faces(self._faces)
+                tracker.init(self)
 
     def clear(self):
         """Clear the mesh, removing all vertices and faces."""
-        # todo: how large are the buffers? I suspect we need some min() logic in deallocate_xx
         if len(self._faces):
             self.pop_faces(len(self._faces))
         if len(self._positions):
