@@ -1,5 +1,6 @@
 import time
 
+import numpy as np
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry
 from gfxmorph import DynamicMesh
@@ -51,6 +52,8 @@ def benchmark():
             m = DynamicMesh(vertices, faces)
             t.toc("init")
 
+            t.add_data("nbytes", m.metadata["approx_mem"])
+
             t.tic()
             # m.check_edge_manifold_and_closed()
             meshfuncs.mesh_is_edge_manifold_and_closed(m.faces)
@@ -73,7 +76,24 @@ def benchmark():
             # v = m.get_volume() -> slow because it checks for manifoldness, because a volume of a nonmanifold or nonmanifold mesh means nothing.
             v = meshfuncs.mesh_get_volume(m.vertices, m.faces)
             t.toc("volume")
-            t.add_data("", v)
+
+            t.tic()
+            vertices, faces = m.export()
+            t.toc("export")
+
+            t.tic()
+            m.reset(None, None)
+            m.reset(vertices=vertices, faces=faces)
+            t.toc(f"reset")
+
+            t.tic()
+            m.delete_faces(np.arange(0, len(m.faces), 2, np.int32))
+            t.toc(f"delete 50% faces")
+
+            m.reset(vertices, None)
+            t.tic()
+            m.delete_vertices(np.arange(0, len(m.vertices), 2, np.int32))
+            t.toc(f"delete 50% vertices")
 
             t.add_data("", "")
 

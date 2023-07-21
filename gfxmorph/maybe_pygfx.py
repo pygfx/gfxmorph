@@ -6,25 +6,57 @@ from .basedynamicmesh import MeshChangeTracker
 
 
 class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
-    """A geometry specifically for representing dynamic meshes. It provides an API
-    that gfxmorph can then use to update the GPU representation.
+    """A geometry class specifically for representing dynamic meshes.
+
+    This class also inherits from ``gfxmorph.MeshChangeTracker`` so
+    that the geometry can do precise updates to the GPU buffers when
+    the mesh is changed dynamically.
     """
 
-    def set_vertex_arrays(self, positions, normals, colors):
-        self.positions = gfx.Buffer(positions)
-        self.normals = gfx.Buffer(normals)
+    def init(self, mesh):
+        self._nverts = len(mesh.vertices)
+        self._nfaces = len(mesh.faces)
+        self.new_vertices_buffer(mesh)
+        self.new_faces_buffer(mesh)
+
+    def new_vertices_buffer(self, mesh):
+        self.positions = gfx.Buffer(mesh.vertices.base)
+        self.normals = gfx.Buffer(mesh.normals.base)
         # self.colors = gfx.Buffer(colors)
 
-    def set_face_array(self, array):
-        self.indices = gfx.Buffer(array)
+    def new_faces_buffer(self, mesh):
+        self.indices = gfx.Buffer(mesh.faces.base)
 
-    def set_n_vertices(self, n):
-        pass  # no need
+    def add_faces(self, faces):
+        old_n = self._nfaces
+        self._nfaces += len(faces)
+        self.indices.update_range(old_n, self._nfaces)
+        self.indices.view = 0, self._nfaces
 
-    def set_n_faces(self, n):
-        self.indices.view = 0, n
+    def pop_faces(self, n, old):
+        self._nfaces -= n
+        self.indices.view = 0, self._nfaces
 
-    def update_positions(self, indices):
+    def swap_faces(self, indices1, indices2):
+        self.indices.update_range(indices1.min(), indices1.max())
+        self.indices.update_range(indices2.min(), indices2.max())
+
+    def update_faces(self, indices, faces, old):
+        self.indices.update_range(indices.min(), indices.max())
+
+    def add_vertices(self, positions):
+        old_n = self._nverts
+        self._nverts += len(positions)
+        self.positions.update_range(old_n, self._nverts)
+
+    def pop_vertices(self, n, old):
+        self._nverts -= n
+
+    def swap_vertices(self, indices1, indices2):
+        self.positions.update_range(indices1.min(), indices1.max())
+        self.positions.update_range(indices2.min(), indices2.max())
+
+    def update_vertices(self, indices, positions, old):
         # todo: Optimize this, both here and on the pygfx side.
         # - We can update positions more fine-grained (using chunking).
         # - Consider an API where a mask is passed (e.g. positions.update_mask()),
@@ -35,9 +67,6 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
 
     def update_normals(self, indices):
         self.normals.update_range(indices.min(), indices.max())
-
-    def update_faces(self, indices):
-        self.indices.update_range(indices.min(), indices.max())
 
 
 def solid_tetrahedon():

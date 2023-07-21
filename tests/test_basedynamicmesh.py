@@ -1,10 +1,15 @@
 import numpy as np
 from testutils import run_tests, get_sphere
-from gfxmorph.basedynamicmesh import (
+from gfxmorph import (
     BaseDynamicMesh as OriDynamicMesh,
+    MeshLogger,
     MeshChangeTracker,
 )
 import pytest
+
+
+class IntendedRuntimeError(RuntimeError):
+    pass
 
 
 class CustomChangeTracker(MeshChangeTracker):
@@ -16,54 +21,100 @@ class CustomChangeTracker(MeshChangeTracker):
     # but should not affect the mesh. This flag allows this class to produce errors
     BROKEN_TRACKER = False
 
-    def set_vertex_arrays(self, positions, normals, colors):
-        assert isinstance(positions, np.ndarray)
-        assert isinstance(normals, np.ndarray)
-        assert isinstance(colors, np.ndarray)
-        self.positions_buf1 = positions
-        self.normals_buf1 = normals
-        self.positions_buf2 = self.positions_buf1.copy()
-        self.normals_buf2 = self.normals_buf1.copy()
-        if self.BROKEN_TRACKER:
-            raise RuntimeError()
+    def init(self, mesh):
+        self.new_vertices_buffer(mesh)
+        self.new_faces_buffer(mesh)
 
-    def set_face_array(self, faces):
-        assert isinstance(faces, np.ndarray)
-        self.faces_buf1 = faces
+        nverts, nfaces = len(mesh.vertices), len(mesh.faces)
+        self.positions = self.positions_buf2[:nverts]
+        self.normals = self.normals_buf2[:nverts]
+        self.faces = self.faces_buf2[:nfaces]
+
+    def new_faces_buffer(self, mesh):
+        self.faces_buf1 = mesh.faces.base
         self.faces_buf2 = self.faces_buf1.copy()
-        if self.BROKEN_TRACKER:
-            raise RuntimeError()
 
-    def set_n_vertices(self, n):
+    def new_vertices_buffer(self, mesh):
+        self.positions_buf1 = mesh.vertices.base
+        self.positions_buf2 = self.positions_buf1.copy()
+        self.normals_buf1 = mesh.normals.base
+        self.normals_buf2 = self.normals_buf1.copy()
+
+    def add_faces(self, faces):
+        new_n = len(self.faces) + len(faces)
+        self.faces = self.faces_buf2[:new_n]
+        self.faces[-len(faces) :] = faces
+        if self.BROKEN_TRACKER:
+            raise IntendedRuntimeError()
+
+    def pop_faces(self, n, old):
         assert isinstance(n, int)
-        self.positions = self.positions_buf2[:n]
-        self.normals = self.normals_buf2[:n]
+        new_n = len(self.faces) - n
+        self.faces = self.faces_buf2[:new_n]
         if self.BROKEN_TRACKER:
-            raise RuntimeError()
+            raise IntendedRuntimeError()
 
-    def set_n_faces(self, n):
-        assert isinstance(n, int)
-        self.faces = self.faces_buf2[:n]
-        if self.BROKEN_TRACKER:
-            raise RuntimeError()
+    def swap_faces(self, indices1, indices2):
+        self.faces[indices1], self.faces[indices2] = (
+            self.faces[indices2],
+            self.faces[indices1],
+        )
 
-    def update_positions(self, indices):
+    def update_faces(self, indices, faces, old):
         assert isinstance(indices, np.ndarray)
-        self.positions_buf2[indices] = self.positions_buf1[indices]
+        self.faces[indices] = faces
         if self.BROKEN_TRACKER:
-            raise RuntimeError()
+            raise IntendedRuntimeError()
+
+    def add_vertices(self, positions):
+        old_n = len(self.positions)
+        new_n = old_n + len(positions)
+        self.positions = self.positions_buf2[:new_n]
+        self.normals = self.normals_buf2[:new_n]
+        self.positions[old_n:] = positions
+        self.normals[old_n:] = self.normals_buf1[old_n:new_n]
+        if self.BROKEN_TRACKER:
+            raise IntendedRuntimeError()
+
+    def pop_vertices(self, n, old):
+        assert isinstance(n, int)
+        new_len = len(self.positions) - n
+        self.positions = self.positions_buf2[:new_len]
+        self.normals = self.normals_buf2[:new_len]
+        if self.BROKEN_TRACKER:
+            raise IntendedRuntimeError()
+
+    def swap_vertices(self, indices1, indices2):
+        self.positions[indices1], self.positions[indices2] = (
+            self.positions[indices2],
+            self.positions[indices1],
+        )
+        self.normals[indices1], self.normals[indices2] = (
+            self.normals[indices2],
+            self.normals[indices1],
+        )
+
+    def update_vertices(self, indices, positions, old):
+        assert isinstance(indices, np.ndarray)
+        self.positions[indices] = positions
+        if self.BROKEN_TRACKER:
+            raise IntendedRuntimeError()
 
     def update_normals(self, indices):
         assert isinstance(indices, np.ndarray)
-        self.normals_buf2[indices] = self.normals_buf1[indices]
+        self.normals[indices] = self.normals_buf1[indices]
         if self.BROKEN_TRACKER:
-            raise RuntimeError()
+            raise IntendedRuntimeError()
 
-    def update_faces(self, indices):
-        assert isinstance(indices, np.ndarray)
-        self.faces_buf2[indices] = self.faces_buf1[indices]
-        if self.BROKEN_TRACKER:
-            raise RuntimeError()
+
+class ReplicatingMesh(OriDynamicMesh, MeshChangeTracker):
+    """Since the API's of the change tracker matches that of the core
+    changes-api of the BaseDynamicMesh, this is all you need to
+    replicate a mesh. That in itself is a silly arguement (because when
+    would you want to replicate a mesh?) but it does look elegant.
+    """
+
+    pass
 
 
 class DynamicMesh(OriDynamicMesh):
@@ -75,15 +126,29 @@ class DynamicMesh(OriDynamicMesh):
 
     def __init__(self):
         super().__init__()
-        self.the_tracker = CustomChangeTracker()
-        self.track_changes(self.the_tracker)
+        # Add a simple replicating tracker, to test that the overlapping API does proper replications
+        self.tracker1 = ReplicatingMesh()
+        self.track_changes(self.tracker1)
+
+        # A custom change tracker that replicates the data via the buffers.
+        self.tracker2 = CustomChangeTracker()
+        self.track_changes(self.tracker2)
+
+        # Installing the abstract class does nothing, but this way we
+        # check that the API of the base class is complete and compatible.
+        self.tracker3 = MeshChangeTracker()
+        self.track_changes(self.tracker3)
 
     def _check_internal_state(self):
         super()._check_internal_state()
-        if not self.the_tracker.BROKEN_TRACKER:
-            assert np.all(self._faces == self.the_tracker.faces)
-            assert np.all(self._positions == self.the_tracker.positions)
-            assert np.all(self._normals == self.the_tracker.normals)
+        if self.tracker1:
+            assert np.all(self._faces == self.tracker1.faces)
+            assert np.all(self._positions == self.tracker1.vertices)
+            assert np.all(self._normals == self.tracker1.normals)
+        if not self.tracker2.BROKEN_TRACKER:
+            assert np.all(self._faces == self.tracker2.faces)
+            assert np.all(self._positions == self.tracker2.positions)
+            assert np.all(self._normals == self.tracker2.normals)
 
 
 def check_mesh(m, nverts, nfaces):
@@ -124,12 +189,11 @@ def test_dynamicmesh_broken_tracker():
     m = DynamicMesh()
 
     # Make the tracker raise errors
-    m.the_tracker.BROKEN_TRACKER = True
+    m.tracker2.BROKEN_TRACKER = True
 
-    # Also add another tracker based on the abstract class.
-    # Just to cover calling its methods in the tests.
-    dummy_tracker = MeshChangeTracker()
-    m.track_changes(dummy_tracker)
+    # And why not add a logger too!
+    logger = MeshLogger(print)
+    m.track_changes(logger)
 
     check_mesh(m, 0, 0)
 
@@ -143,7 +207,17 @@ def test_dynamicmesh_broken_tracker():
     m.add_vertices(vertices)
     m.add_faces(faces)
 
+    # Update some verts and faces
+    m.update_vertices([0, 1], m.vertices[[0, 1]] * 1.1)
+    m.update_faces([10, 11], m.faces[[0, 1]])
+
     check_mesh(m, len(vertices) * 2, len(faces) * 2)
+
+    # Remove the second mesh again
+    m.delete_faces(np.arange(len(faces), 2 * len(faces)))
+    m.delete_vertices(np.arange(len(vertices), 2 * len(vertices)))
+
+    check_mesh(m, len(vertices), len(faces))
 
 
 def test_dynamicmesh_tracker_mechanics():
@@ -157,9 +231,17 @@ def test_dynamicmesh_tracker_mechanics():
     class Tracker(MeshChangeTracker):
         def __init__(self):
             self.count = 0
+            self.nvertices = 0
 
-        def update_positions(self, indices):
+        def init(self, mesh):
+            self.nvertices = len(mesh.vertices)
+
+        def add_vertices(self, indices):
             self.count += 1
+            self.nvertices += len(indices)
+
+        def pop_vertices(self, n):
+            self.nvertices -= n
 
     t1 = Tracker()
     t2 = Tracker()
@@ -167,39 +249,50 @@ def test_dynamicmesh_tracker_mechanics():
     # Add t1
     m.track_changes(t1)
 
-    m.add_vertices([(1, 1, 1), (1, 1, 1)])
-    assert t1.count == 1
+    m.add_vertices([(1, 1, 1)])
+    m.add_vertices([(1, 1, 1)])
+    assert t1.count == 2
     assert t2.count == 0
+    assert t1.nvertices == 2
+    assert t2.nvertices == 0
 
     # Also add t2
     m.track_changes(t2)
 
     m.add_vertices([(2, 2, 2), (2, 2, 2)])
-    assert t1.count == 2
+    assert t1.count == 3
     assert t2.count == 1
+    assert t1.nvertices == 4
+    assert t2.nvertices == 4
 
     # Remove t1, so only tracking with t2
     m.track_changes(t1, remove=True)
 
     m.add_vertices([(3, 3, 3), (3, 3, 3)])
-    assert t1.count == 2
+    assert t1.count == 3
     assert t2.count == 2
+    assert t1.nvertices == 4
+    assert t2.nvertices == 6
 
     # Adding t1, twice (should not track twice as hard)
     m.track_changes(t1)
     m.track_changes(t1)
 
     m.add_vertices([(4, 4, 4), (4, 4, 4)])
-    assert t1.count == 3
+    assert t1.count == 4
     assert t2.count == 3
+    assert t1.nvertices == 8
+    assert t2.nvertices == 8
 
     # Remove both trackers
     m.track_changes(t1, remove=True)
     m.track_changes(t2, remove=True)
 
     m.add_vertices([(5, 5, 5), (5, 5, 5)])
-    assert t1.count == 3
+    assert t1.count == 4
     assert t2.count == 3
+    assert t1.nvertices == 8
+    assert t2.nvertices == 8
 
 
 def test_dynamicmesh_reset():
@@ -221,7 +314,7 @@ def test_dynamicmesh_reset():
     faces2 = m.faces.copy()
 
     # Clear
-    m.reset()
+    m.clear()
     check_mesh(m, 0, 0)
 
     # Restore snapshot
@@ -238,8 +331,10 @@ def test_dynamicmesh_readonly():
 
     with pytest.raises(ValueError):
         m.faces[0] = (0, 0, 0)
-    # with pytest.raises(ValueError):
-    #     m.vertices[0] = (0, 0, 0)
+    with pytest.raises(ValueError):
+        m.vertices[0] = (0, 0, 0)
+    with pytest.raises(ValueError):
+        m.normals[0] = (0, 0, 0)
 
 
 def test_dynamicmesh_verts_before_faces():
@@ -278,8 +373,8 @@ def test_dynamicmesh_add_and_delete_faces():
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
 
     # Fail add
-    with pytest.raises(TypeError):
-        m.add_faces([1, 2, 3])  # Must be Nx3
+    with pytest.raises(ValueError):
+        m.add_faces([1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
         m.add_faces([(0, -1, 2)])  # Out of bounds
     with pytest.raises(ValueError):
@@ -298,6 +393,20 @@ def test_dynamicmesh_add_and_delete_faces():
         m.delete_faces([])  # Cannot be empty
     with pytest.raises(ValueError):
         m.delete_faces(np.array([], np.int32))  # Cannot be empty
+
+    # Fail pop
+    with pytest.raises(ValueError):
+        m.pop_faces(-1)  # Must be positive
+    with pytest.raises(ValueError):
+        m.pop_faces(0)  # and nonzero
+    with pytest.raises(ValueError):
+        m.pop_faces(999)  # and within bounds
+
+    # Fail swap
+    with pytest.raises(ValueError):
+        m.swap_faces([0, 1], [2])  # Unequal lengths
+    with pytest.raises(ValueError):
+        m.swap_faces([0], [1, 2])  # Unequal lengths
 
     # Should still be the same (or atomicity would be broken)
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
@@ -409,8 +518,8 @@ def test_dynamicmesh_add_and_delete_verts():
     assert [x[0] for x in m.vertices] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     # Fail add
-    with pytest.raises(TypeError):
-        m.add_vertices([1, 2, 3])  # Must be Nx3
+    with pytest.raises(ValueError):
+        m.add_vertices([1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
         m.add_vertices(np.zeros((0, 3), np.float32))  # Cannot add zero verts
 
@@ -425,6 +534,20 @@ def test_dynamicmesh_add_and_delete_verts():
         m.delete_vertices([])  # Cannot be empty
     with pytest.raises(ValueError):
         m.delete_vertices(np.array([], np.float32))  # Cannot be empty
+
+    # Fail pop
+    with pytest.raises(ValueError):
+        m.pop_vertices(-1)  # Must be positive
+    with pytest.raises(ValueError):
+        m.pop_vertices(0)  # and nonzero
+    with pytest.raises(ValueError):
+        m.pop_vertices(999)  # and within bounds
+
+    # Fail swap
+    with pytest.raises(ValueError):
+        m.swap_vertices([1, 2, 3], [4, 5])  # Unequal lengths
+    with pytest.raises(ValueError):
+        m.swap_vertices([1, 2], [4, 5, 6])  # Unequal lengths
 
     # Should still be the same (or atomicity would be broken)
     assert [x[0] for x in m.vertices] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

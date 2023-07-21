@@ -1,6 +1,6 @@
-from .basedynamicmesh import BaseDynamicMesh, MeshChangeTracker  # noqa: F401
+from .basedynamicmesh import BaseDynamicMesh  # noqa: F401
 from .mesh import DynamicMesh  # noqa: F401
-
+from .tracker import MeshChangeTracker, MeshLogger, MeshUndoTracker  # noqa: F401
 from . import meshfuncs  # noqa: F401
 
 
