@@ -215,7 +215,11 @@ class MeshUndoTracker(MeshChangeTracker):
             self._doing = None
 
     def undo(self, dynamic_mesh):
-        """Undo the last change."""
+        """Undo the last change.
+
+        This is more of an example, because in practice one "step" from
+        the application point of view likely consists of multiple raw steps.
+        """
         self.apply_version(dynamic_mesh, self.get_version() - 1)
 
     def redo(self, dynamic_mesh):

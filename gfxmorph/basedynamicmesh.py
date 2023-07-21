@@ -510,6 +510,7 @@ class BaseDynamicMesh:
 
         # --- Prepare / checks
 
+        n = int(n)
         if n <= 0:
             raise ValueError("Number of faces to pop must be larger than zero.")
         if n > len(self._faces):
@@ -650,6 +651,7 @@ class BaseDynamicMesh:
 
         # --- Prepare / checks
 
+        n = int(n)
         if n <= 0:
             raise ValueError("Number of vertices to pop must be larger than zero.")
         if n > len(self._positions):
@@ -750,13 +752,7 @@ class BaseDynamicMesh:
         # --- Prepare / checks
 
         # Check incoming array
-        faces = np.asarray(new_faces, np.int32)
-        if not (
-            isinstance(faces, np.ndarray)
-            and faces.ndim == 2
-            and faces.shape[1] == self._verts_per_face
-        ):
-            raise TypeError("Faces must be a Nx3 array")
+        faces = np.asarray(new_faces, np.int32).reshape(-1, self._verts_per_face)
         # It's fine for the mesh to have zero faces, but it's likely
         # an error if the user calls this with an empty array.
         if len(faces) == 0:
@@ -806,13 +802,7 @@ class BaseDynamicMesh:
         # --- Prepare / checks
 
         # Check incoming array
-        positions = np.asarray(new_positions, np.float32)
-        if not (
-            isinstance(positions, np.ndarray)
-            and positions.ndim == 2
-            and positions.shape[1] == 3
-        ):
-            raise TypeError("Vertices must be a Nx3 array")
+        positions = np.asarray(new_positions, np.float32).reshape(-1, 3)
         if len(positions) == 0:
             raise ValueError("Cannot add zero vertices.")
 
@@ -823,7 +813,7 @@ class BaseDynamicMesh:
 
         try:
             self._allocate_vertices(n)
-            self._positions[n1:] = new_positions
+            self._positions[n1:] = positions
             self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
 
             # Update reverse map
@@ -897,7 +887,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.update_faces(indices, new_faces, old_faces)
+                tracker.update_faces(indices, faces, old_faces)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -911,7 +901,7 @@ class BaseDynamicMesh:
         indices = self._get_indices(
             vertex_indices, len(self._positions), "vertex indices to update"
         )
-        positions = np.asarray(new_positions, np.int32).reshape(-1, 3)
+        positions = np.asarray(new_positions, np.float32).reshape(-1, 3)
 
         if len(indices) != len(positions):
             raise ValueError("Indices and positions to update have different lengths.")
@@ -940,6 +930,6 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.update_vertices(indices, new_positions, old_positions)
+                tracker.update_vertices(indices, positions, old_positions)
         if self._debug_mode:
             self._check_internal_state()
