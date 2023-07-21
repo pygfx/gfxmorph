@@ -1,7 +1,8 @@
 import numpy as np
 from testutils import run_tests, get_sphere
-from gfxmorph.basedynamicmesh import (
+from gfxmorph import (
     BaseDynamicMesh as OriDynamicMesh,
+    MeshLogger,
     MeshChangeTracker,
 )
 import pytest
@@ -16,14 +17,14 @@ class CustomChangeTracker(MeshChangeTracker):
     # but should not affect the mesh. This flag allows this class to produce errors
     BROKEN_TRACKER = False
 
-    def clear(self):
-        self.faces_buf1 = None
-        self.positions_buf1 = None
-        self.normals_buf1 = None
+    def init(self, mesh):
+        self.new_vertices_buffer(mesh)
+        self.new_faces_buffer(mesh)
 
-        self.faces = np.zeros((0, 3), np.int32)
-        self.positions = np.zeros((0, 3), np.float32)
-        self.normals = np.zeros((0, 3), np.float32)
+        nverts, nfaces = len(mesh.vertices), len(mesh.faces)
+        self.positions = self.positions_buf2[:nverts]
+        self.normals = self.normals_buf2[:nverts]
+        self.faces = self.faces_buf2[:nfaces]
 
     def new_faces_buffer(self, mesh):
         self.faces_buf1 = mesh.faces.base
@@ -102,7 +103,7 @@ class CustomChangeTracker(MeshChangeTracker):
             raise RuntimeError()
 
 
-class ChangeTrackerActuallyAMesh(OriDynamicMesh, MeshChangeTracker):
+class ReplicatingMesh(OriDynamicMesh, MeshChangeTracker):
     """Since the API's of the change tracker matches that of the core
     changes-api of the BaseDynamicMesh, this is all you need to
     replicate a mesh. That in itself is a silly arguement (because when
@@ -122,7 +123,7 @@ class DynamicMesh(OriDynamicMesh):
     def __init__(self):
         super().__init__()
         self.tracker1 = CustomChangeTracker()
-        self.tracker2 = ChangeTrackerActuallyAMesh()
+        self.tracker2 = ReplicatingMesh()
         self.track_changes(self.tracker1)
         self.track_changes(self.tracker2)
 
@@ -183,6 +184,10 @@ def test_dynamicmesh_broken_tracker():
     dummy_tracker = MeshChangeTracker()
     m.track_changes(dummy_tracker)
 
+    # And why not add a logger too!
+    logger = MeshLogger(print)
+    m.track_changes(logger)
+
     check_mesh(m, 0, 0)
 
     # Add data
@@ -207,9 +212,12 @@ def test_dynamicmesh_tracker_mechanics():
         m.track_changes(list())
 
     class Tracker(MeshChangeTracker):
-        def clear(self):
+        def __init__(self):
             self.count = 0
             self.nvertices = 0
+
+        def init(self, mesh):
+            self.nvertices = len(mesh.vertices)
 
         def add_vertices(self, indices):
             self.count += 1
@@ -236,7 +244,7 @@ def test_dynamicmesh_tracker_mechanics():
 
     m.add_vertices([(2, 2, 2), (2, 2, 2)])
     assert t1.count == 3
-    assert t2.count == 2
+    assert t2.count == 1
     assert t1.nvertices == 4
     assert t2.nvertices == 4
 
@@ -245,7 +253,7 @@ def test_dynamicmesh_tracker_mechanics():
 
     m.add_vertices([(3, 3, 3), (3, 3, 3)])
     assert t1.count == 3
-    assert t2.count == 3
+    assert t2.count == 2
     assert t1.nvertices == 4
     assert t2.nvertices == 6
 
@@ -254,8 +262,8 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t1)
 
     m.add_vertices([(4, 4, 4), (4, 4, 4)])
-    assert t1.count == 2
-    assert t2.count == 4
+    assert t1.count == 4
+    assert t2.count == 3
     assert t1.nvertices == 8
     assert t2.nvertices == 8
 
@@ -264,8 +272,8 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t2, remove=True)
 
     m.add_vertices([(5, 5, 5), (5, 5, 5)])
-    assert t1.count == 2
-    assert t2.count == 4
+    assert t1.count == 4
+    assert t2.count == 3
     assert t1.nvertices == 8
     assert t2.nvertices == 8
 
