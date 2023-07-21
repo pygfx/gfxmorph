@@ -82,14 +82,10 @@ class BaseDynamicMesh:
         # full buffer does not accidentally use invalid vertex positions.
         self._positions_buf.fill(np.nan)
 
-        # Create faces array views. The internals operate on the ._faces
-        # array. We publicly expose the readonly ._faces_r array, because
-        # any changes to it can corrupt the mesh (e.g. use nonexisting
-        # vertices).
+        # Create faces array views. The internals operate on the ._faces array,
+        # because the public .faces is readonly
         self._faces = self._faces_buf[:0]
         self._faces_normals = self._faces_normals_buf[:0]
-        self._faces_r = self._faces_buf[:0]
-        self._faces_r.flags.writeable = False
 
         # The vertex array views. Not much harm can be done to these.
         self._positions = self._positions_buf[:0]
@@ -118,7 +114,9 @@ class BaseDynamicMesh:
         may change as data is added and deleted, including faces being
         moved arround to fill holes left by deleted faces.
         """
-        return self._faces_r
+        v = self._faces.view()
+        v.flags.writeable = False
+        return v
 
     @property
     def vertices(self):
@@ -129,12 +127,12 @@ class BaseDynamicMesh:
         arround to fill holes left by deleted vertices.
         """
         # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
-        # todo: readonly
-        return self._positions
+        v = self._positions.view()
+        v.flags.writeable = False
+        return v
 
     @property
     def normals(self):
-        # todo: Is it fast enough to just do this instead of managing a readonly array?
         v = self._normals.view()
         v.flags.writeable = False
         return v
@@ -242,8 +240,6 @@ class BaseDynamicMesh:
         # Reset views
         self._faces = self._faces_buf[:nfaces2]
         self._faces_normals = self._faces_normals_buf[:nfaces2]
-        self._faces_r = self._faces_buf[:nfaces2]
-        self._faces_r.flags.writeable = False
         # Notify
         if new_buffers:
             for tracker in self._change_trackers.values():
@@ -273,8 +269,6 @@ class BaseDynamicMesh:
         # Reset views
         self._faces = self._faces_buf[:nfaces]
         self._faces_normals = self._faces_normals_buf[:nfaces]
-        self._faces_r = self._faces_buf[:nfaces]
-        self._faces_r.flags.writeable = False
         # Notify
         if new_buffers:
             for tracker in self._change_trackers.values():

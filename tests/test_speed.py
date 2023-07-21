@@ -82,7 +82,7 @@ def benchmark():
             t.toc("export")
 
             t.tic()
-            m.reset()
+            m.reset(None, None)
             m.reset(vertices=vertices, faces=faces)
             t.toc(f"reset")
 
