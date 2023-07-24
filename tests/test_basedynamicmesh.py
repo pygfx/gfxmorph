@@ -556,9 +556,11 @@ def test_dynamicmesh_add_and_delete_verts():
 
     # Cannot delete vertex that is in use
     with pytest.raises(ValueError):
-        m.delete_vertices([0])  # Out of bounds
+        m.delete_vertices([0])
     with pytest.raises(ValueError):
-        m.delete_vertices([8])  # Out of bounds
+        m.delete_vertices([8])
+    with pytest.raises(ValueError):
+        m.pop_vertices(3)
 
     m.delete_faces([0, 1, 2])
 

@@ -461,7 +461,10 @@ class BaseDynamicMesh:
         indices2 = list(to_maybe_move - to_just_drop)
         assert len(indices1) == len(indices2), "Internal error"
 
-        # Check that none of the vertices are in use
+        # Check that none of the vertices are in use. Note that this
+        # check is done in pop_vertices, but we also perform it here
+        # to avoid swapping faces when the test fails (keep it atomic).
+        # The overhead for doing the test twice is not that bad.
         if any(len(vertex2faces[vi]) > 0 for vi in to_delete):
             raise ValueError("Vertex to delete is in use.")
 
@@ -749,6 +752,10 @@ class BaseDynamicMesh:
 
         nverts1 = len(self._positions)
         nverts2 = nverts1 - n
+
+        # Check that none of the vertices are in use.
+        if any(len(vertex2faces[vi]) > 0 for vi in range(nverts2, nverts1)):
+            raise ValueError("Vertex to delete is in use.")
 
         # --- Apply
 
