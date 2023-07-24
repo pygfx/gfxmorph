@@ -461,7 +461,10 @@ class BaseDynamicMesh:
         indices2 = list(to_maybe_move - to_just_drop)
         assert len(indices1) == len(indices2), "Internal error"
 
-        # Check that none of the vertices are in use
+        # Check that none of the vertices are in use. Note that this
+        # check is done in pop_vertices, but we also perform it here
+        # to avoid swapping faces when the test fails (keep it atomic).
+        # The overhead for doing the test twice is not that bad.
         if any(len(vertex2faces[vi]) > 0 for vi in to_delete):
             raise ValueError("Vertex to delete is in use.")
 
@@ -472,7 +475,7 @@ class BaseDynamicMesh:
             self.swap_vertices(indices1, indices2)
 
         # Pop from the end
-        self.pop_vertices(len(to_delete), _check_in_use=False)
+        self.pop_vertices(len(to_delete))
 
     # %% The core API
 
@@ -733,7 +736,7 @@ class BaseDynamicMesh:
                 tracker.add_vertices(positions)
         self._after_change()
 
-    def pop_vertices(self, n, _old=None, *, _check_in_use=True):
+    def pop_vertices(self, n, _old=None):
         """Remove the last n vertices from the mesh."""
         vertex2faces = self._vertex2faces
 
@@ -751,10 +754,8 @@ class BaseDynamicMesh:
         nverts2 = nverts1 - n
 
         # Check that none of the vertices are in use.
-        # This step can be skipped if we already checked it (in delete_vertices).
-        if _check_in_use:
-            if any(len(vertex2faces[vi]) > 0 for vi in range(nverts2, nverts1)):
-                raise ValueError("Vertex to delete is in use.")
+        if any(len(vertex2faces[vi]) > 0 for vi in range(nverts2, nverts1)):
+            raise ValueError("Vertex to delete is in use.")
 
         # --- Apply
 
