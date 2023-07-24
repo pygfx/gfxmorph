@@ -1,38 +1,12 @@
 import weakref
-import traceback
-import logging
 
 import numpy as np
 
 from .tracker import MeshChangeTracker
+from .utils import logger, Safecall, check_indices, as_immutable_array
 
-
-logger = logging.getLogger("meshmorph")
 
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
-
-
-# todo: test the undo mechanics in unit tests (maybe as part of test_corrupt)
-
-
-class Safecall:
-    """Context manager for doing calls that should not raise. If an
-    exception is raised, it is caught, logged, and the context exits
-    normally.
-    """
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_val:
-            lines = traceback.format_exception(exc_type, exc_val, exc_tb)
-            msg = "Exception in update callback:\n" + "".join(lines)
-            logger.error(msg)
-        return True  # Yes, we handled the exception
-
-
-# todo: The order of methods on this class can be better. Let's fix that in a separate pr.
 
 
 class BaseDynamicMesh:
@@ -57,7 +31,7 @@ class BaseDynamicMesh:
 
     def __init__(self):
         # Caches that subclasses can use to cache stuff. When the
-        # vertices/faces change, the respective caches are cleared.
+        # positions/faces change, the respective caches are cleared.
         self._cache_depending_on_verts = {}
         self._cache_depending_on_faces = {}
         self._cache_depending_on_verts_and_faces = {}
@@ -114,28 +88,23 @@ class BaseDynamicMesh:
         may change as data is added and deleted, including faces being
         moved arround to fill holes left by deleted faces.
         """
-        v = self._faces.view()
-        v.flags.writeable = False
-        return v
+        return as_immutable_array(self._faces)
 
     @property
-    def vertices(self):
-        """The vertices of the mesh.
+    def positions(self):
+        """The vertex positions of the mesh.
 
-        This is a C-contiguous ndarray. Note that the array may change
-        as data is added and deleted, including vertices being moved
-        arround to fill holes left by deleted vertices.
+        See note on ``.faces`` for details.
         """
-        # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
-        v = self._positions.view()
-        v.flags.writeable = False
-        return v
+        return as_immutable_array(self._positions)
 
     @property
     def normals(self):
-        v = self._normals.view()
-        v.flags.writeable = False
-        return v
+        """The vertex normals of the mesh.
+
+        See note on ``.faces`` for details.
+        """
+        return as_immutable_array(self._normals)
 
     @property
     def vertex2faces(self):
@@ -150,11 +119,11 @@ class BaseDynamicMesh:
         """
         return self._vertex2faces
 
-    # def _register_tracker(self, tracker, *, remove=False):
     def track_changes(self, tracker, *, remove=False):
-        """The given object is notified of updates of this mesh, e.g.
-        to maintain a representation of the mesh. If ``remove`` is True,
-        the tracker is removed instead.
+        """Track changes using a MeshChangeTracker object.
+
+        The given object is notified of updates of this mesh. If
+        ``remove`` is True, the tracker is removed instead.
         """
         if not isinstance(tracker, MeshChangeTracker):
             raise TypeError("Expected a MeshChangeTracker subclass.")
@@ -165,28 +134,13 @@ class BaseDynamicMesh:
             with Safecall():
                 tracker.init(self)
 
-    def clear(self):
-        """Clear the mesh, removing all vertices and faces."""
-        if len(self._faces):
-            self.pop_faces(len(self._faces))
-        if len(self._positions):
-            self.pop_vertices(len(self._positions))
-
-    def reset(self, vertices, faces):
-        """Reset the vertices and faces, e.g. from an export."""
-        self.clear()
-        if vertices is not None:
-            self.add_vertices(vertices)
-        if faces is not None:
-            self.add_faces(faces)
-
     def export(self):
-        """Get a copy of the array of vertices and faces.
+        """Get a copy of the array of vertex-positions and faces.
 
         Note that the arrays are copied because the originals are
         modified in place when e.g. faces are removed or updated.
         """
-        return self.vertices.copy(), self.faces.copy()
+        return self.positions.copy(), self.faces.copy()
 
     def _check_internal_state(self):
         """Method to validate the integrity of the internal state. In
@@ -200,16 +154,16 @@ class BaseDynamicMesh:
         # make the number of unused vertices grow, so maybe we'll want
         # some sort of check for it at some point.
 
-        vertices = self._positions
+        positions = self._positions
         faces = self._faces
         if len(faces) == 0:
             return
         # Check that faces match a vertex
         assert faces.min() >= 0
-        assert faces.max() < len(vertices)
+        assert faces.max() < len(positions)
 
         # Build vertex2faces
-        vertex2faces = [[] for _ in range(len(vertices))]
+        vertex2faces = [[] for _ in range(len(positions))]
         for fi in range(len(faces)):
             face = faces[fi]
             vertex2faces[face[0]].append(fi)
@@ -219,6 +173,63 @@ class BaseDynamicMesh:
         assert len(vertex2faces) == len(self._vertex2faces)
         for face1, face2 in zip(vertex2faces, self._vertex2faces):
             assert sorted(face1) == sorted(face2)
+
+    # %% Manage normals
+
+    def _update_face_normals(self, face_indices):
+        """Update the selected face normals."""
+        face_indices = np.asarray(face_indices, np.int32)
+        faces = self._faces[face_indices]
+        positions = self._positions
+
+        r1 = positions[faces[:, 0], :]
+        r2 = positions[faces[:, 1], :]
+        r3 = positions[faces[:, 2], :]
+        face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
+        # faces_areas = 0.5 * np.linalg.norm(face_normals, axis=1)
+
+        self._faces_normals[face_indices] = face_normals
+
+        # The thing with vertex normals is that they depend on all
+        # incident faces, so doing a partial update is tricky.
+        # * We could first undo the contribution of the selected faces. E.g.
+        #   using a list of dicts: vi -> fi -> normals. Likely slow.
+        # * Or we first select the vertex_indices (by flattening faces), and use
+        #   vertex2faces to come up with a slightly larger set of face_indices,
+        #   which we then use to update the normals for the vertex_indices (and more)
+        #   and then only update vertex_indices. Also likely slow.
+        # * Only update the face normals and vertex normals of connected components.
+        # * Or we just update all vertex normals, but notify trackers
+        #   with the indices of vertices who's normal actually changed.
+        # * Note: we could implement some form of lazy computation for the
+        #   normals, or an option to turn all this off if no normals are needed.
+        self._update_vertex_normals()
+
+        # Get indices of vertices who's normal changed
+        vertex_mask = np.zeros((len(self._positions),), bool)
+        vertex_mask[faces.flatten()] = True
+        vertex_indices = np.where(vertex_mask)[0]
+
+        # Pass on the update
+        for tracker in self._change_trackers.values():
+            with Safecall():
+                tracker.update_normals(vertex_indices)
+
+    def _update_vertex_normals(self):
+        """Update all vertex normals."""
+        vertex_normals = self._normals
+        vertex_normals.fill(0.0)
+        for i in range(3):
+            np.add.at(vertex_normals, self._faces[:, i], self._faces_normals)
+
+        norms = np.linalg.norm(vertex_normals, axis=1)
+
+        (zeros,) = np.where(norms == 0)
+        norms[zeros] = 1.0  # prevent divide-by-zero
+        vertex_normals /= norms[:, np.newaxis]
+        vertex_normals[zeros] = 0.0
+
+    # %% Allocation and de-allocation of the buffers
 
     def _allocate_faces(self, n):
         """Increase the size of the faces view to hold n free faces at
@@ -341,209 +352,22 @@ class BaseDynamicMesh:
                 with Safecall():
                     tracker.new_vertices_buffer(self)
 
-    def _update_face_normals(self, face_indices):
-        """Update the selected face normals."""
-        face_indices = np.asarray(face_indices, np.int32)
-        faces = self._faces[face_indices]
-        positions = self._positions
+    # %% Convenience methods to modify the mesh
 
-        r1 = positions[faces[:, 0], :]
-        r2 = positions[faces[:, 1], :]
-        r3 = positions[faces[:, 2], :]
-        face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
-        # faces_areas = 0.5 * np.linalg.norm(face_normals, axis=1)
+    def clear(self):
+        """Clear the mesh, removing all vertices and faces."""
+        if len(self._faces):
+            self.pop_faces(len(self._faces))
+        if len(self._positions):
+            self.pop_vertices(len(self._positions))
 
-        self._faces_normals[face_indices] = face_normals
-
-        # The thing with vertex normals is that they depend on all
-        # incident faces, so doing a partial update is tricky.
-        # * We could first undo the contribution of the selected faces. E.g.
-        #   using a list of dicts: vi -> fi -> normals. Likely slow.
-        # * Or we first select the vertex_indices (by flattening faces), and use
-        #   vertex2faces to come up with a slightly larger set of face_indices,
-        #   which we then use to update the normals for the vertex_indices (and more)
-        #   and then only update vertex_indices. Also likely slow.
-        # * Only update the face normals and vertex normals of connected components.
-        # * Or we just update all vertex normals, but notify trackers
-        #   with the indices of vertices who's normal actually changed.
-        # * Note: we could implement some form of lazy computation for the
-        #   normals, or an option to turn all this off if no normals are needed.
-        self._update_vertex_normals()
-
-        # Get indices of vertices who's normal changed
-        vertex_mask = np.zeros((len(self._positions),), bool)
-        vertex_mask[faces.flatten()] = True
-        vertex_indices = np.where(vertex_mask)[0]
-
-        # Pass on the update
-        for tracker in self._change_trackers.values():
-            with Safecall():
-                tracker.update_normals(vertex_indices)
-
-    def _update_vertex_normals(self):
-        """Update all vertex normals."""
-        vertex_normals = self._normals
-        vertex_normals.fill(0.0)
-        for i in range(3):
-            np.add.at(vertex_normals, self._faces[:, i], self._faces_normals)
-
-        norms = np.linalg.norm(vertex_normals, axis=1)
-
-        (zeros,) = np.where(norms == 0)
-        norms[zeros] = 1.0  # prevent divide-by-zero
-        vertex_normals /= norms[:, np.newaxis]
-        vertex_normals[zeros] = 0.0
-
-    def _get_indices(self, indices, n, what_for):
-        """Convenience function used by methods that accept an index array."""
-        result = None
-        typ = type(indices).__name__
-        if isinstance(indices, int):
-            result = [indices]
-        elif isinstance(indices, list):
-            result = indices
-        elif isinstance(indices, np.ndarray):
-            typ = (
-                "ndarray:"
-                + "x".join(str(x) for x in indices.shape)
-                + "x"
-                + indices.dtype.name
-            )
-            if indices.size == 0:
-                result = []
-            elif indices.ndim == 1 and indices.dtype.kind == "i":
-                result = indices
-
-        if result is None:
-            raise TypeError(
-                f"The {what_for} must be given as int, list, or 1D int array, not {typ}."
-            )
-        result = np.asarray(result, np.int32)
-        if len(result) == 0:
-            raise ValueError(f"The {what_for} must not be empty.")
-        elif result.min() < 0:
-            raise ValueError("Negative indices not allowed.")
-        elif result.max() >= n:
-            raise ValueError("Index out of bounds.")
-
-        return result
-
-    def swap_faces(self, face_indices1, face_indices2):
-        """Swap the faces indicated by the given indices.
-
-        This method is public, but likely not generally useful by
-        itself. The ``delete_faces()`` method is a convenience
-        combination of ``swap_faces()`` and ``pop_faces()``.
-        """
-
-        # Technically this can also be done with update_faces, but
-        # swapping is faster and costs significantly less memory in
-        # e.g. an undo stack.
-
-        vertex2faces = self._vertex2faces
-
-        # --- Prepare / checks
-
-        indices1 = self._get_indices(
-            face_indices1, len(self._faces), "face indices to swap (1)"
-        )
-        indices2 = self._get_indices(
-            face_indices2, len(self._faces), "face indices to swap (2)"
-        )
-
-        if not len(indices1) == len(indices2):
-            raise ValueError("Both index arrays must have the same length.")
-
-        # --- Apply
-
-        try:
-            # Update reverse map (unrolled loops for small performance bump)
-            for fi1, fi2 in zip(indices1, indices2):
-                face1 = self._faces[fi1]
-                fii = vertex2faces[face1[0]]
-                fii.remove(fi1)
-                fii.append(fi2)
-                fii = vertex2faces[face1[1]]
-                fii.remove(fi1)
-                fii.append(fi2)
-                fii = vertex2faces[face1[2]]
-                fii.remove(fi1)
-                fii.append(fi2)
-                face2 = self._faces[fi2]
-                fii = vertex2faces[face2[0]]
-                fii.remove(fi2)
-                fii.append(fi1)
-                fii = vertex2faces[face2[1]]
-                fii.remove(fi2)
-                fii.append(fi1)
-                fii = vertex2faces[face2[2]]
-                fii.remove(fi2)
-                fii.append(fi1)
-
-            # Swap the faces themselves
-            for a in [self._faces, self._faces_normals]:
-                a[indices1], a[indices2] = a[indices2], a[indices1]
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_faces = {}
-        self._cache_depending_on_verts_and_faces = {}
-        for tracker in self._change_trackers.values():
-            with Safecall():
-                tracker.swap_faces(indices1, indices2)
-        if self._debug_mode:
-            self._check_internal_state()
-
-    def pop_faces(self, n, _old=None):
-        """Remove the last n faces from the mesh."""
-        vertex2faces = self._vertex2faces
-
-        # --- Prepare / checks
-
-        n = int(n)
-        if n <= 0:
-            raise ValueError("Number of faces to pop must be larger than zero.")
-        if n > len(self._faces):
-            raise ValueError(
-                "Number of faces to pop is larger than the total number of faces."
-            )
-
-        nfaces1 = len(self.faces)
-        nfaces2 = nfaces1 - n
-
-        # --- Apply
-
-        old_faces = self._faces[nfaces2:].copy()
-
-        try:
-            # Update reverse map
-            # todo: if we remove over half the faces, we can also rebuild vertex2faces afterwards
-            for fi in range(nfaces2, nfaces1):
-                face = self._faces[fi]
-                vertex2faces[face[0]].remove(fi)
-                vertex2faces[face[1]].remove(fi)
-                vertex2faces[face[2]].remove(fi)
-
-            # Adjust the array lengths (reset views)
-            self._deallocate_faces(n)
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_faces = {}
-        self._cache_depending_on_verts_and_faces = {}
-        for tracker in self._change_trackers.values():
-            with Safecall():
-                tracker.pop_faces(n, old_faces)
-        if self._debug_mode:
-            self._check_internal_state()
+    def reset(self, positions, faces):
+        """Reset the vertices and faces, e.g. from an export."""
+        self.clear()
+        if positions is not None:
+            self.add_vertices(positions)
+        if faces is not None:
+            self.add_faces(faces)
 
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
@@ -557,7 +381,7 @@ class BaseDynamicMesh:
 
         # --- Prepare / checks
 
-        indices = self._get_indices(
+        indices = check_indices(
             face_indices, len(self._faces), "face indices to delete"
         )
         to_delete = set(indices)
@@ -580,106 +404,6 @@ class BaseDynamicMesh:
 
         # Pop from the end
         self.pop_faces(len(to_delete))
-
-    def swap_vertices(self, vertex_indices1, vertex_indices2):
-        """Move the vertices indicated by the given indices.
-
-        This method is public, but likely not generally useful by
-        itself. The ``delete_vertices()`` method is a convenience
-        combination of ``swap_vertices()`` and ``pop_vertices()``.
-        """
-
-        vertex2faces = self._vertex2faces
-
-        # --- Prepare / checks
-
-        indices1 = self._get_indices(
-            vertex_indices1, len(self._positions), "vertex indices to swap (1)"
-        )
-        indices2 = self._get_indices(
-            vertex_indices2, len(self._positions), "vertex indices to swap (2)"
-        )
-
-        if not len(indices1) == len(indices2):
-            raise ValueError("Both index arrays must have the same length.")
-
-        # --- Apply
-
-        try:
-            # Swap the vertices themselves
-            for a in [self._positions, self._normals, self._colors]:
-                a[indices1], a[indices2] = a[indices2], a[indices1]
-
-            # Update the faces that refer to the moved indices
-            faces = self._faces
-            for vi1, vi2 in zip(indices1, indices2):
-                mask1 = faces == vi1
-                mask2 = faces == vi2
-                faces[mask2] = vi1
-                faces[mask1] = vi2
-
-            # Update reverse map
-            for vi1, vi2 in zip(indices1, indices2):
-                vertex2faces[vi1], vertex2faces[vi2] = (
-                    vertex2faces[vi2],
-                    vertex2faces[vi1],
-                )
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_verts = {}
-        self._cache_depending_on_verts_and_faces = {}
-        for tracker in self._change_trackers.values():
-            with Safecall():
-                tracker.swap_vertices(indices1, indices2)
-        if self._debug_mode:
-            self._check_internal_state()
-
-    def pop_vertices(self, n, _old=None):
-        """Remove the last n vertices from the mesh."""
-        vertex2faces = self._vertex2faces
-
-        # --- Prepare / checks
-
-        n = int(n)
-        if n <= 0:
-            raise ValueError("Number of vertices to pop must be larger than zero.")
-        if n > len(self._positions):
-            raise ValueError(
-                "Number of vertices to pop is larger than the total number of vertices."
-            )
-
-        nverts1 = len(self._positions)
-        nverts2 = nverts1 - n
-
-        # --- Apply
-
-        old_positions = self._positions[nverts2:].copy()
-
-        try:
-            # Drop unused vertices at the end
-            self._deallocate_vertices(nverts1 - nverts2)
-
-            # Update reverse map
-            vertex2faces[nverts2:] = []
-
-        except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
-            raise
-
-        # --- Notify
-
-        self._cache_depending_on_verts = {}
-        self._cache_depending_on_verts_and_faces = {}
-        for tracker in self._change_trackers.values():
-            with Safecall():
-                tracker.pop_vertices(n, old_positions)
-        if self._debug_mode:
-            self._check_internal_state()
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -708,7 +432,7 @@ class BaseDynamicMesh:
 
         # --- Prepare / checcks
 
-        indices = self._get_indices(
+        indices = check_indices(
             vertex_indices, len(self._positions), "vertex indices to delete"
         )
         to_delete = set(indices)
@@ -735,6 +459,8 @@ class BaseDynamicMesh:
 
         # Pop from the end
         self.pop_vertices(len(to_delete))
+
+    # %% The core API
 
     def add_faces(self, new_faces):
         """Add the given faces to the mesh.
@@ -789,6 +515,177 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
+    def pop_faces(self, n, _old=None):
+        """Remove the last n faces from the mesh."""
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        n = int(n)
+        if n <= 0:
+            raise ValueError("Number of faces to pop must be larger than zero.")
+        if n > len(self._faces):
+            raise ValueError(
+                "Number of faces to pop is larger than the total number of faces."
+            )
+
+        nfaces1 = len(self.faces)
+        nfaces2 = nfaces1 - n
+
+        # --- Apply
+
+        old_faces = self._faces[nfaces2:].copy()
+
+        try:
+            # Update reverse map
+            # todo: if we remove over half the faces, we can also rebuild vertex2faces afterwards
+            for fi in range(nfaces2, nfaces1):
+                face = self._faces[fi]
+                vertex2faces[face[0]].remove(fi)
+                vertex2faces[face[1]].remove(fi)
+                vertex2faces[face[2]].remove(fi)
+
+            # Adjust the array lengths (reset views)
+            self._deallocate_faces(n)
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers.values():
+            with Safecall():
+                tracker.pop_faces(n, old_faces)
+        if self._debug_mode:
+            self._check_internal_state()
+
+    def swap_faces(self, face_indices1, face_indices2):
+        """Swap the faces indicated by the given indices.
+
+        This method is public, but likely not generally useful by
+        itself. The ``delete_faces()`` method is a convenience
+        combination of ``swap_faces()`` and ``pop_faces()``.
+        """
+
+        # Technically this can also be done with update_faces, but
+        # swapping is faster and costs significantly less memory in
+        # e.g. an undo stack.
+
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        indices1 = check_indices(
+            face_indices1, len(self._faces), "face indices to swap (1)"
+        )
+        indices2 = check_indices(
+            face_indices2, len(self._faces), "face indices to swap (2)"
+        )
+
+        if not len(indices1) == len(indices2):
+            raise ValueError("Both index arrays must have the same length.")
+
+        # --- Apply
+
+        try:
+            # Update reverse map (unrolled loops for small performance bump)
+            for fi1, fi2 in zip(indices1, indices2):
+                face1 = self._faces[fi1]
+                fii = vertex2faces[face1[0]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                fii = vertex2faces[face1[1]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                fii = vertex2faces[face1[2]]
+                fii.remove(fi1)
+                fii.append(fi2)
+                face2 = self._faces[fi2]
+                fii = vertex2faces[face2[0]]
+                fii.remove(fi2)
+                fii.append(fi1)
+                fii = vertex2faces[face2[1]]
+                fii.remove(fi2)
+                fii.append(fi1)
+                fii = vertex2faces[face2[2]]
+                fii.remove(fi2)
+                fii.append(fi1)
+
+            # Swap the faces themselves
+            for a in [self._faces, self._faces_normals]:
+                a[indices1], a[indices2] = a[indices2], a[indices1]
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers.values():
+            with Safecall():
+                tracker.swap_faces(indices1, indices2)
+        if self._debug_mode:
+            self._check_internal_state()
+
+    def update_faces(self, face_indices, new_faces, _old=None):
+        """Update the value of the given faces."""
+
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        indices = check_indices(
+            face_indices, len(self._faces), "face indices to update"
+        )
+        faces = np.asarray(new_faces, np.int32).reshape(-1, self._verts_per_face)
+
+        if len(indices) != len(faces):
+            raise ValueError("Indices and faces to update have different lengths.")
+
+        # Check sanity of the faces
+        if faces.min() < 0 or faces.max() >= len(self._positions):
+            raise ValueError(
+                "The faces array containes indices that are out of bounds."
+            )
+
+        # --- Apply
+
+        old_faces = self._faces[indices]
+
+        try:
+            # Update reverse map
+            for fi, new_face in zip(indices, faces):
+                old_face = self._faces[fi]
+                vertex2faces[old_face[0]].remove(fi)
+                vertex2faces[old_face[1]].remove(fi)
+                vertex2faces[old_face[2]].remove(fi)
+                vertex2faces[new_face[0]].append(fi)
+                vertex2faces[new_face[1]].append(fi)
+                vertex2faces[new_face[2]].append(fi)
+
+            # Update
+            self._faces[indices] = faces
+            self._update_face_normals(indices)
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers.values():
+            with Safecall():
+                tracker.update_faces(indices, faces, old_faces)
+        if self._debug_mode:
+            self._check_internal_state()
+
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
         vertex2faces = self._vertex2faces
@@ -827,49 +724,33 @@ class BaseDynamicMesh:
         if self._debug_mode:
             self._check_internal_state()
 
-    def update_faces(self, face_indices, new_faces, _old=None):
-        """Update the value of the given faces."""
-
+    def pop_vertices(self, n, _old=None):
+        """Remove the last n vertices from the mesh."""
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
 
-        indices = self._get_indices(
-            face_indices, len(self._faces), "face indices to update"
-        )
-        faces = np.asarray(new_faces, np.int32).reshape(-1, self._verts_per_face)
-
-        if len(indices) != len(faces):
-            raise ValueError("Indices and faces to update have different lengths.")
-
-        # Check sanity of the faces
-        if faces.min() < 0 or faces.max() >= len(self._positions):
+        n = int(n)
+        if n <= 0:
+            raise ValueError("Number of vertices to pop must be larger than zero.")
+        if n > len(self._positions):
             raise ValueError(
-                "The faces array containes indices that are out of bounds."
+                "Number of vertices to pop is larger than the total number of vertices."
             )
 
-        # Note: this should work too, but moves more stuff around, so its less efficient.
-        # self.delete_faces(face_indices)
-        # self.add_faces(faces)
+        nverts1 = len(self._positions)
+        nverts2 = nverts1 - n
 
         # --- Apply
 
-        old_faces = self._faces[indices]
+        old_positions = self._positions[nverts2:].copy()
 
         try:
-            # Update reverse map
-            for fi, new_face in zip(indices, faces):
-                old_face = self._faces[fi]
-                vertex2faces[old_face[0]].remove(fi)
-                vertex2faces[old_face[1]].remove(fi)
-                vertex2faces[old_face[2]].remove(fi)
-                vertex2faces[new_face[0]].append(fi)
-                vertex2faces[new_face[1]].append(fi)
-                vertex2faces[new_face[2]].append(fi)
+            # Drop unused vertices at the end
+            self._deallocate_vertices(nverts1 - nverts2)
 
-            # Update
-            self._faces[indices] = faces
-            self._update_face_normals(indices)
+            # Update reverse map
+            vertex2faces[nverts2:] = []
 
         except Exception:  # pragma: no cover
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
@@ -877,11 +758,69 @@ class BaseDynamicMesh:
 
         # --- Notify
 
-        self._cache_depending_on_faces = {}
+        self._cache_depending_on_verts = {}
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.update_faces(indices, faces, old_faces)
+                tracker.pop_vertices(n, old_positions)
+        if self._debug_mode:
+            self._check_internal_state()
+
+    def swap_vertices(self, vertex_indices1, vertex_indices2):
+        """Move the vertices indicated by the given indices.
+
+        This method is public, but likely not generally useful by
+        itself. The ``delete_vertices()`` method is a convenience
+        combination of ``swap_vertices()`` and ``pop_vertices()``.
+        """
+
+        vertex2faces = self._vertex2faces
+
+        # --- Prepare / checks
+
+        indices1 = check_indices(
+            vertex_indices1, len(self._positions), "vertex indices to swap (1)"
+        )
+        indices2 = check_indices(
+            vertex_indices2, len(self._positions), "vertex indices to swap (2)"
+        )
+
+        if not len(indices1) == len(indices2):
+            raise ValueError("Both index arrays must have the same length.")
+
+        # --- Apply
+
+        try:
+            # Swap the vertices themselves
+            for a in [self._positions, self._normals, self._colors]:
+                a[indices1], a[indices2] = a[indices2], a[indices1]
+
+            # Update the faces that refer to the moved indices
+            faces = self._faces
+            for vi1, vi2 in zip(indices1, indices2):
+                mask1 = faces == vi1
+                mask2 = faces == vi2
+                faces[mask2] = vi1
+                faces[mask1] = vi2
+
+            # Update reverse map
+            for vi1, vi2 in zip(indices1, indices2):
+                vertex2faces[vi1], vertex2faces[vi2] = (
+                    vertex2faces[vi2],
+                    vertex2faces[vi1],
+                )
+
+        except Exception:  # pragma: no cover
+            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            raise
+
+        # --- Notify
+
+        self._cache_depending_on_verts = {}
+        self._cache_depending_on_verts_and_faces = {}
+        for tracker in self._change_trackers.values():
+            with Safecall():
+                tracker.swap_vertices(indices1, indices2)
         if self._debug_mode:
             self._check_internal_state()
 
@@ -892,7 +831,7 @@ class BaseDynamicMesh:
 
         # --- Prepare / checks
 
-        indices = self._get_indices(
+        indices = check_indices(
             vertex_indices, len(self._positions), "vertex indices to update"
         )
         positions = np.asarray(new_positions, np.float32).reshape(-1, 3)

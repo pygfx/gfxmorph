@@ -5,7 +5,7 @@ Key bindings:
 
 * 1: add sphere mesh
 * 2: add 2 spheres connected by a corrupt face
-* b: remove a random face
+* h: remove a random face, creating a hole
 * r: repair (note, can only repair small holes)
 * m: print metadata
 
@@ -99,10 +99,10 @@ def save_mesh_state():
 
 def add_mesh():
     geo = smooth_sphere_geometry(subdivisions=1)
-    vertices, faces = geo.positions.data, geo.indices.data
-    vertices += np.random.normal(0, 5, size=(3,))
+    positions, faces = geo.positions.data, geo.indices.data
+    positions += np.random.normal(0, 5, size=(3,))
 
-    mesh.dynamic_mesh.add_mesh(vertices, faces)
+    mesh.dynamic_mesh.add_mesh(positions, faces)
     save_mesh_state()
 
     camera.show_object(scene)
@@ -111,16 +111,17 @@ def add_mesh():
 
 def add_broken_mesh():
     geo = smooth_sphere_geometry()
-    vertices1, faces1 = geo.positions.data, geo.indices.data
-    vertices1 += np.random.normal(0, 5, size=(3,))
+    positions1, faces1 = geo.positions.data, geo.indices.data
+    positions1 += np.random.normal(0, 5, size=(3,))
 
-    vertices2 = vertices1 + (2.2, 0, 0)
-    faces2 = faces1 + len(vertices1)
+    positions2 = positions1 + (2.2, 0, 0)
+    faces2 = faces1 + len(positions1)
 
     faces3 = [[faces2[10][0], faces2[10][1], faces1[20][0]]]
 
     mesh.dynamic_mesh.add_mesh(
-        np.concatenate([vertices1, vertices2]), np.concatenate([faces1, faces2, faces3])
+        np.concatenate([positions1, positions2]),
+        np.concatenate([faces1, faces2, faces3]),
     )
 
     camera.show_object(scene)

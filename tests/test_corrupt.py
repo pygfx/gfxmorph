@@ -740,7 +740,7 @@ def test_repair_touching_boundaries1():
     # positions). Except one has a hole, so that the mesh is open and
     # the de-dupe alg does not exit early. The spheres should not be connected.
 
-    m = MeshClass(vertices=None, faces=None)
+    m = MeshClass(None, None)
 
     vertices, faces, _ = get_sphere()
     m.add_mesh(vertices, faces)
@@ -768,7 +768,7 @@ def test_repair_touching_boundaries2():
     # edge with 3 incident faces, which would result in a non-manifold mesh.
     # The algorithm should therefore deny this change.
 
-    m = MeshClass(vertices=None, faces=None)
+    m = MeshClass(None, None)
 
     # Add 3 planes - should not be stitched
     vertices, faces = [], []
@@ -787,14 +787,14 @@ def test_repair_touching_boundaries2():
     assert m.is_manifold
     assert not m.is_closed
     assert m.component_count == 5
-    assert len(m.vertices) == 3 * 3 + 2 * 3
+    assert len(m.positions) == 3 * 3 + 2 * 3
 
     m.repair_touching_boundaries()
 
     assert m.is_manifold
     assert not m.is_closed
     assert m.component_count == 4
-    assert len(m.vertices) == 3 * 3 + 2 * 3 - 2
+    assert len(m.positions) == 3 * 3 + 2 * 3 - 2
 
 
 if __name__ == "__main__":

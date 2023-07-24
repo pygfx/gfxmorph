@@ -74,7 +74,7 @@ def benchmark():
 
             t.tic()
             # v = m.get_volume() -> slow because it checks for manifoldness, because a volume of a nonmanifold or nonmanifold mesh means nothing.
-            v = meshfuncs.mesh_get_volume(m.vertices, m.faces)
+            v = meshfuncs.mesh_get_volume(m.positions, m.faces)
             t.toc("volume")
 
             t.tic()
@@ -83,7 +83,7 @@ def benchmark():
 
             t.tic()
             m.reset(None, None)
-            m.reset(vertices=vertices, faces=faces)
+            m.reset(vertices, faces)
             t.toc(f"reset")
 
             t.tic()
@@ -92,7 +92,7 @@ def benchmark():
 
             m.reset(vertices, None)
             t.tic()
-            m.delete_vertices(np.arange(0, len(m.vertices), 2, np.int32))
+            m.delete_vertices(np.arange(0, len(m.positions), 2, np.int32))
             t.toc(f"delete 50% vertices")
 
             t.add_data("", "")
