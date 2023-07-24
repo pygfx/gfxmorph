@@ -58,3 +58,18 @@ def as_immutable_array(array):
     v = array.view()
     v.setflags(write=False)
     return v
+
+
+def make_vertex2faces(faces, nverts=None):
+    """Create a simple map to map vertex indices to a list of face indices."""
+    faces = np.asarray(faces, np.int32)
+    if nverts is None:
+        nverts = faces.max() + 1
+
+    vertex2faces = [[] for _ in range(nverts)]
+    for fi in range(len(faces)):
+        face = faces[fi]
+        vertex2faces[face[0]].append(fi)
+        vertex2faces[face[1]].append(fi)
+        vertex2faces[face[2]].append(fi)
+    return vertex2faces

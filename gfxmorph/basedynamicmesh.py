@@ -3,7 +3,13 @@ import weakref
 import numpy as np
 
 from .tracker import MeshChangeTracker
-from .utils import logger, Safecall, check_indices, as_immutable_array
+from .utils import (
+    logger,
+    Safecall,
+    check_indices,
+    as_immutable_array,
+    make_vertex2faces,
+)
 
 
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
@@ -26,9 +32,6 @@ class BaseDynamicMesh:
     # Note that there are a few places where loops are unrolled, and verts_per_face is thus hardcoded.
     _verts_per_face = 3
 
-    # In debug mode, the mesh checks its internal state after each change
-    _debug_mode = False
-
     def __init__(self):
         # Caches that subclasses can use to cache stuff. When the
         # positions/faces change, the respective caches are cleared.
@@ -39,16 +42,14 @@ class BaseDynamicMesh:
         # A list of trackers that are notified of changes.
         self._change_trackers = weakref.WeakValueDictionary()
 
-        initial_size = 8
-
         # Create the buffers that contain the data, and which are larger
         # than needed. These arrays should *only* be referenced in the
         # allocate- and deallocate- methods.
-        self._faces_buf = np.zeros((initial_size, self._verts_per_face), np.int32)
-        self._faces_normals_buf = np.zeros((initial_size, 3), np.float32)
-        self._positions_buf = np.zeros((initial_size, 3), np.float32)
-        self._normals_buf = np.zeros((initial_size, 3), np.float32)
-        self._colors_buf = np.zeros((initial_size, 4), np.float32)
+        self._faces_buf = np.zeros((8, self._verts_per_face), np.int32)
+        self._faces_normals_buf = np.zeros((8, 3), np.float32)
+        self._positions_buf = np.zeros((8, 3), np.float32)
+        self._normals_buf = np.zeros((8, 3), np.float32)
+        self._colors_buf = np.zeros((8, 4), np.float32)
         # todo: Maybe face colors are more convenient?
         # todo: also, are colors better managed outside of this class?
 
@@ -142,10 +143,12 @@ class BaseDynamicMesh:
         """
         return self.positions.copy(), self.faces.copy()
 
-    def _check_internal_state(self):
-        """Method to validate the integrity of the internal state. In
-        practice this check should not be needed, but whole running
-        tests and during dev it add an extra layer of security.
+    def check_internal_state(self):
+        """Method to validate the integrity of the internal state.
+
+        In practice this check is not be needed, but it's used
+        extensively during the unit tests to make sure that all methods
+        work as intended.
         """
 
         # Note: some vertices not being used is technically an ok state.
@@ -153,26 +156,37 @@ class BaseDynamicMesh:
         # then the faces to use them. But a bug in our internals could
         # make the number of unused vertices grow, so maybe we'll want
         # some sort of check for it at some point.
+        nverts = len(self.positions)
+        nfaces = len(self.faces)
 
-        positions = self._positions
-        faces = self._faces
-        if len(faces) == 0:
-            return
-        # Check that faces match a vertex
-        assert faces.min() >= 0
-        assert faces.max() < len(positions)
+        # Check that all faces match a vertex
+        if nfaces > 0:
+            assert self.faces.min() >= 0
+            assert self.faces.max() < nverts
 
-        # Build vertex2faces
-        vertex2faces = [[] for _ in range(len(positions))]
-        for fi in range(len(faces)):
-            face = faces[fi]
-            vertex2faces[face[0]].append(fi)
-            vertex2faces[face[1]].append(fi)
-            vertex2faces[face[2]].append(fi)
+        # Check sizes of arrays
+        assert len(self._faces) == nfaces
+        assert len(self._faces_normals) == nfaces
+        assert len(self._positions) == nverts
+        assert len(self._normals) == nverts
+        assert len(self._colors) == nverts
 
+        # Check that the views are based on the corresppnding buffers
+        assert self._faces.base is self._faces_buf
+        assert self._faces_normals.base is self._faces_normals_buf
+        assert self._positions.base is self._positions_buf
+        assert self._normals.base is self._normals_buf
+        assert self._colors.base is self._colors_buf
+
+        # Check vertex2faces map
+        vertex2faces = make_vertex2faces(self.faces, nverts)
         assert len(vertex2faces) == len(self._vertex2faces)
         for face1, face2 in zip(vertex2faces, self._vertex2faces):
             assert sorted(face1) == sorted(face2)
+
+    def _after_change(self):
+        """Called after each change. Does nothing by default, but subclasses can overload this."""
+        pass
 
     # %% Manage normals
 
@@ -512,8 +526,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.add_faces(faces)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def pop_faces(self, n, _old=None):
         """Remove the last n faces from the mesh."""
@@ -559,8 +572,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.pop_faces(n, old_faces)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def swap_faces(self, face_indices1, face_indices2):
         """Swap the faces indicated by the given indices.
@@ -629,8 +641,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.swap_faces(indices1, indices2)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def update_faces(self, face_indices, new_faces, _old=None):
         """Update the value of the given faces."""
@@ -683,8 +694,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.update_faces(indices, faces, old_faces)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def add_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
@@ -721,8 +731,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.add_vertices(positions)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def pop_vertices(self, n, _old=None):
         """Remove the last n vertices from the mesh."""
@@ -763,8 +772,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.pop_vertices(n, old_positions)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def swap_vertices(self, vertex_indices1, vertex_indices2):
         """Move the vertices indicated by the given indices.
@@ -821,8 +829,7 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.swap_vertices(indices1, indices2)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
 
     def update_vertices(self, vertex_indices, new_positions, _old=None):
         """Update the value of the given vertices."""
@@ -864,5 +871,4 @@ class BaseDynamicMesh:
         for tracker in self._change_trackers.values():
             with Safecall():
                 tracker.update_vertices(indices, positions, old_positions)
-        if self._debug_mode:
-            self._check_internal_state()
+        self._after_change()
