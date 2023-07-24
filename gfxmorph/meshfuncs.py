@@ -3,20 +3,7 @@ import queue
 import numpy as np
 
 from . import maybe_pylinalg
-
-
-def make_vertex2faces(faces):
-    """Create a simple map to map vertex indices to a list of face indices."""
-    faces = np.asarray(faces, np.int32)
-    nverts = faces.max() + 1
-
-    vertex2faces = [[] for _ in range(nverts)]
-    for fi in range(len(faces)):
-        face = faces[fi]
-        vertex2faces[face[0]].append(fi)
-        vertex2faces[face[1]].append(fi)
-        vertex2faces[face[2]].append(fi)
-    return vertex2faces
+from .utils import make_vertex2faces
 
 
 def vertex_get_neighbours(faces, vertex2faces, vi):

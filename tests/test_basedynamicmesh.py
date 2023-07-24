@@ -122,8 +122,6 @@ class DynamicMesh(OriDynamicMesh):
     internal state is validated at each change. Plus we track changes
     and check them at each step too."""
 
-    _debug_mode = True
-
     def __init__(self):
         super().__init__()
         # Add a simple replicating tracker, to test that the overlapping API does proper replications
@@ -139,8 +137,8 @@ class DynamicMesh(OriDynamicMesh):
         self.tracker3 = MeshChangeTracker()
         self.track_changes(self.tracker3)
 
-    def _check_internal_state(self):
-        super()._check_internal_state()
+    def _after_change(self):
+        self.check_internal_state()
         if self.tracker1:
             assert np.all(self.faces == self.tracker1.faces)
             assert np.all(self.positions == self.tracker1.positions)
