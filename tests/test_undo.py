@@ -57,7 +57,7 @@ def test_undo():
 
     # Also move some vertices
     ii = np.arange(10, dtype=np.int32)
-    m.update_vertices(ii, m.vertices[ii] * 1.1)
+    m.update_vertices(ii, m.positions[ii] * 1.1)
     snapshot()
 
     assert m.is_manifold
@@ -70,7 +70,7 @@ def test_undo():
 
     for v, vertices, faces in reversed(snapshots):
         undo.apply_version(m, v)
-        assert np.all(m.vertices == vertices)
+        assert np.all(m.positions == vertices)
         assert np.all(m.faces == faces)
 
     assert len(m.faces) == 0
@@ -79,7 +79,7 @@ def test_undo():
 
     for v, vertices, faces in snapshots:
         undo.apply_version(m, v)
-        assert np.all(m.vertices == vertices)
+        assert np.all(m.positions == vertices)
         assert np.all(m.faces == faces)
 
     assert len(m.faces) > 0
@@ -92,18 +92,18 @@ def test_undo():
 
     for v, vertices, faces in shuffled_snapshots:
         undo.apply_version(m, v)
-        assert np.all(m.vertices == vertices)
+        assert np.all(m.positions == vertices)
         assert np.all(m.faces == faces)
 
     # We can also do a step by step by step undo
     for i in range(20):
         undo.undo(m)
-    assert np.all(m.vertices == snapshots[0][1])
+    assert np.all(m.positions == snapshots[0][1])
     assert np.all(m.faces == snapshots[0][2])
 
     for i in range(20):
         undo.redo(m)
-    assert np.all(m.vertices == snapshots[-1][1])
+    assert np.all(m.positions == snapshots[-1][1])
     assert np.all(m.faces == snapshots[-1][2])
 
 

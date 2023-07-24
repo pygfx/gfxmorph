@@ -12,13 +12,9 @@ logger = logging.getLogger("meshmorph")
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
 
 
-# todo: test the undo mechanics in unit tests (maybe as part of test_corrupt)
-
-
 class Safecall:
-    """Context manager for doing calls that should not raise. If an
-    exception is raised, it is caught, logged, and the context exits
-    normally.
+    """Context manager for doing calls that should not raise. If an exception
+    is raised, it is caught, logged, and the context exits normally.
     """
 
     def __enter__(self):
@@ -27,8 +23,7 @@ class Safecall:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_val:
             lines = traceback.format_exception(exc_type, exc_val, exc_tb)
-            msg = "Exception in update callback:\n" + "".join(lines)
-            logger.error(msg)
+            logger.error("Exception in update callback:\n" + "".join(lines))
         return True  # Yes, we handled the exception
 
 
@@ -57,7 +52,7 @@ class BaseDynamicMesh:
 
     def __init__(self):
         # Caches that subclasses can use to cache stuff. When the
-        # vertices/faces change, the respective caches are cleared.
+        # positions/faces change, the respective caches are cleared.
         self._cache_depending_on_verts = {}
         self._cache_depending_on_faces = {}
         self._cache_depending_on_verts_and_faces = {}
@@ -119,20 +114,20 @@ class BaseDynamicMesh:
         return v
 
     @property
-    def vertices(self):
-        """The vertices of the mesh.
+    def positions(self):
+        """The vertex positions of the mesh.
 
         This is a C-contiguous ndarray. Note that the array may change
         as data is added and deleted, including vertices being moved
         arround to fill holes left by deleted vertices.
         """
-        # todo: vertices or positions? technically normals and colors (etc) also apply to a vertex
         v = self._positions.view()
         v.flags.writeable = False
         return v
 
     @property
     def normals(self):
+        """The vertex normals of the mesh."""
         v = self._normals.view()
         v.flags.writeable = False
         return v
@@ -172,21 +167,21 @@ class BaseDynamicMesh:
         if len(self._positions):
             self.pop_vertices(len(self._positions))
 
-    def reset(self, vertices, faces):
+    def reset(self, positions, faces):
         """Reset the vertices and faces, e.g. from an export."""
         self.clear()
-        if vertices is not None:
-            self.add_vertices(vertices)
+        if positions is not None:
+            self.add_vertices(positions)
         if faces is not None:
             self.add_faces(faces)
 
     def export(self):
-        """Get a copy of the array of vertices and faces.
+        """Get a copy of the array of vertex-positions and faces.
 
         Note that the arrays are copied because the originals are
         modified in place when e.g. faces are removed or updated.
         """
-        return self.vertices.copy(), self.faces.copy()
+        return self.positions.copy(), self.faces.copy()
 
     def _check_internal_state(self):
         """Method to validate the integrity of the internal state. In
@@ -200,16 +195,16 @@ class BaseDynamicMesh:
         # make the number of unused vertices grow, so maybe we'll want
         # some sort of check for it at some point.
 
-        vertices = self._positions
+        positions = self._positions
         faces = self._faces
         if len(faces) == 0:
             return
         # Check that faces match a vertex
         assert faces.min() >= 0
-        assert faces.max() < len(vertices)
+        assert faces.max() < len(positions)
 
         # Build vertex2faces
-        vertex2faces = [[] for _ in range(len(vertices))]
+        vertex2faces = [[] for _ in range(len(positions))]
         for fi in range(len(faces)):
             face = faces[fi]
             vertex2faces[face[0]].append(fi)

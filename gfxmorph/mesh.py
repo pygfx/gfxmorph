@@ -29,11 +29,11 @@ class DynamicMesh(BaseDynamicMesh):
     (higher level) modifications.
     """
 
-    def __init__(self, vertices, faces):
+    def __init__(self, positions, faces):
         super().__init__()
         # Delegate initialization
-        if vertices is not None or faces is not None:
-            self.add_mesh(vertices, faces)
+        if positions is not None or faces is not None:
+            self.add_mesh(positions, faces)
 
     @property
     def component_labels(self):
@@ -156,8 +156,8 @@ class DynamicMesh(BaseDynamicMesh):
             "is_vertex_manifold": self.is_vertex_manifold,
             "is_closed": self.is_closed,
             "is_oriented": self.is_oriented,
-            "nfaces": len(self.faces),
-            "nvertices": len(self.vertices),
+            "nfaces": len(self._faces),
+            "nvertices": len(self._positions),
             "free_vertices": len(self._positions_buf) - len(self._positions),
             "free_faces": len(self._faces_buf) - len(self._faces),
             "approx_mem": mem,
@@ -167,7 +167,7 @@ class DynamicMesh(BaseDynamicMesh):
 
     def get_surface_area(self):
         """Get the surface area of the mesh."""
-        return meshfuncs.mesh_get_surface_area(self.vertices, self.faces)
+        return meshfuncs.mesh_get_surface_area(self.positions, self.faces)
 
     def get_volume(self):
         """Get the volume of the mesh.
@@ -180,9 +180,9 @@ class DynamicMesh(BaseDynamicMesh):
             raise RuntimeError(
                 "Cannot get volume of a mesh that is not manifold, oriented and closed."
             )
-        return meshfuncs.mesh_get_volume(self.vertices, self.faces)
+        return meshfuncs.mesh_get_volume(self.positions, self.faces)
 
-    def add_mesh(self, vertices, faces):
+    def add_mesh(self, positions, faces):
         """Add a (partial) mesh.
 
         The vertices and faces are appended to the end. The values of
@@ -194,13 +194,13 @@ class DynamicMesh(BaseDynamicMesh):
         # The DynamicMesh class also does some checks, but it will
         # only check if incoming faces match any vertex, not just the
         # ones we add here, so we perform that check here.
-        if faces.min() < 0 or faces.max() >= len(vertices):
+        if faces.min() < 0 or faces.max() >= len(positions):
             raise ValueError(
                 "The faces array containes indices that are out of bounds."
             )
 
-        vertex_index_offset = len(self.vertices)
-        self.add_vertices(vertices)
+        vertex_index_offset = len(self._positions)
+        self.add_vertices(positions)
         self.add_faces(faces + vertex_index_offset)
 
     # %% Repairs
@@ -292,8 +292,8 @@ class DynamicMesh(BaseDynamicMesh):
                 assert len(groups) >= 2
                 for face_indices in groups[1:]:
                     # Add vertex
-                    self.add_vertices([self.vertices[vi]])
-                    vi2 = len(self.vertices) - 1
+                    self.add_vertices([self._positions[vi]])
+                    vi2 = len(self._positions) - 1
                     # Update faces
                     faces = self.faces[face_indices, :]
                     faces[faces == vi] = vi2
@@ -362,7 +362,7 @@ class DynamicMesh(BaseDynamicMesh):
             return 0
 
         # Stitch, getting a copy of the faces
-        faces = meshfuncs.mesh_stitch_boundaries(self.vertices, self.faces, atol=atol)
+        faces = meshfuncs.mesh_stitch_boundaries(self.positions, self.faces, atol=atol)
 
         # Check what faces have been changed in our copy.
         changed = faces != self.faces  # Nx3
@@ -440,7 +440,7 @@ class DynamicMesh(BaseDynamicMesh):
         """
         faces = self.faces
 
-        vertices_mask = np.zeros((len(self.vertices),), bool)
+        vertices_mask = np.zeros((len(self.positions),), bool)
         vii = np.unique(faces.flatten())
         vertices_mask[vii] = True
 
@@ -496,7 +496,7 @@ class DynamicMesh(BaseDynamicMesh):
         if ref_pos.shape != (3,):
             raise ValueError("ref_pos must be a position (3 values).")
 
-        distances = np.linalg.norm(self.vertices - ref_pos, axis=1)
+        distances = np.linalg.norm(self.positions - ref_pos, axis=1)
         vi = np.nanargmin(distances)
         return vi, distances[vi]
 
@@ -504,21 +504,21 @@ class DynamicMesh(BaseDynamicMesh):
         """Given a reference vertex, select more nearby vertices (over the surface).
         Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
         """
-        vertices = self.vertices
+        positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
 
         vi0 = int(ref_vertex)
-        # p0 = vertices[vi0]
+        # p0 = positions[vi0]
         # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
         selected_vertices = {vi0}
         vertices2check = [(vi0, 0)]
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
-            p1 = vertices[vi1]
+            p1 = positions[vi1]
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
                 if vi2 not in selected_vertices:
-                    p2 = vertices[vi2]
+                    p2 = positions[vi2]
                     sdist = cumdist + np.linalg.norm(p2 - p1)
                     if sdist < max_distance:
                         # adist = np.linalg.norm(p2 - p0)

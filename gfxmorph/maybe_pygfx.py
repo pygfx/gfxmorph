@@ -14,13 +14,13 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     """
 
     def init(self, mesh):
-        self._nverts = len(mesh.vertices)
+        self._nverts = len(mesh.positions)
         self._nfaces = len(mesh.faces)
         self.new_vertices_buffer(mesh)
         self.new_faces_buffer(mesh)
 
     def new_vertices_buffer(self, mesh):
-        self.positions = gfx.Buffer(mesh.vertices.base)
+        self.positions = gfx.Buffer(mesh.positions.base)
         self.normals = gfx.Buffer(mesh.normals.base)
         # self.colors = gfx.Buffer(colors)
 

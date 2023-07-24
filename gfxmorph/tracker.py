@@ -102,12 +102,13 @@ class MeshChangeTracker:
     def new_vertices_buffer(self, mesh):
         """Called when new buffers are allocated to store the vertices.
 
-        This happens when more memory is needed to store the vertices, or
-        when vertices are deleted and the buffers can be made smaller.
+        This happens when more memory is needed to store the vertices
+        (positions and normals), or when vertices are deleted and the
+        buffers can be made smaller.
 
         The mesh is passed as an argument so the tracker has full access
         to it to address this situation. The new buffer array can be
-        obtained via ``mesh.vertices.base``.
+        obtained via ``mesh.positions.base``.
         """
         pass
 
