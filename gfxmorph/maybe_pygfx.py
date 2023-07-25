@@ -31,11 +31,11 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         old_n = self._nfaces
         self._nfaces += len(faces)
         self.indices.update_range(old_n, self._nfaces)
-        self.indices.view = 0, self._nfaces
+        self.indices.draw_range = 0, self._nfaces
 
     def pop_faces(self, n, old):
         self._nfaces -= n
-        self.indices.view = 0, self._nfaces
+        self.indices.draw_range = 0, self._nfaces
 
     def swap_faces(self, indices1, indices2):
         self.indices.update_range(indices1.min(), indices1.max())

@@ -553,8 +553,9 @@ class BaseDynamicMesh:
         old_faces = self._faces[nfaces2:].copy()
 
         try:
-            # Update reverse map
-            # todo: if we remove over half the faces, we can also rebuild vertex2faces afterwards
+            # Update reverse map. If over half the faces are removed,
+            # its faster to re-build verte2faces from scratch after
+            # de-allocating the faces, but only by a bit, so lets not.
             for fi in range(nfaces2, nfaces1):
                 face = self._faces[fi]
                 vertex2faces[face[0]].remove(fi)
