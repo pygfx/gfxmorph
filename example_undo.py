@@ -31,7 +31,7 @@ class MeshContainer:
         # The object that stores & manages the data
         self.dynamic_mesh = DynamicMesh(None, None)
 
-        # Tracker that implement a todo stack
+        # Tracker that implement a redo stack
         self.undo_tracker = MeshUndoTracker()
         self.dynamic_mesh.track_changes(self.undo_tracker)
 
