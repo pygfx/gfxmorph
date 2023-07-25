@@ -14,10 +14,10 @@ Key bindings:
 import json
 
 import numpy as np
+from wgpu.gui.auto import WgpuCanvas
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
-from wgpu.gui.auto import WgpuCanvas
 import observ.store
 
 
