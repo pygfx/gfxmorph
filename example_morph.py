@@ -52,6 +52,10 @@ class MeshContainer:
     # def save_state(self):
     #     self._undo_stack.append(self.undo_tracker.get_version())
     #
+
+    def commit(self):
+        self.undo_tracker.commit()
+
     def undo(self):
         self.undo_tracker.undo(self.dynamic_mesh)
 
@@ -92,7 +96,7 @@ def add_sphere(dx=0, dy=0, dz=0):
     positions += (dx, dy, dz)
 
     mesh.dynamic_mesh.add_mesh(positions, faces)
-    # save_mesh_state()
+    mesh.commit()
 
     camera.show_object(scene)
     renderer.request_draw()
@@ -112,10 +116,15 @@ class Morpher:
         self.gizmo.visible = True
         self.gizmo.world.position = pos
         self.gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), norm)
+
+        # Select base positions. Also "change" the positions to seed the undo stack.
+        indices = np.array([vi], np.int32)
+        positions = self.m.positions[indices]
+
         # Store state
         self.state = {
-            "indices": [vi],
-            "positions": self.m.positions[[vi]],
+            "indices": indices,
+            "positions": positions,
             "xy": (x, y),
             "pos": pos,
             "norm": norm,
@@ -130,13 +139,16 @@ class Morpher:
 
         indices = self.state["indices"]
         positions = self.state["positions"]
+
         self.m.update_vertices(indices, positions + dpos)
+        # mesh.undo_tracker.merge_last()
 
         self.gizmo.world.position = self.state["pos"] + dpos
 
     def stop(self):
         self.gizmo.visible = False
         self.state = None
+        mesh.commit()
 
 
 morpher = Morpher(mesh.dynamic_mesh, gizmo)
