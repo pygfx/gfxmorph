@@ -519,23 +519,26 @@ class DynamicMesh(BaseDynamicMesh):
 
         # The list of vertices to check for neighbours
         vertices2check = []
+        selected_vertices = {}
         for vi, sdist in zip(ref_vertices, ref_distances):
             vertices2check.append((vi, sdist))
+            selected_vertices[vi] = sdist
 
         # Walk over the surface
-        selected_vertices = {vi for vi, _ in vertices2check}
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
             p1 = positions[vi1]
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
-                if vi2 not in selected_vertices:
-                    p2 = positions[vi2]
-                    sdist = cumdist + np.linalg.norm(p2 - p1)
-                    if sdist < max_distance:
-                        # adist = np.linalg.norm(p2 - p0)
-                        # selected_vertices[vi2] = dict(pos=[xn, yn, zn], color=color, sdist=sdist, adist=adist)
-                        selected_vertices.add(vi2)
+                p2 = positions[vi2]
+                sdist = cumdist + np.linalg.norm(p2 - p1)
+                if sdist < max_distance:
+                    # We will have a closer look if we have not yet selected this
+                    # vertex, but also if we did but found a shorter route to it.
+                    # This means that we may sometimes do duplicate work. To avoid
+                    # this, we'd need a binary heap to store the front.
+                    if vi2 not in selected_vertices or sdist < selected_vertices[vi2]:
+                        selected_vertices[vi2] = sdist
                         vertices2check.append((vi2, sdist))
 
         # Return as ndarray of indices
-        return np.array(sorted(selected_vertices), np.int32)
+        return np.array(sorted(selected_vertices.keys()), np.int32)

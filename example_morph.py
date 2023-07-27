@@ -142,7 +142,6 @@ class Morpher:
         normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
         normal = normal / np.linalg.norm(normal)
         distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
-
         return self._start(xy, vii, distances, pos, normal)
 
     def _start(self, xy, vii, distances, pos, normal):
