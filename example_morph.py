@@ -102,13 +102,33 @@ def add_sphere(dx=0, dy=0, dz=0):
     renderer.request_draw()
 
 
+# --- Morph logic
+
+
+def softlimit(i, limit):
+    """Make i be withing <-limit, +limit>, but using soft slopes."""
+    f = np.exp(-np.abs(i) / limit)
+    return -limit * (f - 1) * np.sign(i)
+
+
+def gaussian_weights(f):
+    return np.exp(-0.5 * f * f)  # Gaussian kernel (sigma 1, mu 0)
+
+
 class Morpher:
     def __init__(self, dynamic_mesh, gizmo):
         self.m = dynamic_mesh
         self.gizmo = gizmo
         self.state = None
+        self.radius = 0.3
 
     def start(self, x, y, vi):
+        # todo: select on a position within a face
+
+        if self.state:
+            pass  # todo: probably need to reset state
+
+        # Get reference position and normal
         pos = self.m.positions[vi].copy()
         norm = self.m.normals[vi].copy()
 
@@ -117,9 +137,16 @@ class Morpher:
         self.gizmo.world.position = pos
         self.gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), norm)
 
-        # Select base positions. Also "change" the positions to seed the undo stack.
-        indices = np.array([vi], np.int32)
+        # Select vertices
+        search_distance = self.radius * 3  # 3 x std
+        indices = self.m.select_vertices_over_surface(vi, search_distance)
         positions = self.m.positions[indices]
+
+        # todo: indicate the selected vertices somehow, maybe with dots?
+
+        # If for some (future) reason, the selection is empty, cancel
+        if len(indices) == 0:
+            return
 
         # Store state
         self.state = {
@@ -134,16 +161,28 @@ class Morpher:
         if self.state is None:
             return
 
+        # Get delta movement, and express in world coordinates
         dxy = np.array([x, y]) - self.state["xy"]
-        dpos = self.state["norm"] * (dxy[1] / 100)
+        delta = self.state["norm"] * (dxy[1] / 100)
 
+        # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
+        # We limit it to 2 sigma. Vertices up to 3 sigma are displaced.
+        delta_norm = np.linalg.norm(delta)
+        if delta_norm > 0:  # avoid zerodivision
+            delta_norm_limited = softlimit(delta_norm, 2 * self.radius)
+            delta *= delta_norm_limited / delta_norm
+
+        # Apply delta to gizmo
+        self.gizmo.world.position = self.state["pos"] + delta
+
+        # Apply delta
         indices = self.state["indices"]
         positions = self.state["positions"]
-
-        self.m.update_vertices(indices, positions + dpos)
-        # mesh.undo_tracker.merge_last()
-
-        self.gizmo.world.position = self.state["pos"] + dpos
+        distances = np.linalg.norm(positions - self.state["pos"], axis=1)
+        new_positions = positions + delta.reshape(1, 3) * gaussian_weights(
+            distances / self.radius
+        ).reshape(-1, 1)
+        self.m.update_vertices(indices, new_positions)
 
     def stop(self):
         self.gizmo.visible = False

@@ -525,4 +525,6 @@ class DynamicMesh(BaseDynamicMesh):
                         # selected_vertices[vi2] = dict(pos=[xn, yn, zn], color=color, sdist=sdist, adist=adist)
                         selected_vertices.add(vi2)
                         vertices2check.append((vi2, sdist))
-        return selected_vertices
+
+        # Return as ndarray of indices
+        return np.array(sorted(selected_vertices), np.int32)
