@@ -44,15 +44,6 @@ class MeshContainer:
             ),
         )
 
-    # todo: Lets make the undo_tracker a bit more powerful so that this stuff is not needed
-    #     # Include a simple undo stack
-    #     self._undo_stack = []
-    #     self._redo_stack = []
-    #
-    # def save_state(self):
-    #     self._undo_stack.append(self.undo_tracker.get_version())
-    #
-
     def commit(self):
         self.undo_tracker.commit()
 
@@ -158,6 +149,10 @@ class Morpher:
         indices = self.m.select_vertices_over_surface(vii, distances, search_distance)
         positions = self.m.positions[indices]
 
+        # Pre-calculate deformation weights
+        abs_distances = np.linalg.norm(positions - pos, axis=1)
+        weights = gaussian_weights(abs_distances / self.radius).reshape(-1, 1)
+
         # todo: indicate the selected vertices somehow, maybe with dots?
 
         # If for some (future) reason, the selection is empty, cancel
@@ -168,6 +163,7 @@ class Morpher:
         self.state = {
             "indices": indices,
             "positions": positions,
+            "weights": weights,
             "xy": xy,
             "pos": pos,
             "normal": normal,
@@ -193,11 +189,10 @@ class Morpher:
         self.gizmo.world.position = self.state["pos"] + delta
 
         # Apply delta
-        indices = self.state["indices"]
-        positions = self.state["positions"]
-        distances = np.linalg.norm(positions - self.state["pos"], axis=1)
-        weights = gaussian_weights(distances / self.radius).reshape(-1, 1)
-        self.m.update_vertices(indices, positions + delta * weights)
+        self.m.update_vertices(
+            self.state["indices"],
+            self.state["positions"] + delta * self.state["weights"],
+        )
 
     def stop(self):
         self.gizmo.visible = False
