@@ -122,24 +122,41 @@ class Morpher:
         self.state = None
         self.radius = 0.3
 
-    def start(self, x, y, vi):
-        # todo: select on a position within a face
+    def start_from_vertex(self, xy, vi):
+        assert isinstance(vi, int)
 
+        vii = [vi]
+        distances = [0]
+        pos = self.m.positions[vi].copy()
+        normal = self.m.normals[vi].copy()
+
+        return self._start(xy, vii, distances, pos, normal)
+
+    def start_from_face(self, xy, fi, coord):
+        assert isinstance(fi, int)
+        assert isinstance(coord, (tuple, list)) and len(coord) == 3
+
+        vii = self.m.faces[fi]
+        coord_vec = np.array(coord).reshape(3, 1)
+        pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
+        normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
+        normal = normal / np.linalg.norm(normal)
+        distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
+
+        return self._start(xy, vii, distances, pos, normal)
+
+    def _start(self, xy, vii, distances, pos, normal):
         if self.state:
             pass  # todo: probably need to reset state
-
-        # Get reference position and normal
-        pos = self.m.positions[vi].copy()
-        norm = self.m.normals[vi].copy()
 
         # Bring gizmo into place
         self.gizmo.visible = True
         self.gizmo.world.position = pos
-        self.gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), norm)
+        self.gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
 
         # Select vertices
         search_distance = self.radius * 3  # 3 x std
-        indices = self.m.select_vertices_over_surface(vi, search_distance)
+        indices = self.m.select_vertices_over_surface(vii, distances, search_distance)
         positions = self.m.positions[indices]
 
         # todo: indicate the selected vertices somehow, maybe with dots?
@@ -152,18 +169,18 @@ class Morpher:
         self.state = {
             "indices": indices,
             "positions": positions,
-            "xy": (x, y),
+            "xy": xy,
             "pos": pos,
-            "norm": norm,
+            "normal": normal,
         }
 
-    def move(self, x, y):
+    def move(self, xy):
         if self.state is None:
             return
 
         # Get delta movement, and express in world coordinates
-        dxy = np.array([x, y]) - self.state["xy"]
-        delta = self.state["norm"] * (dxy[1] / 100)
+        dxy = np.array(xy) - self.state["xy"]
+        delta = self.state["normal"] * (dxy[1] / 100)
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
         # We limit it to 2 sigma. Vertices up to 3 sigma are displaced.
@@ -171,6 +188,7 @@ class Morpher:
         if delta_norm > 0:  # avoid zerodivision
             delta_norm_limited = softlimit(delta_norm, 2 * self.radius)
             delta *= delta_norm_limited / delta_norm
+        delta.shape = (1, 3)
 
         # Apply delta to gizmo
         self.gizmo.world.position = self.state["pos"] + delta
@@ -179,10 +197,8 @@ class Morpher:
         indices = self.state["indices"]
         positions = self.state["positions"]
         distances = np.linalg.norm(positions - self.state["pos"], axis=1)
-        new_positions = positions + delta.reshape(1, 3) * gaussian_weights(
-            distances / self.radius
-        ).reshape(-1, 1)
-        self.m.update_vertices(indices, new_positions)
+        weights = gaussian_weights(distances / self.radius).reshape(-1, 1)
+        self.m.update_vertices(indices, positions + delta * weights)
 
     def stop(self):
         self.gizmo.visible = False
@@ -222,18 +238,18 @@ def on_mouse(e):
             renderer.request_draw()
             face_index = e.pick_info["face_index"]
             face_coord = e.pick_info["face_coord"]
-            vii = mesh.dynamic_mesh.faces[face_index]
-            if True:
+            if False:
                 # Select closest vertex
-                vi = vii[np.argmax(face_coord)]
-                morpher.start(e.x, e.y, vi)
+                vii = mesh.dynamic_mesh.faces[face_index]
+                vi = int(vii[np.argmax(face_coord)])
+                morpher.start_from_vertex((e.x, e.y), vi)
             else:
                 # Calculate position in between vertices
-                raise NotImplementedError()
+                morpher.start_from_face((e.x, e.y), face_index, face_coord)
     elif e.type == "pointer_up" and e.button == 1:
         morpher.stop()
     elif e.type == "pointer_move":
-        morpher.move(e.x, e.y)
+        morpher.move((e.x, e.y))
         renderer.request_draw()
 
 

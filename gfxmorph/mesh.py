@@ -500,19 +500,30 @@ class DynamicMesh(BaseDynamicMesh):
         vi = np.nanargmin(distances)
         return vi, distances[vi]
 
-    def select_vertices_over_surface(self, ref_vertex, max_distance):
+    def select_vertices_over_surface(self, ref_vertices, ref_distances, max_distance):
         """Given a reference vertex, select more nearby vertices (over the surface).
         Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
+
         """
+
+        # Init
         positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
 
-        vi0 = int(ref_vertex)
-        # p0 = positions[vi0]
-        # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
-        selected_vertices = {vi0}
-        vertices2check = [(vi0, 0)]
+        # Allos singleton use
+        if isinstance(ref_vertices, (int, np.int32, np.int64)):
+            ref_vertices = [ref_vertices]
+        if isinstance(ref_distances, (float, int, np.float32, np.float64)):
+            ref_distances = [ref_distances]
+
+        # The list of vertices to check for neighbours
+        vertices2check = []
+        for vi, sdist in zip(ref_vertices, ref_distances):
+            vertices2check.append((vi, sdist))
+
+        # Walk over the surface
+        selected_vertices = {vi for vi, _ in vertices2check}
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
             p1 = positions[vi1]
