@@ -44,6 +44,9 @@ class MeshContainer:
             ),
         )
 
+    def cancel(self):
+        self.undo_tracker.cancel(self.dynamic_mesh)
+
     def commit(self):
         self.undo_tracker.commit()
 
@@ -114,6 +117,11 @@ class Morpher:
         self.radius = 0.3
 
     def start_from_vertex(self, xy, vi):
+        """Initiate a drag, based on a vertex index.
+
+        This method may feel less precise than using ``start_from_face``,
+        but is included for cases where picking capabilities are limited.
+        """
         assert isinstance(vi, int)
 
         vii = [vi]
@@ -124,6 +132,15 @@ class Morpher:
         return self._start(xy, vii, distances, pos, normal)
 
     def start_from_face(self, xy, fi, coord):
+        """Initiate a drag, based on a face index and face coordinates.
+
+        This allows precise grabbing of the mesh. The face coordinates
+        are barycentric coordinates; for each vertex it indicates how
+        close the grab-point is to that vertex, with 1 being on the
+        vertex and 0 being somewhere on the edge between the other two
+        vertices. A value of (0.5, 0.5, 0.5) represents the center of
+        the face.
+        """
         assert isinstance(fi, int)
         assert isinstance(coord, (tuple, list)) and len(coord) == 3
 
@@ -133,11 +150,14 @@ class Morpher:
         normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
         normal = normal / np.linalg.norm(normal)
         distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
+
         return self._start(xy, vii, distances, pos, normal)
 
     def _start(self, xy, vii, distances, pos, normal):
-        if self.state:
-            pass  # todo: probably need to reset state
+        # Cancel any pending changes to the mesh. If we were already dragging,
+        # that operation is cancelled. If other code made uncomitted changes,
+        # these are discarted too (code should have comitted).
+        mesh.cancel()
 
         # Bring gizmo into place
         self.gizmo.visible = True
@@ -170,6 +190,7 @@ class Morpher:
         }
 
     def move(self, xy):
+        """Process a mouse movement."""
         if self.state is None:
             return
 
@@ -195,9 +216,13 @@ class Morpher:
         )
 
     def stop(self):
+        """Stop the morph drag and commit the result."""
+        # AK: I thought of also introducing a cancel method, but it
+        # feels more natural to just finish the drag and then undo it.
         self.gizmo.visible = False
-        self.state = None
-        mesh.commit()
+        if self.state:
+            self.state = None
+            mesh.commit()
 
 
 morpher = Morpher(mesh.dynamic_mesh, gizmo)
