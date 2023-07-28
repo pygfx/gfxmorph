@@ -12,7 +12,7 @@ from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
 
 
-# --- Setup the mesh
+# %% Setup the mesh
 
 
 class MeshContainer:
@@ -60,7 +60,7 @@ class MeshContainer:
 mesh = MeshContainer()
 
 
-# --- Setup the viz
+# %% Setup the viz
 
 
 renderer = gfx.WgpuRenderer(WgpuCanvas())
@@ -73,15 +73,24 @@ scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
 scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
 scene.add(mesh.ob1, mesh.ob2)
 
-# A Little helper
+# Gizmo helper
 gizmo = gfx.Mesh(
     gfx.cylinder_geometry(0.05, 0.05, 0.5, radial_segments=16),
     gfx.MeshPhongMaterial(color="yellow"),
 )
+gizmo.visible = False
 scene.add(gizmo)
 
+# Radius helper
+radius_helper = gfx.Mesh(
+    smooth_sphere_geometry(subdivisions=2),
+    gfx.MeshPhongMaterial(color="yellow", opacity=0.2, side="front"),
+)
+radius_helper.visible = False
+scene.add(radius_helper)
 
-# --- Functions to modify the mesh
+
+# %% Functions to modify the mesh
 
 
 def add_sphere(dx=0, dy=0, dz=0):
@@ -96,7 +105,7 @@ def add_sphere(dx=0, dy=0, dz=0):
     renderer.request_draw()
 
 
-# --- Morph logic
+# %% Morph logic
 
 
 def softlimit(i, limit):
@@ -227,9 +236,15 @@ class Morpher:
 
 morpher = Morpher(mesh.dynamic_mesh, gizmo)
 
-# --- Create key bindings
+# %% Create key and mouse bindings
 
 print(__doc__)
+
+
+# Create controller, also bind it to shift, so we can always hit shift and use the camera
+controller = gfx.OrbitController(camera, register_events=renderer)
+for k in list(controller.controls.keys()):
+    controller.controls["shift+" + k] = controller.controls[k]
 
 
 @renderer.add_event_handler("key_down")
@@ -249,38 +264,60 @@ def on_key(e):
         renderer.request_draw()
 
 
-@mesh.ob1.add_event_handler("pointer_down", "pointer_up", "pointer_move")
+@mesh.ob1.add_event_handler(
+    "pointer_down", "pointer_up", "pointer_move", "pointer_leave", "wheel"
+)
 def on_mouse(e):
-    if e.type == "pointer_down" and e.button == 1:
-        if e.pick_info["world_object"] is mesh.ob1:
-            mesh.ob1.set_pointer_capture(e.pointer_id, e.root)
-            renderer.request_draw()
-            face_index = e.pick_info["face_index"]
-            face_coord = e.pick_info["face_coord"]
-            if False:
-                # Select closest vertex
-                vii = mesh.dynamic_mesh.faces[face_index]
-                vi = int(vii[np.argmax(face_coord)])
-                morpher.start_from_vertex((e.x, e.y), vi)
-            else:
-                # Calculate position in between vertices
-                morpher.start_from_face((e.x, e.y), face_index, face_coord)
+    if "Shift" in e.modifiers:
+        radius_helper.visible = False
+        renderer.request_draw()
+    elif e.type == "pointer_down" and e.button == 1:
+        mesh.ob1.set_pointer_capture(e.pointer_id, e.root)
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+        if False:
+            # Select closest vertex
+            vii = mesh.dynamic_mesh.faces[face_index]
+            vi = int(vii[np.argmax(face_coord)])
+            morpher.start_from_vertex((e.x, e.y), vi)
+        else:
+            # Calculate position in between vertices
+            morpher.start_from_face((e.x, e.y), face_index, face_coord)
+        renderer.request_draw()
     elif e.type == "pointer_up" and e.button == 1:
         morpher.stop()
-    elif e.type == "pointer_move":
-        morpher.move((e.x, e.y))
         renderer.request_draw()
+    elif e.type == "pointer_move":
+        if morpher.state:
+            morpher.move((e.x, e.y))
+            radius_helper.visible = False
+            renderer.request_draw()
+        else:
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            vii = mesh.dynamic_mesh.faces[face_index]
+            coord_vec = np.array(face_coord).reshape(3, 1)
+            pos = (mesh.dynamic_mesh.positions[vii] * coord_vec).sum(axis=0) / np.sum(
+                coord_vec
+            )
+            radius_helper.local.position = pos
+            radius_helper.local.scale = morpher.radius
+            radius_helper.visible = True
+            renderer.request_draw()
+    elif e.type == "pointer_leave":
+        radius_helper.visible = False
+        renderer.request_draw()
+    elif e.type == "wheel":
+        morpher.radius *= 2 ** (e.dy / 500)
+        radius_helper.local.scale = morpher.radius
+        renderer.request_draw()
+        e.cancel()
 
 
-# --- Run
+# %% Run
 
 add_sphere()
 add_sphere(3, 0, 0)
-
-
-# Important to load the controller after binding the morph events, otherwise
-# we cannot cancel events.
-controller = gfx.OrbitController(camera, register_events=renderer)
 
 
 def animate():
