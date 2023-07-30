@@ -15,6 +15,12 @@ from gfxmorph import DynamicMesh, MeshUndoTracker
 # %% Setup the mesh
 
 
+class DynamicMeshGeometryWithSizes(DynamicMeshGeometry):
+    def new_vertices_buffer(self, mesh):
+        super().new_vertices_buffer(mesh)
+        self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
+
+
 class MeshContainer:
     """Just a container to keep all stuff related to the mesh together."""
 
@@ -27,20 +33,30 @@ class MeshContainer:
         self.dynamic_mesh.track_changes(self.undo_tracker)
 
         # Tracker that maps the mesh to a gfx Geometry (with live updates)
-        self.geometry = DynamicMeshGeometry()
+        self.geometry = DynamicMeshGeometryWithSizes()
         self.dynamic_mesh.track_changes(self.geometry)
 
         # Two world objects, one for the front and one for the back (so we can clearly see holes)
         self.ob1 = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                color="#6ff", flat_shading=True, side="FRONT"
+                color="#6ff", flat_shading=False, side="FRONT"
             ),
         )
         self.ob2 = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                color="#900", flat_shading=True, side="BACK"
+                color="#900", flat_shading=False, side="BACK"
+            ),
+        )
+        self.ob3 = gfx.Mesh(
+            self.geometry,
+            gfx.materials.MeshPhongMaterial(
+                color="#777",
+                opacity=0.1,
+                wireframe=True,
+                wireframe_thickness=2,
+                side="FRONT",
             ),
         )
 
@@ -71,7 +87,14 @@ camera.show_object((0, 0, 0, 8))
 scene = gfx.Scene()
 scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
 scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
-scene.add(mesh.ob1, mesh.ob2)
+scene.add(mesh.ob1, mesh.ob2, mesh.ob3)
+
+# Helper to show points being grabbed
+vertex_highlighter = gfx.Points(
+    mesh.geometry,
+    gfx.PointsMaterial(color="yellow", vertex_sizes=True),
+)
+scene.add(vertex_highlighter)
 
 # Gizmo helper
 gizmo = gfx.Mesh(
@@ -167,6 +190,7 @@ class Morpher:
         # that operation is cancelled. If other code made uncomitted changes,
         # these are discarted too (code should have comitted).
         mesh.cancel()
+        self.stop()
 
         # Bring gizmo into place
         self.gizmo.visible = True
@@ -187,6 +211,10 @@ class Morpher:
         # If for some (future) reason, the selection is empty, cancel
         if len(indices) == 0:
             return
+
+        # Update data for highlighter
+        mesh.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
+        mesh.geometry.sizes.update_range(indices.min(), indices.max() + 1)
 
         # Store state
         self.state = {
@@ -230,6 +258,9 @@ class Morpher:
         # feels more natural to just finish the drag and then undo it.
         self.gizmo.visible = False
         if self.state:
+            indices = self.state["indices"]
+            mesh.geometry.sizes.data[indices] = 0
+            mesh.geometry.sizes.update_range(indices.min(), indices.max() + 1)
             self.state = None
             mesh.commit()
 
