@@ -49,9 +49,6 @@ class BaseDynamicMesh:
         self._faces_normals_buf = np.zeros((8, 3), np.float32)
         self._positions_buf = np.zeros((8, 3), np.float32)
         self._normals_buf = np.zeros((8, 3), np.float32)
-        self._colors_buf = np.zeros((8, 4), np.float32)
-        # todo: Maybe face colors are more convenient?
-        # todo: also, are colors better managed outside of this class?
 
         # We set unused positions to nan, so that code that uses the
         # full buffer does not accidentally use invalid vertex positions.
@@ -65,7 +62,6 @@ class BaseDynamicMesh:
         # The vertex array views. Not much harm can be done to these.
         self._positions = self._positions_buf[:0]
         self._normals = self._normals_buf[:0]
-        self._colors = self._colors_buf[:0]
 
         # Reverse map
         # This array is jagged, because the number of faces incident
@@ -169,14 +165,12 @@ class BaseDynamicMesh:
         assert len(self._faces_normals) == nfaces
         assert len(self._positions) == nverts
         assert len(self._normals) == nverts
-        assert len(self._colors) == nverts
 
         # Check that the views are based on the corresppnding buffers
         assert self._faces.base is self._faces_buf
         assert self._faces_normals.base is self._faces_normals_buf
         assert self._positions.base is self._positions_buf
         assert self._normals.base is self._normals_buf
-        assert self._colors.base is self._colors_buf
 
         # Check vertex2faces map
         vertex2faces = make_vertex2faces(self.faces, nverts)
@@ -318,12 +312,9 @@ class BaseDynamicMesh:
             self._positions_buf[nverts2:] = np.nan
             self._normals_buf = np.zeros((new_size, 3), np.float32)
             self._normals_buf[:nverts1] = self._normals
-            self._colors_buf = np.zeros((new_size, 4), np.float32)
-            self._colors_buf[:nverts1] = self._colors
         # Reset views
         self._positions = self._positions_buf[:nverts2]
         self._normals = self._normals_buf[:nverts2]
-        self._colors = self._colors_buf[:nverts2]
         # Notify
         if new_buffers:
             for tracker in self._change_trackers.values():
@@ -349,17 +340,13 @@ class BaseDynamicMesh:
             self._positions_buf[nverts:] = np.nan
             self._normals_buf = np.zeros((new_size, 3), np.float32)
             self._normals_buf[:nverts] = self._normals[:nverts]
-            self._colors_buf = np.zeros((new_size, 4), np.float32)
-            self._colors_buf[:nverts] = self._colors[:nverts]
         else:
             # Tidy up
             self._positions_buf[nverts:] = np.nan
             self._normals_buf[nverts:] = 0
-            self._colors_buf[nverts:] = 0
         # Reset views
         self._positions = self._positions_buf[:nverts]
         self._normals = self._normals_buf[:nverts]
-        self._colors = self._colors_buf[:nverts]
         # Notify
         if new_buffers:
             for tracker in self._change_trackers.values():
@@ -719,7 +706,6 @@ class BaseDynamicMesh:
         try:
             self._allocate_vertices(n)
             self._positions[n1:] = positions
-            self._colors[n1:] = 0.7, 0.7, 0.7, 1.0
 
             # Update reverse map
             vertex2faces.extend([] for i in range(n))
@@ -808,7 +794,7 @@ class BaseDynamicMesh:
 
         try:
             # Swap the vertices themselves
-            for a in [self._positions, self._normals, self._colors]:
+            for a in [self._positions, self._normals]:
                 a[indices1], a[indices2] = a[indices2], a[indices1]
 
             # Update the faces that refer to the moved indices

@@ -18,6 +18,9 @@ from gfxmorph import DynamicMesh, MeshUndoTracker
 class DynamicMeshGeometryWithSizes(DynamicMeshGeometry):
     def new_vertices_buffer(self, mesh):
         super().new_vertices_buffer(mesh)
+        # Add sizes so we can show selected vertices.
+        # If we'd instead use colors to show selected vertices, that'd
+        # work in much the same way.
         self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
 
 

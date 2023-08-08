@@ -146,7 +146,6 @@ class DynamicMesh(BaseDynamicMesh):
             self._faces_buf,
             self._positions_buf,
             self._normals_buf,
-            self._colors_buf,
         )
         nb = sum([a.nbytes for a in arrays if a is not None])
         mem = f"{nb/2**20:0.2f} MiB" if nb > 2**20 else f"{nb/2**10:0.2f} KiB"
@@ -512,7 +511,7 @@ class DynamicMesh(BaseDynamicMesh):
         the mesh" on a precise point within a face, or using specific
         shapes (e.g. a line piece) to grab the mesh.
 
-        Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
+        Returns xxxx (maybe also include sdists).
         """
 
         # Init

@@ -22,7 +22,6 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     def new_vertices_buffer(self, mesh):
         self.positions = gfx.Buffer(mesh.positions.base)
         self.normals = gfx.Buffer(mesh.normals.base)
-        # self.colors = gfx.Buffer(colors)
 
     def new_faces_buffer(self, mesh):
         self.indices = gfx.Buffer(mesh.faces.base)
