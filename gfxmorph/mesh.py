@@ -501,9 +501,18 @@ class DynamicMesh(BaseDynamicMesh):
         return vi, distances[vi]
 
     def select_vertices_over_surface(self, ref_vertices, ref_distances, max_distance):
-        """Given a reference vertex, select more nearby vertices (over the surface).
-        Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
+        """Select nearby vertices, starting from the given reference vertices.
 
+        Walks over the surface from the reference vertices to include
+        more vertices until the distance to a vertex (by walking over
+        the edges) exceeds the max_distance. Each reference vertex is
+        also associated with a starting distance.
+
+        By allowing multiple reference vertices it is possible to "grab
+        the mesh" on a precise point within a face, or using specific
+        shapes (e.g. a line piece) to grab the mesh.
+
+        Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
         """
 
         # Init
@@ -511,7 +520,7 @@ class DynamicMesh(BaseDynamicMesh):
         faces = self.faces
         vertex2faces = self.vertex2faces
 
-        # Allos singleton use
+        # Allow singleton use
         if isinstance(ref_vertices, (int, np.int32, np.int64)):
             ref_vertices = [ref_vertices]
         if isinstance(ref_distances, (float, int, np.float32, np.float64)):

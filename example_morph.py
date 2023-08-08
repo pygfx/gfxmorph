@@ -53,7 +53,7 @@ class MeshContainer:
             self.geometry,
             gfx.materials.MeshPhongMaterial(
                 color="#777",
-                opacity=0.1,
+                opacity=0.05,
                 wireframe=True,
                 wireframe_thickness=2,
                 side="FRONT",
@@ -206,8 +206,6 @@ class Morpher:
         abs_distances = np.linalg.norm(positions - pos, axis=1)
         weights = gaussian_weights(abs_distances / self.radius).reshape(-1, 1)
 
-        # todo: indicate the selected vertices somehow, maybe with dots?
-
         # If for some (future) reason, the selection is empty, cancel
         if len(indices) == 0:
             return
@@ -296,7 +294,12 @@ def on_key(e):
 
 
 @mesh.ob1.add_event_handler(
-    "pointer_down", "pointer_up", "pointer_move", "pointer_leave", "wheel"
+    "pointer_down",
+    "pointer_up",
+    "pointer_move",
+    "pointer_enter",
+    "pointer_leave",
+    "wheel",
 )
 def on_mouse(e):
     if "Shift" in e.modifiers:
@@ -335,8 +338,13 @@ def on_mouse(e):
             radius_helper.local.scale = morpher.radius
             radius_helper.visible = True
             renderer.request_draw()
+    elif e.type == "pointer_enter":
+        radius_helper.visible = True
+        mesh.ob3.material.opacity = 0.075
+        renderer.request_draw()
     elif e.type == "pointer_leave":
         radius_helper.visible = False
+        mesh.ob3.material.opacity = 0.05
         renderer.request_draw()
     elif e.type == "wheel":
         morpher.radius *= 2 ** (e.dy / 500)
