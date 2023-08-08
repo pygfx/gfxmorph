@@ -188,7 +188,7 @@ class Morpher:
 
         return self._start(xy, vii, distances, pos, normal)
 
-    def _start(self, xy, vii, distances, pos, normal):
+    def _start(self, xy, vii, ref_distances, pos, normal):
         # Cancel any pending changes to the mesh. If we were already dragging,
         # that operation is cancelled. If other code made uncomitted changes,
         # these are discarted too (code should have comitted).
@@ -202,12 +202,14 @@ class Morpher:
 
         # Select vertices
         search_distance = self.radius * 3  # 3 x std
-        indices = self.m.select_vertices_over_surface(vii, distances, search_distance)
+        indices, surf_distances = self.m.select_vertices_over_surface(
+            vii, ref_distances, search_distance
+        )
         positions = self.m.positions[indices]
 
         # Pre-calculate deformation weights
-        abs_distances = np.linalg.norm(positions - pos, axis=1)
-        weights = gaussian_weights(abs_distances / self.radius).reshape(-1, 1)
+        # abs_distances = np.linalg.norm(positions - pos, axis=1)
+        weights = gaussian_weights(surf_distances / self.radius).reshape(-1, 1)
 
         # If for some (future) reason, the selection is empty, cancel
         if len(indices) == 0:

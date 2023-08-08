@@ -549,4 +549,6 @@ class DynamicMesh(BaseDynamicMesh):
                         vertices2check.append((vi2, sdist))
 
         # Return as ndarray of indices
-        return np.array(sorted(selected_vertices.keys()), np.int32)
+        verts_array = np.array(sorted(selected_vertices.keys()), np.int32)
+        dists_array = np.array([selected_vertices[vi] for vi in verts_array], "f4")
+        return verts_array, dists_array
