@@ -202,14 +202,14 @@ class Morpher:
 
         # Select vertices
         search_distance = self.radius * 3  # 3 x std
-        indices, surf_distances = self.m.select_vertices_over_surface(
+        indices, geodesic_distances = self.m.select_vertices_over_surface(
             vii, ref_distances, search_distance
         )
         positions = self.m.positions[indices]
 
         # Pre-calculate deformation weights
-        # abs_distances = np.linalg.norm(positions - pos, axis=1)
-        weights = gaussian_weights(surf_distances / self.radius).reshape(-1, 1)
+        # eucledian_distances = np.linalg.norm(positions - pos, axis=1)
+        weights = gaussian_weights(geodesic_distances / self.radius).reshape(-1, 1)
 
         # If for some (future) reason, the selection is empty, cancel
         if len(indices) == 0:

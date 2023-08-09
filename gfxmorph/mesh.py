@@ -500,20 +500,42 @@ class DynamicMesh(BaseDynamicMesh):
         return vi, distances[vi]
 
     def select_vertices_over_surface(
-        self, ref_vertices, ref_distances, max_distance, distance_measure="surface"
+        self, ref_vertices, ref_distances, max_distance, distance_measure="smooth2"
     ):
         """Select nearby vertices, starting from the given reference vertices.
 
         Walks over the surface from the reference vertices to include
         more vertices until the distance to a vertex (by walking over
-        the edges) exceeds the max_distance. Each reference vertex is
+        the surface) exceeds the max_distance. Each reference vertex is
         also associated with a starting distance.
 
         By allowing multiple reference vertices it is possible to "grab
         the mesh" on a precise point within a face, or using specific
         shapes (e.g. a line piece) to grab the mesh.
 
-        Returns xxxx (maybe also include sdists).
+        Parameters
+        ----------
+        ref_vertices : int or list or ndarray
+            A single vertex index, or a set of vertex indices, to start
+            the selection from.
+        ref_distances : float or list or ndarray
+            The initial distance, or distances, corresponding to the
+            reference vertices.
+        max_distance : float
+            The maximum (geodesic) distance that a vertex can have to
+            be included in the selection.
+        distance_measure : str
+            The method to calculate the geodesic distance. With "edge"
+            it sums the edge lengts, with "smooth1" it smooths the path,
+            with "smooth2" it does this smarter to prevent cutting
+            corners. Default "smooth2"
+
+        Returns
+        -------
+        vertex_indices : ndarray
+            The selected vertices.
+        distances : ndarray
+            The corresponding (geodesic) distances.
         """
 
         # Init
@@ -530,11 +552,15 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Select path class
         if distance_measure == "edge":
-            MeshPath = MeshEdgePath  # noqa
-        elif distance_measure == "surface":
-            MeshPath = MeshSurfacePath  # noqa
+            MeshPath = MeshPathEdge  # noqa
+        elif distance_measure == "smooth1":
+            MeshPath = MeshPathSmooth1  # noqa
+        elif distance_measure == "smooth2":
+            MeshPath = MeshPathSmooth2  # noqa
         else:
-            raise ValueError("The distance_measure arg must be 'edge' or 'surface'.")
+            raise ValueError(
+                "The distance_measure arg must be 'edge' 'smooth1' or 'smooth2'."
+            )
 
         # The list of vertices to check for neighbours
         vertices2check = []
@@ -547,7 +573,6 @@ class DynamicMesh(BaseDynamicMesh):
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
             path1 = selected_vertices[vi1]
-            p1 = positions[vi1]
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
                 p2 = positions[vi2]
                 n2 = normals[vi2]
@@ -568,6 +593,8 @@ class DynamicMesh(BaseDynamicMesh):
 
 
 class BaseMeshPath:
+    """Base class to help calculate the geodesic distance of a path over a surface."""
+
     __slots__ = ["positions", "normals", "edist", "dist"]
 
     mode = ""
@@ -593,7 +620,11 @@ class BaseMeshPath:
             self.edist += d
 
 
-class MeshEdgePath(BaseMeshPath):
+class MeshPathEdge(BaseMeshPath):
+    """Calculate the geodesic distance by simply summing the lengths
+    of edges that the path goes over.
+    """
+
     __slots__ = []
 
     def _process_new_position(self):
@@ -601,7 +632,12 @@ class MeshEdgePath(BaseMeshPath):
         self.dist = self.edist
 
 
-class MeshSurfacePath(BaseMeshPath):
+class MeshPathSmooth1(BaseMeshPath):
+    """Calculate the geodesic distance by (virtually) repositioning
+    visited points over the surface. Simply by putting it in between
+    the neighboring points. Simple, but it (quite literally) cuts corners.
+    """
+
     __slots__ = []
 
     def _process_new_position(self):
@@ -617,6 +653,37 @@ class MeshSurfacePath(BaseMeshPath):
                 self.dist += delta_dist
 
     def _refine_position(self, p1, p2, p3, n1, n2, n3):
+        # Get current distance
+        dist1 = np.linalg.norm(p1 - p2)
+        dist3 = np.linalg.norm(p2 - p3)
+        dist_before = dist1 + dist3
+        if dist1 == 0 or dist3 == 0:
+            return p2, 0
+
+        # Get the point on the line between p1 and p3, but positioned relatively
+        f1 = 1 - dist1 / dist_before
+        f3 = 1 - dist3 / dist_before
+        assert 0.999 < (f1 + f3) < 1.001
+        p = f1 * p1 + f3 * p3
+
+        # Calculate new distance
+        dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
+        delta_dist = dist_after - dist_before
+
+        return p, delta_dist
+
+
+class MeshPathSmooth2(MeshPathSmooth1):
+    """Calculate the geodesic distance by (virtually) repositioning
+    visited points over the surface. This is still a pretty crude
+    estimate of the "real" geodesic distance, but quite a bit more
+    precise than simply summing the edge lenghts.
+    """
+
+    __slots__ = []
+
+    def _refine_position(self, p1, p2, p3, n1, n2, n3):
+        # Get current distance
         dist1 = np.linalg.norm(p1 - p2)
         dist3 = np.linalg.norm(p2 - p3)
         dist_before = dist1 + dist3
@@ -635,12 +702,12 @@ class MeshSurfacePath(BaseMeshPath):
         assert 0.999 < (f1 + f3) < 1.001
         p_between = f1 * p1 + f3 * p3
 
-        # Project the point on the plane
+        # Project the point on the surface. The surface is estimated
+        # by the plane defined by p2 and its normal.
         p = p_between - np.dot(n2, (p_between - p2)) * n2
 
+        # Calculate new distance
         dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
         delta_dist = dist_after - dist_before
-        # dist3_after =  np.linalg.norm(p - p3)
-        # delta_dist = dist3_after - dist3
 
         return p, delta_dist

@@ -4,7 +4,7 @@ import pytest
 from gfxmorph import maybe_pygfx
 from gfxmorph import DynamicMesh
 from testutils import run_tests
-from gfxmorph.mesh import MeshSurfacePath
+from gfxmorph.mesh import MeshPathSmooth1, MeshPathSmooth2
 
 
 def test_mesh_basics():
@@ -113,80 +113,100 @@ def test_mesh_selection():
     assert len(selected1) == len(vertices)
 
 
-def test_MeshSurfacePath():
-    """This test validates the test_MeshSurfacePath class directly."""
+def test_mesh_path_distance():
+    """This test validates the test_MeshPathSmooth2 class directly."""
 
-    # We consider a flat surface
-    n = np.array([0, 0, 1], np.float32)
-
-    def follow_points(points):
-        path = MeshSurfacePath()
-        for p in points:
+    def follow_points1(points):
+        path = MeshPathSmooth1()
+        for p, n in zip(points, normals):
             new_path = path.add(p, n)
             assert new_path.dist >= path.dist
-            assert new_path.dist <= new_path.edist
             path = new_path
         return path
 
-    # Create a bunch of points in a straight line.
-    # Steps of 0.1, so the reference distance is 1.0, making the math easier.
-    points1 = np.array([[i / 10, 0, 0] for i in range(11)], np.float32)
+    def follow_points2(points):
+        path = MeshPathSmooth2()
+        for p, n in zip(points, normals):
+            new_path = path.add(p, n)
+            assert new_path.dist >= path.dist
+            assert new_path.dist <= new_path.edist * 1.0000001
+            path = new_path
+        return path
 
-    # For a straight line, the surface distance is as expected
-    path = follow_points(points1)
-    assert path.edist == 1.0
+    # Simple a bunch of points on a semi-circle. The points are on a curved line.
+    # But from the surface pov this is a straight line, i.e. a geodesic.
+    t = np.linspace(0, np.pi, 11)
+    points1 = np.zeros((11, 3), np.float32)
+    points1[:, 0] = np.sin(t)
+    points1[:, 1] = np.cos(t)
+
+    # We can use these as surface normals
+    normals = points1.copy()
+
+    # Scale the points, so that each steps is 0.1, and the reference distance is 1.0, making the math easier.
+    points1 /= 3.1286892
+    assert 0.1, np.linalg.norm(points1[0] - points1[1]) < 0.10001
+
+    # Follow this straight line with the smooth1 approach,
+    # just to show that it does cut corners. Not good!
+    path = follow_points1(points1)
+    assert 0.99999 < path.edist < 1.000001
+    assert 0.93 < path.dist < 0.94  # Cutting corners makes the route 6% shorter
+
+    # Follow the same straight linem but with the smooth2 approach,
+    # that attempt to follow the surface. Much better!
+    path = follow_points2(points1)
+    assert 0.99999 < path.edist < 1.000001
     assert 0.99999 < path.dist < 1.000001  # 0% error
 
-    # Another set of points, a subtle zig-zag
-    points2 = points1.copy()
-    points2[1:-1:2, 1] = -0.02
-    points2[2:-1:2, 1] = +0.02
+    # Now displace the points, simulating the irregular patterns of triangles on a mesh ...
 
+    # A subtle zig-zag
+    points2 = points1.copy()
+    points2[1:-1:2, 2] = -0.02
+    points2[2:-1:2, 2] = +0.02
     # The path is a bit longer, but we manage to bring it back!
-    path = follow_points(points2)
+    path = follow_points2(points2)
     assert 1.06 < path.edist < 1.07  # The path is 6% longer
     assert 1.00 < path.dist < 1.01  # Less than 1% left
 
-    # Another set of points, a moderate zig-zag.
+    # A moderate zig-zag.
     # This represents a worst-case path through a mesh with normally sized triangles.
     points2 = points1.copy()
-    points2[1:-1:2, 1] = -0.05
-    points2[2:-1:2, 1] = +0.05
-
+    points2[1:-1:2, 2] = -0.05
+    points2[2:-1:2, 2] = +0.05
     # The path is much longer, but we manage to bring it back!
-    path = follow_points(points2)
+    path = follow_points2(points2)
     assert 1.35 < path.edist < 1.36  # The path is 36% longer
     assert 1.03 < path.dist < 1.04  # Just about 3% left
 
-    # Another set of points, a big zig-zag.
+    # A big zig-zag.
     # This represents a very worst-case path through very narrow triangles.
     points2 = points1.copy()
-    points2[1:-1:2, 1] = -0.2
-    points2[2:-1:2, 1] = +0.2
-
+    points2[1:-1:2, 2] = -0.2
+    points2[2:-1:2, 2] = +0.2
     # The path is MUCH longer, but we manage to bring it back!
-    path = follow_points(points2)
+    path = follow_points2(points2)
     assert 3.74 < path.edist < 3.75  # The path is 274% longer
-    assert 1.26 < path.dist < 1.27  # Just 27% left
+    assert 1.27 < path.dist < 1.28  # Just 27% left
 
-    # Another set of points, a straight line with a few points moved
-    # to the side. Depending how the surface-distance is calculated,
-    # the opposing sides of the zig-zag may help iron out the line.
-    # This use-case does not have this effect. The current
-    # implementation does not really suffer from this effect and is
-    # able to "straighten"  this line just as well.
+    # A straight line with a few points moved to the side.
+    # Depending on how the surface-distance is calculated, the opposing
+    # sides of the zig-zag may help iron out the line. This use-case
+    # does not have this effect. The current implementation does not
+    # really suffer from this effect and is able to "straighten"  this
+    # line just as well.
     points2 = points1.copy()
-    points2[1:-1:4, 1] = -0.1
-
+    points2[1:-1:4, 2] = -0.1
     # The path is longer and we can straighten it out.
-    path = follow_points(points2)
+    path = follow_points2(points2)
     assert 1.24 < path.edist < 1.25  # The path is 25% longer
     assert 1.02 < path.dist < 1.03  # Just 3% left
 
 
 def test_mesh_selection_precision():
     """This test validates the precision of the mesh selection.
-    It implicitly tests the MeshSurfacePath class on real mesh data.
+    It implicitly tests the MeshPathSmooth2 class on real mesh data.
     """
 
     # Create a mesh
@@ -225,7 +245,7 @@ def test_mesh_selection_precision():
 
     # Select vertices SURFACE
     max_dist = ideal_dist * 1.1
-    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "surface")
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "smooth2")
     assert len(selected) < 80
     assert not set(vii_middle).difference(selected)  # all middle points are selected
 
@@ -259,7 +279,7 @@ def test_mesh_selection_precision():
 
     # Select vertices SURFACE
     max_dist = ideal_dist * 1.3
-    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "surface")
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "smooth2")
     assert len(selected) < 102
     assert not set(vii_middle).difference(selected)  # all middle points are selected
 
