@@ -97,18 +97,18 @@ def test_mesh_selection():
     assert d2 == 1.0
 
     # Select over surface
-    selected1 = m.select_vertices_over_surface(i1, 0.5)
-    selected2 = m.select_vertices_over_surface(i2, 0.5)
+    selected1 = m.select_vertices_over_surface(i1, 0, 0.5)
+    selected2 = m.select_vertices_over_surface(i2, 0, 0.5)
 
     # Since this mesh is very regular, the selected number must be the same
     assert len(selected1) == 7
     assert len(selected2) == 7
 
     # Select over surface, with very high distance, so that the whole mesh is selected
-    selected1 = m.select_vertices_over_surface(i1, 4)
-    selected2 = m.select_vertices_over_surface(i2, 4)
+    selected1 = m.select_vertices_over_surface(i1, 0, 4)
+    selected2 = m.select_vertices_over_surface(i2, 0, 4)
 
-    assert selected1 == selected2
+    assert np.all(selected1 == selected2)
     assert len(selected1) == len(vertices)
 
 

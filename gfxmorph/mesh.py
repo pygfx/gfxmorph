@@ -146,7 +146,6 @@ class DynamicMesh(BaseDynamicMesh):
             self._faces_buf,
             self._positions_buf,
             self._normals_buf,
-            self._colors_buf,
         )
         nb = sum([a.nbytes for a in arrays if a is not None])
         mem = f"{nb/2**20:0.2f} MiB" if nb > 2**20 else f"{nb/2**10:0.2f} KiB"
@@ -500,29 +499,56 @@ class DynamicMesh(BaseDynamicMesh):
         vi = np.nanargmin(distances)
         return vi, distances[vi]
 
-    def select_vertices_over_surface(self, ref_vertex, max_distance):
-        """Given a reference vertex, select more nearby vertices (over the surface).
-        Returns a dict mapping vertex indices to dicts containing {pos, color, sdist, adist}.
+    def select_vertices_over_surface(self, ref_vertices, ref_distances, max_distance):
+        """Select nearby vertices, starting from the given reference vertices.
+
+        Walks over the surface from the reference vertices to include
+        more vertices until the distance to a vertex (by walking over
+        the edges) exceeds the max_distance. Each reference vertex is
+        also associated with a starting distance.
+
+        By allowing multiple reference vertices it is possible to "grab
+        the mesh" on a precise point within a face, or using specific
+        shapes (e.g. a line piece) to grab the mesh.
+
+        Returns xxxx (maybe also include sdists).
         """
+
+        # Init
         positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
 
-        vi0 = int(ref_vertex)
-        # p0 = positions[vi0]
-        # selected_vertices = {vi: dict(pos=[x1, y1, z1], color=color, sdist=0, adist=0)}
-        selected_vertices = {vi0}
-        vertices2check = [(vi0, 0)]
+        # Allow singleton use
+        if isinstance(ref_vertices, (int, np.int32, np.int64)):
+            ref_vertices = [ref_vertices]
+        if isinstance(ref_distances, (float, int, np.float32, np.float64)):
+            ref_distances = [ref_distances]
+
+        # The list of vertices to check for neighbours
+        vertices2check = []
+        selected_vertices = {}
+        for vi, sdist in zip(ref_vertices, ref_distances):
+            vertices2check.append((vi, sdist))
+            selected_vertices[vi] = sdist
+
+        # Walk over the surface
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
             p1 = positions[vi1]
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
-                if vi2 not in selected_vertices:
-                    p2 = positions[vi2]
-                    sdist = cumdist + np.linalg.norm(p2 - p1)
-                    if sdist < max_distance:
-                        # adist = np.linalg.norm(p2 - p0)
-                        # selected_vertices[vi2] = dict(pos=[xn, yn, zn], color=color, sdist=sdist, adist=adist)
-                        selected_vertices.add(vi2)
+                p2 = positions[vi2]
+                sdist = cumdist + np.linalg.norm(p2 - p1)
+                if sdist < max_distance:
+                    # We will have a closer look if we have not yet selected this
+                    # vertex, but also if we did but found a shorter route to it.
+                    # This means that we may sometimes do duplicate work. To avoid
+                    # this, we'd need a binary heap to store the front.
+                    if vi2 not in selected_vertices or sdist < selected_vertices[vi2]:
+                        selected_vertices[vi2] = sdist
                         vertices2check.append((vi2, sdist))
-        return selected_vertices
+
+        # Return as ndarray of indices
+        verts_array = np.array(sorted(selected_vertices.keys()), np.int32)
+        dists_array = np.array([selected_vertices[vi] for vi in verts_array], "f4")
+        return verts_array, dists_array

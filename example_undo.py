@@ -14,10 +14,10 @@ Key bindings:
 import json
 
 import numpy as np
+from wgpu.gui.auto import WgpuCanvas
 import pygfx as gfx
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
-from wgpu.gui.auto import WgpuCanvas
 import observ.store
 
 
@@ -54,7 +54,7 @@ class MeshContainer:
         )
 
     def get_state(self):
-        return self.undo_tracker.get_version()
+        return self.undo_tracker.commit()
 
     def set_state(self, state):
         self.undo_tracker.apply_version(self.dynamic_mesh, state)
@@ -136,11 +136,10 @@ def breakit():
 
 
 def repair():
-    v = mesh.undo_tracker.get_version()
     mesh.dynamic_mesh.repair(True)
 
     # Only store new state if there was indeed a change
-    if mesh.undo_tracker.get_version() > v:
+    if mesh.undo_tracker.has_pending_changes():
         save_mesh_state()
 
 
