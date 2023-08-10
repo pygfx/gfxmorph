@@ -82,7 +82,7 @@ def test_mesh_edges():
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
 
 
-def test_mesh_selection():
+def test_mesh_selection_basics():
     # Create a mesh
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)
     vertices = geo.positions.data
@@ -133,27 +133,26 @@ def test_mesh_path_distance():
             path = new_path
         return path
 
-    # Simple a bunch of points on a semi-circle. The points are on a curved line.
-    # But from the surface pov this is a straight line, i.e. a geodesic.
+    # Create a bunch of points on a semi-circle. The points are on a curved line,
+    # but from the surface pov this is a straight line, i.e. a geodesic.
+    # We make the distance between each two points 0.1, for easy math.
     t = np.linspace(0, np.pi, 11)
     points1 = np.zeros((11, 3), np.float32)
     points1[:, 0] = np.sin(t)
     points1[:, 1] = np.cos(t)
-
-    # We can use these as surface normals
-    normals = points1.copy()
-
-    # Scale the points, so that each steps is 0.1, and the reference distance is 1.0, making the math easier.
-    points1 /= 3.1286892
+    points1 /= 3.1286892  # precalculated
     assert 0.1, np.linalg.norm(points1[0] - points1[1]) < 0.10001
+
+    # Since we rotate around the origin, we can easily calculate the surface normals
+    normals = points1 / np.linalg.norm(points1, axis=1).reshape(-1, 1)
 
     # Follow this straight line with the smooth1 approach,
     # just to show that it does cut corners. Not good!
     path = follow_points1(points1)
     assert 0.99999 < path.edist < 1.000001
-    assert 0.93 < path.dist < 0.94  # Cutting corners makes the route 6% shorter
+    assert 0.93 < path.dist < 0.94  # 6% shorter
 
-    # Follow the same straight linem but with the smooth2 approach,
+    # Follow the same straight line but with the smooth2 approach,
     # that attempt to follow the surface. Much better!
     path = follow_points2(points1)
     assert 0.99999 < path.edist < 1.000001

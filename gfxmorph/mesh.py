@@ -526,14 +526,15 @@ class DynamicMesh(BaseDynamicMesh):
             be included in the selection.
         distance_measure : str
             The method to calculate the geodesic distance. With "edge"
-            it sums the edge lengts, with "smooth1" it smooths the path,
-            with "smooth2" it does this smarter to prevent cutting
-            corners. Default "smooth2"
+            it sums the edge lengths, with "smooth1" it smooths the
+            path to compensate for zig-zag patterns, with "smooth2" it
+            does this smarter to avoid deviating from the surface.
+            Default "smooth2".
 
         Returns
         -------
-        vertex_indices : ndarray
-            The selected vertices.
+        vertices : ndarray
+            The selected vertex indices.
         distances : ndarray
             The corresponding (geodesic) distances.
         """
@@ -587,9 +588,9 @@ class DynamicMesh(BaseDynamicMesh):
                         selected_vertices[vi2] = path2
                         vertices2check.append((vi2, path2.dist))
 
-        verts_array = np.array(sorted(selected_vertices.keys()), np.int32)
-        dists_array = np.array([selected_vertices[vi].dist for vi in verts_array], "f4")
-        return verts_array, dists_array
+        vertices = np.array(sorted(selected_vertices.keys()), np.int32)
+        distances = np.array([selected_vertices[vi].dist for vi in vertices], "f4")
+        return vertices, distances
 
 
 class BaseMeshPath:
@@ -611,13 +612,12 @@ class BaseMeshPath:
         new.normals = self.normals[-3:] + [n]
         new.edist = self.edist
         new.dist = self.dist
-        new._process_new_position()
+        d = np.linalg.norm(self.positions[-1] - p) if self.positions else 0
+        new._process_new_position(d)
         return new
 
-    def _process_new_position(self):
-        if len(self.positions) >= 2:
-            d = np.linalg.norm(self.positions[-2] - self.positions[-1])
-            self.edist += d
+    def _process_new_position(self, d):
+        self.edist += d
 
 
 class MeshPathEdge(BaseMeshPath):
@@ -627,9 +627,9 @@ class MeshPathEdge(BaseMeshPath):
 
     __slots__ = []
 
-    def _process_new_position(self):
-        super()._process_new_position()
-        self.dist = self.edist
+    def _process_new_position(self, d):
+        self.edist += d
+        self.dist += d
 
 
 class MeshPathSmooth1(BaseMeshPath):
@@ -640,17 +640,15 @@ class MeshPathSmooth1(BaseMeshPath):
 
     __slots__ = []
 
-    def _process_new_position(self):
-        if len(self.positions) >= 2:
-            d = np.linalg.norm(self.positions[-2] - self.positions[-1])
-            self.edist += d
-            self.dist += d
-            if len(self.positions) >= 3:
-                p, delta_dist = self._refine_position(
-                    *self.positions[-3:], *self.normals[-3:]
-                )
-                self.positions[-2] = p
-                self.dist += delta_dist
+    def _process_new_position(self, d):
+        self.edist += d
+        self.dist += d
+        if len(self.positions) >= 3:
+            p, delta_dist = self._refine_position(
+                *self.positions[-3:], *self.normals[-3:]
+            )
+            self.positions[-2] = p
+            self.dist += delta_dist
 
     def _refine_position(self, p1, p2, p3, n1, n2, n3):
         # Get current distance
@@ -702,9 +700,16 @@ class MeshPathSmooth2(MeshPathSmooth1):
         assert 0.999 < (f1 + f3) < 1.001
         p_between = f1 * p1 + f3 * p3
 
-        # Project the point on the surface. The surface is estimated
-        # by the plane defined by p2 and its normal.
-        p = p_between - np.dot(n2, (p_between - p2)) * n2
+        # Define a plane through p2, with a normal that is a combination.
+        # Just using n2 does not seem right, since we move the point towards
+        # p1 and p3, it makes sense to include contributions of these normals.
+        plane_pos = p2
+        plane_normal = n1 + n2 + n2 + n3
+        length = np.linalg.norm(plane_normal)
+        plane_normal = n2 if length == 0 else plane_normal / length
+
+        # Project the point on the surface. The surface is estimated using the plane avove.
+        p = p_between - np.dot(plane_normal, (p_between - plane_pos)) * plane_normal
 
         # Calculate new distance
         dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
