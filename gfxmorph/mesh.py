@@ -499,23 +499,49 @@ class DynamicMesh(BaseDynamicMesh):
         vi = np.nanargmin(distances)
         return vi, distances[vi]
 
-    def select_vertices_over_surface(self, ref_vertices, ref_distances, max_distance):
+    def select_vertices_over_surface(
+        self, ref_vertices, ref_distances, max_distance, distance_measure="smooth2"
+    ):
         """Select nearby vertices, starting from the given reference vertices.
 
         Walks over the surface from the reference vertices to include
         more vertices until the distance to a vertex (by walking over
-        the edges) exceeds the max_distance. Each reference vertex is
+        the surface) exceeds the max_distance. Each reference vertex is
         also associated with a starting distance.
 
         By allowing multiple reference vertices it is possible to "grab
         the mesh" on a precise point within a face, or using specific
         shapes (e.g. a line piece) to grab the mesh.
 
-        Returns xxxx (maybe also include sdists).
+        Parameters
+        ----------
+        ref_vertices : int or list or ndarray
+            A single vertex index, or a set of vertex indices, to start
+            the selection from.
+        ref_distances : float or list or ndarray
+            The initial distance, or distances, corresponding to the
+            reference vertices.
+        max_distance : float
+            The maximum (geodesic) distance that a vertex can have to
+            be included in the selection.
+        distance_measure : str
+            The method to calculate the geodesic distance. With "edge"
+            it sums the edge lengths, with "smooth1" it smooths the
+            path to compensate for zig-zag patterns, with "smooth2" it
+            does this smarter to avoid deviating from the surface.
+            Default "smooth2".
+
+        Returns
+        -------
+        vertices : ndarray
+            The selected vertex indices.
+        distances : ndarray
+            The corresponding (geodesic) distances.
         """
 
         # Init
         positions = self.positions
+        normals = self.normals
         faces = self.faces
         vertex2faces = self.vertex2faces
 
@@ -525,30 +551,168 @@ class DynamicMesh(BaseDynamicMesh):
         if isinstance(ref_distances, (float, int, np.float32, np.float64)):
             ref_distances = [ref_distances]
 
+        # Select path class
+        if distance_measure == "edge":
+            MeshPath = MeshPathEdge  # noqa
+        elif distance_measure == "smooth1":
+            MeshPath = MeshPathSmooth1  # noqa
+        elif distance_measure == "smooth2":
+            MeshPath = MeshPathSmooth2  # noqa
+        else:
+            raise ValueError(
+                "The distance_measure arg must be 'edge' 'smooth1' or 'smooth2'."
+            )
+
         # The list of vertices to check for neighbours
         vertices2check = []
         selected_vertices = {}
-        for vi, sdist in zip(ref_vertices, ref_distances):
-            vertices2check.append((vi, sdist))
-            selected_vertices[vi] = sdist
+        for vi, dist in zip(ref_vertices, ref_distances):
+            vertices2check.append((vi, dist))
+            selected_vertices[vi] = MeshPath().add(positions[vi], normals[vi])
 
         # Walk over the surface
         while len(vertices2check) > 0:
             vi1, cumdist = vertices2check.pop(0)
-            p1 = positions[vi1]
+            path1 = selected_vertices[vi1]
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
                 p2 = positions[vi2]
-                sdist = cumdist + np.linalg.norm(p2 - p1)
-                if sdist < max_distance:
+                n2 = normals[vi2]
+                path2 = path1.add(p2, n2)
+                if path2.dist < max_distance:
                     # We will have a closer look if we have not yet selected this
                     # vertex, but also if we did but found a shorter route to it.
                     # This means that we may sometimes do duplicate work. To avoid
                     # this, we'd need a binary heap to store the front.
-                    if vi2 not in selected_vertices or sdist < selected_vertices[vi2]:
-                        selected_vertices[vi2] = sdist
-                        vertices2check.append((vi2, sdist))
+                    path2_prev = selected_vertices.get(vi2, None)
+                    if path2_prev is None or path2.dist < path2_prev.dist:
+                        selected_vertices[vi2] = path2
+                        vertices2check.append((vi2, path2.dist))
 
-        # Return as ndarray of indices
-        verts_array = np.array(sorted(selected_vertices.keys()), np.int32)
-        dists_array = np.array([selected_vertices[vi] for vi in verts_array], "f4")
-        return verts_array, dists_array
+        vertices = np.array(sorted(selected_vertices.keys()), np.int32)
+        distances = np.array([selected_vertices[vi].dist for vi in vertices], "f4")
+        return vertices, distances
+
+
+class BaseMeshPath:
+    """Base class to help calculate the geodesic distance of a path over a surface."""
+
+    __slots__ = ["positions", "normals", "edist", "dist"]
+
+    mode = ""
+
+    def __init__(self):
+        self.positions = []
+        self.normals = []
+        self.edist = 0.0  # edge distance
+        self.dist = 0.0  # the processed distance
+
+    def add(self, p, n):
+        new = self.__class__()
+        new.positions = self.positions[-3:] + [p]
+        new.normals = self.normals[-3:] + [n]
+        new.edist = self.edist
+        new.dist = self.dist
+        d = np.linalg.norm(self.positions[-1] - p) if self.positions else 0
+        new._process_new_position(d)
+        return new
+
+    def _process_new_position(self, d):
+        self.edist += d
+
+
+class MeshPathEdge(BaseMeshPath):
+    """Calculate the geodesic distance by simply summing the lengths
+    of edges that the path goes over.
+    """
+
+    __slots__ = []
+
+    def _process_new_position(self, d):
+        self.edist += d
+        self.dist += d
+
+
+class MeshPathSmooth1(BaseMeshPath):
+    """Calculate the geodesic distance by (virtually) repositioning
+    visited points over the surface. Simply by putting it in between
+    the neighboring points. Simple, but it (quite literally) cuts corners.
+    """
+
+    __slots__ = []
+
+    def _process_new_position(self, d):
+        self.edist += d
+        self.dist += d
+        if len(self.positions) >= 3:
+            p, delta_dist = self._refine_position(
+                *self.positions[-3:], *self.normals[-3:]
+            )
+            self.positions[-2] = p
+            self.dist += delta_dist
+
+    def _refine_position(self, p1, p2, p3, n1, n2, n3):
+        # Get current distance
+        dist1 = np.linalg.norm(p1 - p2)
+        dist3 = np.linalg.norm(p2 - p3)
+        dist_before = dist1 + dist3
+        if dist1 == 0 or dist3 == 0:
+            return p2, 0
+
+        # Get the point on the line between p1 and p3, but positioned relatively
+        f1 = 1 - dist1 / dist_before
+        f3 = 1 - dist3 / dist_before
+        assert 0.999 < (f1 + f3) < 1.001
+        p = f1 * p1 + f3 * p3
+
+        # Calculate new distance
+        dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
+        delta_dist = dist_after - dist_before
+
+        return p, delta_dist
+
+
+class MeshPathSmooth2(MeshPathSmooth1):
+    """Calculate the geodesic distance by (virtually) repositioning
+    visited points over the surface. This is still a pretty crude
+    estimate of the "real" geodesic distance, but quite a bit more
+    precise than simply summing the edge lenghts.
+    """
+
+    __slots__ = []
+
+    def _refine_position(self, p1, p2, p3, n1, n2, n3):
+        # Get current distance
+        dist1 = np.linalg.norm(p1 - p2)
+        dist3 = np.linalg.norm(p2 - p3)
+        dist_before = dist1 + dist3
+        if dist1 == 0 or dist3 == 0:
+            return p2, 0
+
+        # Normalize the normal, make sure its nonzero
+        n2_len = np.linalg.norm(n2)
+        if n2_len == 0:
+            return p2, 0
+        n2 = n2 / n2_len
+
+        # Get the point on the line between p1 and p3, but positioned relatively
+        f1 = 1 - dist1 / dist_before
+        f3 = 1 - dist3 / dist_before
+        assert 0.999 < (f1 + f3) < 1.001
+        p_between = f1 * p1 + f3 * p3
+
+        # Define a plane through p2, with a normal that is a combination.
+        # Just using n2 does not seem right, since we move the point towards
+        # p1 and p3, it makes sense to include contributions of these normals.
+        plane_pos = p2
+        plane_normal = n1 + n2 + n2 + n3
+        length = np.linalg.norm(plane_normal)
+        plane_normal = n2 if length == 0 else plane_normal / length
+
+        # Project the point on the surface. The surface is estimated using the plane avove.
+        p = p_between - np.dot(plane_normal, (p_between - plane_pos)) * plane_normal
+
+        # Calculate new distance
+        dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
+        delta_dist = dist_after - dist_before
+
+        return p, delta_dist

@@ -4,6 +4,7 @@ import pytest
 from gfxmorph import maybe_pygfx
 from gfxmorph import DynamicMesh
 from testutils import run_tests
+from gfxmorph.mesh import MeshPathSmooth1, MeshPathSmooth2
 
 
 def test_mesh_basics():
@@ -81,7 +82,7 @@ def test_mesh_edges():
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
 
 
-def test_mesh_selection():
+def test_mesh_selection_basics():
     # Create a mesh
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)
     vertices = geo.positions.data
@@ -97,19 +98,194 @@ def test_mesh_selection():
     assert d2 == 1.0
 
     # Select over surface
-    selected1 = m.select_vertices_over_surface(i1, 0, 0.5)
-    selected2 = m.select_vertices_over_surface(i2, 0, 0.5)
+    selected1, _ = m.select_vertices_over_surface(i1, 0, 0.5)
+    selected2, _ = m.select_vertices_over_surface(i2, 0, 0.5)
 
     # Since this mesh is very regular, the selected number must be the same
     assert len(selected1) == 7
     assert len(selected2) == 7
 
     # Select over surface, with very high distance, so that the whole mesh is selected
-    selected1 = m.select_vertices_over_surface(i1, 0, 4)
-    selected2 = m.select_vertices_over_surface(i2, 0, 4)
+    selected1, _ = m.select_vertices_over_surface(i1, 0, 4)
+    selected2, _ = m.select_vertices_over_surface(i2, 0, 4)
 
     assert np.all(selected1 == selected2)
     assert len(selected1) == len(vertices)
+
+
+def test_mesh_path_distance():
+    """This test validates the test_MeshPathSmooth2 class directly."""
+
+    def follow_points1(points):
+        path = MeshPathSmooth1()
+        for p, n in zip(points, normals):
+            new_path = path.add(p, n)
+            assert new_path.dist >= path.dist
+            path = new_path
+        return path
+
+    def follow_points2(points):
+        path = MeshPathSmooth2()
+        for p, n in zip(points, normals):
+            new_path = path.add(p, n)
+            assert new_path.dist >= path.dist
+            assert new_path.dist <= new_path.edist * 1.0000001
+            path = new_path
+        return path
+
+    # Create a bunch of points on a semi-circle. The points are on a curved line,
+    # but from the surface pov this is a straight line, i.e. a geodesic.
+    # We make the distance between each two points 0.1, for easy math.
+    t = np.linspace(0, np.pi, 11)
+    points1 = np.zeros((11, 3), np.float32)
+    points1[:, 0] = np.sin(t)
+    points1[:, 1] = np.cos(t)
+    points1 /= 3.1286892  # precalculated
+    assert 0.1, np.linalg.norm(points1[0] - points1[1]) < 0.10001
+
+    # Since we rotate around the origin, we can easily calculate the surface normals
+    normals = points1 / np.linalg.norm(points1, axis=1).reshape(-1, 1)
+
+    # Follow this straight line with the smooth1 approach,
+    # just to show that it does cut corners. Not good!
+    path = follow_points1(points1)
+    assert 0.99999 < path.edist < 1.000001
+    assert 0.93 < path.dist < 0.94  # 6% shorter
+
+    # Follow the same straight line but with the smooth2 approach,
+    # that attempt to follow the surface. Much better!
+    path = follow_points2(points1)
+    assert 0.99999 < path.edist < 1.000001
+    assert 0.99999 < path.dist < 1.000001  # 0% error
+
+    # Now displace the points, simulating the irregular patterns of triangles on a mesh ...
+
+    # A subtle zig-zag
+    points2 = points1.copy()
+    points2[1:-1:2, 2] = -0.02
+    points2[2:-1:2, 2] = +0.02
+    # The path is a bit longer, but we manage to bring it back!
+    path = follow_points2(points2)
+    assert 1.06 < path.edist < 1.07  # The path is 6% longer
+    assert 1.00 < path.dist < 1.01  # Less than 1% left
+
+    # A moderate zig-zag.
+    # This represents a worst-case path through a mesh with normally sized triangles.
+    points2 = points1.copy()
+    points2[1:-1:2, 2] = -0.05
+    points2[2:-1:2, 2] = +0.05
+    # The path is much longer, but we manage to bring it back!
+    path = follow_points2(points2)
+    assert 1.35 < path.edist < 1.36  # The path is 36% longer
+    assert 1.03 < path.dist < 1.04  # Just about 3% left
+
+    # A big zig-zag.
+    # This represents a very worst-case path through very narrow triangles.
+    points2 = points1.copy()
+    points2[1:-1:2, 2] = -0.2
+    points2[2:-1:2, 2] = +0.2
+    # The path is MUCH longer, but we manage to bring it back!
+    path = follow_points2(points2)
+    assert 3.74 < path.edist < 3.75  # The path is 274% longer
+    assert 1.27 < path.dist < 1.28  # Just 27% left
+
+    # A straight line with a few points moved to the side.
+    # Depending on how the surface-distance is calculated, the opposing
+    # sides of the zig-zag may help iron out the line. This use-case
+    # does not have this effect. The current implementation does not
+    # really suffer from this effect and is able to "straighten"  this
+    # line just as well.
+    points2 = points1.copy()
+    points2[1:-1:4, 2] = -0.1
+    # The path is longer and we can straighten it out.
+    path = follow_points2(points2)
+    assert 1.24 < path.edist < 1.25  # The path is 25% longer
+    assert 1.02 < path.dist < 1.03  # Just 3% left
+
+
+def test_mesh_selection_precision():
+    """This test validates the precision of the mesh selection.
+    It implicitly tests the MeshPathSmooth2 class on real mesh data.
+    """
+
+    # Create a mesh
+    radius = 1
+    geo = maybe_pygfx.smooth_sphere_geometry(radius, subdivisions=1)
+    vertices = geo.positions.data
+    faces = geo.indices.data
+    m = DynamicMesh(vertices, faces)
+
+    # Select top vertex, and vertices at the middle of the sphere. There
+    # is a nice line of vertices at exactly the equator of the sphere
+    # (with just a few interruptions). There are no straight lines of
+    # vertices going from the top to the equator (meridians), therefore
+    # we observe pretty uniform distance-errors.
+    assert len(vertices) == 122
+    vii_top = np.where(vertices[:, 2] == 1)[0]
+    assert len(vii_top) == 1
+    vi_top = vii_top[0]
+    vii_middle = np.where(vertices[:, 2] == 0)[0]
+    assert len(vii_middle) == 16
+
+    # The distance to each of the middle points (from the top) is ideally ...
+    circumference = 2 * np.pi * radius
+    ideal_dist = circumference / 4  # i.e. a quarter pi, numnum
+
+    # Select vertices EDGE
+    max_dist = ideal_dist * 1.1
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "edge")
+    assert len(selected) < 80
+    assert not set(vii_middle).difference(selected)  # all middle points are selected
+
+    # The most awkward path to the equator costs about 8% more distance
+    vii_dists = [(vi, d) for vi, d in zip(selected, distances) if vi in vii_middle]
+    d = max(d for _, d in vii_dists)
+    assert 1.08 < d / ideal_dist < 1.09
+
+    # Select vertices SURFACE
+    max_dist = ideal_dist * 1.1
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "smooth2")
+    assert len(selected) < 80
+    assert not set(vii_middle).difference(selected)  # all middle points are selected
+
+    # Now just 3% more distance
+    vii_dists = [(vi, d) for vi, d in zip(selected, distances) if vi in vii_middle]
+    d = max(d for _, d in vii_dists)
+    assert 1.02 < d / ideal_dist < 1.03
+
+    # Now flatten the sphere. In the above, because the surface is curved,
+    # the distances "cut the corner" and are smaller, which hides some
+    # of the error in distance. By creating a flat surface we can measure
+    # the distance of the error without this effect.
+
+    # Upate mesh
+    vertices[:, 2] = 0
+    m.update_vertices(np.arange(len(vertices)), vertices)
+
+    # The distance to each of the middle points (from the center) is ideally ...
+    ideal_dist = radius  # i.e. 1
+
+    # Select vertices EDGE
+    max_dist = ideal_dist * 1.3
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "edge")
+    assert len(selected) < 102
+    assert not set(vii_middle).difference(selected)  # all middle points are selected
+
+    # The most awkward path to the equator costs about 26% more distance
+    vii_dists = [(vi, d) for vi, d in zip(selected, distances) if vi in vii_middle]
+    d = max(d for _, d in vii_dists)
+    assert 1.25 < d / ideal_dist < 1.26
+
+    # Select vertices SURFACE
+    max_dist = ideal_dist * 1.3
+    selected, distances = m.select_vertices_over_surface(vi_top, 0, max_dist, "smooth2")
+    assert len(selected) < 102
+    assert not set(vii_middle).difference(selected)  # all middle points are selected
+
+    # Now just 7% more distance
+    vii_dists = [(vi, d) for vi, d in zip(selected, distances) if vi in vii_middle]
+    d = max(d for _, d in vii_dists)
+    assert 1.06 < d / ideal_dist < 1.07
 
 
 if __name__ == "__main__":
