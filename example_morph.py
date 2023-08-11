@@ -12,126 +12,19 @@ from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
 
 
-# %% Setup the mesh
+# %% Morph logic
 
 
 class DynamicMeshGeometryWithSizes(DynamicMeshGeometry):
+    # This is a subclass of both gfx.Geometry and MeshChangeTracker.
+    # This illustrates how we can relatively easily associate additional
+    # buffers with the mesh. In this case we add a buffer for points
+    # sizes to show the selected vertices. If we'd instead use colors
+    # to show selected vertices, that'd work in much the same way.
+
     def new_vertices_buffer(self, mesh):
         super().new_vertices_buffer(mesh)
-        # Add sizes so we can show selected vertices.
-        # If we'd instead use colors to show selected vertices, that'd
-        # work in much the same way.
         self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
-
-
-class MeshContainer:
-    """Just a container to keep all stuff related to the mesh together."""
-
-    def __init__(self):
-        # The object that stores & manages the data
-        self.dynamic_mesh = DynamicMesh(None, None)
-
-        # Tracker that implement a redo stack
-        self.undo_tracker = MeshUndoTracker()
-        self.dynamic_mesh.track_changes(self.undo_tracker)
-
-        # Tracker that maps the mesh to a gfx Geometry (with live updates)
-        self.geometry = DynamicMeshGeometryWithSizes()
-        self.dynamic_mesh.track_changes(self.geometry)
-
-        # Two world objects, one for the front and one for the back (so we can clearly see holes)
-        self.ob1 = gfx.Mesh(
-            self.geometry,
-            gfx.materials.MeshPhongMaterial(
-                color="#6ff", flat_shading=False, side="FRONT"
-            ),
-        )
-        self.ob2 = gfx.Mesh(
-            self.geometry,
-            gfx.materials.MeshPhongMaterial(
-                color="#900", flat_shading=False, side="BACK"
-            ),
-        )
-        self.ob3 = gfx.Mesh(
-            self.geometry,
-            gfx.materials.MeshPhongMaterial(
-                color="#777",
-                opacity=0.05,
-                wireframe=True,
-                wireframe_thickness=2,
-                side="FRONT",
-            ),
-        )
-
-    def cancel(self):
-        self.undo_tracker.cancel(self.dynamic_mesh)
-
-    def commit(self):
-        self.undo_tracker.commit()
-
-    def undo(self):
-        self.undo_tracker.undo(self.dynamic_mesh)
-
-    def redo(self):
-        self.undo_tracker.redo(self.dynamic_mesh)
-
-
-mesh = MeshContainer()
-
-
-# %% Setup the viz
-
-
-renderer = gfx.WgpuRenderer(WgpuCanvas())
-
-camera = gfx.PerspectiveCamera()
-camera.show_object((0, 0, 0, 8))
-
-scene = gfx.Scene()
-scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
-scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
-scene.add(mesh.ob1, mesh.ob2, mesh.ob3)
-
-# Helper to show points being grabbed
-vertex_highlighter = gfx.Points(
-    mesh.geometry,
-    gfx.PointsMaterial(color="yellow", vertex_sizes=True),
-)
-scene.add(vertex_highlighter)
-
-# Gizmo helper
-gizmo = gfx.Mesh(
-    gfx.cylinder_geometry(0.05, 0.05, 0.5, radial_segments=16),
-    gfx.MeshPhongMaterial(color="yellow"),
-)
-gizmo.visible = False
-scene.add(gizmo)
-
-# Radius helper
-radius_helper = gfx.Mesh(
-    smooth_sphere_geometry(subdivisions=2),
-    gfx.MeshPhongMaterial(color="yellow", opacity=0.2, side="front"),
-)
-radius_helper.visible = False
-scene.add(radius_helper)
-
-
-# %% Functions to modify the mesh
-
-
-def add_sphere(dx=0, dy=0, dz=0):
-    geo = smooth_sphere_geometry(subdivisions=1)
-    positions, faces = geo.positions.data, geo.indices.data
-    positions += (dx, dy, dz)
-
-    mesh.dynamic_mesh.add_mesh(positions, faces)
-    mesh.commit()
-
-    camera.show_object(scene)
-    renderer.request_draw()
-
-
-# %% Morph logic
 
 
 def softlimit(i, limit):
@@ -145,16 +38,118 @@ def gaussian_weights(f):
 
 
 class Morpher:
-    def __init__(self, dynamic_mesh, gizmo):
-        self.m = dynamic_mesh
-        self.gizmo = gizmo
+    """Container class for everything related to the mesh and morphing it."""
+
+    def __init__(self):
+        # The object that stores & manages the data
+        self.m = DynamicMesh(None, None)
+
+        # Tracker that implement a redo stack
+        self.undo_tracker = MeshUndoTracker()
+        self.m.track_changes(self.undo_tracker)
+
+        # Tracker that maps the mesh to a gfx Geometry (with live updates)
+        self.geometry = DynamicMeshGeometryWithSizes()
+        self.m.track_changes(self.geometry)
+
         self.state = None
         self.radius = 0.3
 
-    def start_from_vertex(self, xy, vi):
+        self._create_world_objects()
+
+    def _create_world_objects(self):
+        # The front, to show the mesh itself.
+        self.wob_front = gfx.Mesh(
+            self.geometry,
+            gfx.materials.MeshPhongMaterial(
+                color="#6ff", flat_shading=False, side="FRONT"
+            ),
+        )
+
+        # The back, to show holes and protrusions.
+        self.wob_back = gfx.Mesh(
+            self.geometry,
+            gfx.materials.MeshPhongMaterial(
+                color="#900", flat_shading=False, side="BACK"
+            ),
+        )
+
+        # The wireframe, to show edges.
+        self.wob_wire = gfx.Mesh(
+            self.geometry,
+            gfx.materials.MeshPhongMaterial(
+                color="#777",
+                opacity=0.05,
+                wireframe=True,
+                wireframe_thickness=2,
+                side="FRONT",
+            ),
+        )
+
+        # Helper to show points being grabbed
+        self.wob_points = gfx.Points(
+            self.geometry,
+            gfx.PointsMaterial(color="yellow", vertex_sizes=True),
+        )
+
+        # A gizmo to show the direction of movement.
+        self.wob_gizmo = gfx.Mesh(
+            gfx.cylinder_geometry(0.05, 0.05, 0.5, radial_segments=16),
+            gfx.MeshPhongMaterial(color="yellow"),
+        )
+        self.wob_gizmo.visible = False
+
+        # Radius helper
+        self.wob_radius = gfx.Mesh(
+            smooth_sphere_geometry(subdivisions=2),
+            gfx.MeshPhongMaterial(color="yellow", opacity=0.2, side="front"),
+        )
+        self.wob_radius.visible = False
+
+        self.world_objects = gfx.Group()
+        self.world_objects.add(
+            self.wob_front,
+            self.wob_back,
+            self.wob_wire,
+            self.wob_points,
+            self.wob_gizmo,
+            self.wob_radius,
+        )
+
+    def cancel(self):
+        self.undo_tracker.cancel(self.m)
+
+    def commit(self):
+        self.undo_tracker.commit()
+
+    def undo(self):
+        self.undo_tracker.undo(self.m)
+
+    def redo(self):
+        self.undo_tracker.redo(self.m)
+
+    def highlight(self, highlight):
+        if highlight:
+            # self.wob_radius.visible = True
+            self.wob_wire.material.opacity = 0.075
+        else:
+            self.wob_radius.visible = False
+            self.wob_wire.material.opacity = 0.05
+
+    def show_morph_grab(self, fi, coord):
+        # Get pos
+        coordvec = np.array(coord).reshape(3, 1)
+        vii = self.m.faces[fi]
+        pos = (self.m.positions[vii] * coordvec).sum(axis=0) / np.sum(coordvec)
+        # Adjust world objects
+        self.wob_radius.local.position = pos
+        self.wob_radius.local.scale = self.radius
+        self.wob_radius.visible = True
+
+    def start_morph_from_vertex(self, xy, vi):
         """Initiate a drag, based on a vertex index.
 
-        This method may feel less precise than using ``start_from_face``,
+        This method may feel less precise than using ``start_morph_from_face``,
         but is included for cases where picking capabilities are limited.
         """
         assert isinstance(vi, int)
@@ -164,9 +159,9 @@ class Morpher:
         pos = self.m.positions[vi].copy()
         normal = self.m.normals[vi].copy()
 
-        return self._start(xy, vii, distances, pos, normal)
+        return self._start_morph(xy, vii, distances, pos, normal)
 
-    def start_from_face(self, xy, fi, coord):
+    def start_morph_from_face(self, xy, fi, coord):
         """Initiate a drag, based on a face index and face coordinates.
 
         This allows precise grabbing of the mesh. The face coordinates
@@ -182,23 +177,29 @@ class Morpher:
         vii = self.m.faces[fi]
         coord_vec = np.array(coord).reshape(3, 1)
         pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
+
+        fi, coord = self.m.get_closest_face(pos)
+        vii = self.m.faces[fi]
+        coord_vec = np.array(coord).reshape(3, 1)
+        pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
+
         normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
         normal = normal / np.linalg.norm(normal)
         distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
 
-        return self._start(xy, vii, distances, pos, normal)
+        return self._start_morph(xy, vii, distances, pos, normal)
 
-    def _start(self, xy, vii, ref_distances, pos, normal):
+    def _start_morph(self, xy, vii, ref_distances, pos, normal):
         # Cancel any pending changes to the mesh. If we were already dragging,
         # that operation is cancelled. If other code made uncomitted changes,
         # these are discarted too (code should have comitted).
-        mesh.cancel()
-        self.stop()
+        self.cancel()
+        self.finish_morph()
 
         # Bring gizmo into place
-        self.gizmo.visible = True
-        self.gizmo.world.position = pos
-        self.gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
+        self.wob_gizmo.visible = True
+        self.wob_gizmo.world.position = pos
+        self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
 
         # Select vertices
         search_distance = self.radius * 3  # 3 x std
@@ -215,9 +216,9 @@ class Morpher:
         if len(indices) == 0:
             return
 
-        # Update data for highlighter
-        mesh.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
-        mesh.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+        # Update data for points that highlight the selection
+        self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
+        self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
 
         # Store state
         self.state = {
@@ -229,10 +230,13 @@ class Morpher:
             "normal": normal,
         }
 
-    def move(self, xy):
+    def move_morph(self, xy):
         """Process a mouse movement."""
         if self.state is None:
             return
+
+        # Don't show radius during the drag
+        self.wob_radius.visible = False
 
         # Get delta movement, and express in world coordinates
         dxy = np.array(xy) - self.state["xy"]
@@ -247,7 +251,7 @@ class Morpher:
         delta.shape = (1, 3)
 
         # Apply delta to gizmo
-        self.gizmo.world.position = self.state["pos"] + delta
+        self.wob_gizmo.world.position = self.state["pos"] + delta
 
         # Apply delta
         self.m.update_vertices(
@@ -255,20 +259,50 @@ class Morpher:
             self.state["positions"] + delta * self.state["weights"],
         )
 
-    def stop(self):
+    def finish_morph(self):
         """Stop the morph drag and commit the result."""
         # AK: I thought of also introducing a cancel method, but it
         # feels more natural to just finish the drag and then undo it.
-        self.gizmo.visible = False
+        self.wob_gizmo.visible = False
         if self.state:
             indices = self.state["indices"]
-            mesh.geometry.sizes.data[indices] = 0
-            mesh.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+            self.geometry.sizes.data[indices] = 0
+            self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
             self.state = None
-            mesh.commit()
+            self.commit()
 
 
-morpher = Morpher(mesh.dynamic_mesh, gizmo)
+morpher = Morpher()
+
+
+# %% Setup the viz
+
+
+renderer = gfx.WgpuRenderer(WgpuCanvas())
+
+camera = gfx.PerspectiveCamera()
+camera.show_object((0, 0, 0, 8))
+
+scene = gfx.Scene()
+scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
+scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
+scene.add(morpher.world_objects)
+
+
+# %% Functions to modify the mesh
+
+
+def add_sphere(dx=0, dy=0, dz=0):
+    geo = smooth_sphere_geometry(subdivisions=1)
+    positions, faces = geo.positions.data, geo.indices.data
+    positions += (dx, dy, dz)
+
+    morpher.m.add_mesh(positions, faces)
+    morpher.commit()
+
+    camera.show_object(scene)
+    renderer.request_draw()
+
 
 # %% Create key and mouse bindings
 
@@ -289,16 +323,16 @@ def on_key(e):
 
     elif e.key == "m":
         print("Metadata:")
-        print(json.dumps(mesh.dynamic_mesh.metadata, indent=2))
+        print(json.dumps(morpher.m.metadata, indent=2))
     elif e.key.lower() == "z" and ("Control" in e.modifiers or "Meta" in e.modifiers):
         if "Shift" in e.modifiers:
-            mesh.redo()
+            morpher.redo()
         else:
-            mesh.undo()
+            morpher.undo()
         renderer.request_draw()
 
 
-@mesh.ob1.add_event_handler(
+@morpher.wob_front.add_event_handler(
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -308,54 +342,40 @@ def on_key(e):
 )
 def on_mouse(e):
     if "Shift" in e.modifiers:
-        radius_helper.visible = False
+        # Don't react when shift is down, so that the controller can work
+        morpher.highlight(None)
         renderer.request_draw()
     elif e.type == "pointer_down" and e.button == 1:
-        mesh.ob1.set_pointer_capture(e.pointer_id, e.root)
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
-        if False:
-            # Select closest vertex
-            vii = mesh.dynamic_mesh.faces[face_index]
-            vi = int(vii[np.argmax(face_coord)])
-            morpher.start_from_vertex((e.x, e.y), vi)
-        else:
-            # Calculate position in between vertices
-            morpher.start_from_face((e.x, e.y), face_index, face_coord)
+        morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
         renderer.request_draw()
+        e.target.set_pointer_capture(e.pointer_id, e.root)
     elif e.type == "pointer_up" and e.button == 1:
-        morpher.stop()
+        morpher.finish_morph()
         renderer.request_draw()
     elif e.type == "pointer_move":
         if morpher.state:
-            morpher.move((e.x, e.y))
-            radius_helper.visible = False
-            renderer.request_draw()
+            morpher.move_morph((e.x, e.y))
         else:
             face_index = e.pick_info["face_index"]
             face_coord = e.pick_info["face_coord"]
-            vii = mesh.dynamic_mesh.faces[face_index]
-            coord_vec = np.array(face_coord).reshape(3, 1)
-            pos = (mesh.dynamic_mesh.positions[vii] * coord_vec).sum(axis=0) / np.sum(
-                coord_vec
-            )
-            radius_helper.local.position = pos
-            radius_helper.local.scale = morpher.radius
-            radius_helper.visible = True
-            renderer.request_draw()
+            morpher.show_morph_grab(face_index, face_coord)
+        renderer.request_draw()
     elif e.type == "pointer_enter":
-        radius_helper.visible = True
-        mesh.ob3.material.opacity = 0.075
+        morpher.highlight(True)
         renderer.request_draw()
     elif e.type == "pointer_leave":
-        radius_helper.visible = False
-        mesh.ob3.material.opacity = 0.05
+        morpher.highlight(False)
         renderer.request_draw()
     elif e.type == "wheel":
-        morpher.radius *= 2 ** (e.dy / 500)
-        radius_helper.local.scale = morpher.radius
-        renderer.request_draw()
-        e.cancel()
+        if not morpher.state:
+            morpher.radius *= 2 ** (e.dy / 500)
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            morpher.show_morph_grab(face_index, face_coord)
+            renderer.request_draw()
+            e.cancel()
 
 
 # %% Run
