@@ -14,6 +14,7 @@ def vertex_get_neighbours(faces, vertex2faces, vi):
     neighbour_vertices = set()
     for fi in vertex2faces[vi]:
         neighbour_vertices.update(faces[fi])
+    neighbour_vertices.remove(vi)
     return neighbour_vertices
 
 

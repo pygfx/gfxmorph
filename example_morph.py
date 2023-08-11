@@ -10,6 +10,7 @@ import pygfx as gfx
 import pylinalg as la
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
+from gfxmorph.meshfuncs import vertex_get_neighbours
 
 
 # %% Morph logic
@@ -178,11 +179,6 @@ class Morpher:
         coord_vec = np.array(coord).reshape(3, 1)
         pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
 
-        fi, coord = self.m.get_closest_face(pos)
-        vii = self.m.faces[fi]
-        coord_vec = np.array(coord).reshape(3, 1)
-        pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
-
         normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
         normal = normal / np.linalg.norm(normal)
         distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
@@ -190,16 +186,31 @@ class Morpher:
         return self._start_morph(xy, vii, distances, pos, normal)
 
     def _start_morph(self, xy, vii, ref_distances, pos, normal):
-        # Cancel any pending changes to the mesh. If we were already dragging,
-        # that operation is cancelled. If other code made uncomitted changes,
-        # these are discarted too (code should have comitted).
-        self.cancel()
-        self.finish_morph()
+        # Select vertices
+        self._select_vertices(vii, ref_distances)
+        if not self.state:
+            return
+
+        # Add more state
+        more_state = {
+            "action": "morph",
+            "pos": pos,
+            "normal": normal,
+            "xy": xy,
+        }
+        self.state.update(more_state)
 
         # Bring gizmo into place
         self.wob_gizmo.visible = True
         self.wob_gizmo.world.position = pos
         self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
+
+    def _select_vertices(self, vii, ref_distances):
+        # Cancel any pending changes to the mesh. If we were already dragging,
+        # that operation is cancelled. If other code made uncomitted changes,
+        # these are discarted too (code should have comitted).
+        self.cancel()
+        self.finish()
 
         # Select vertices
         search_distance = self.radius * 3  # 3 x std
@@ -209,7 +220,6 @@ class Morpher:
         positions = self.m.positions[indices]
 
         # Pre-calculate deformation weights
-        # eucledian_distances = np.linalg.norm(positions - pos, axis=1)
         weights = gaussian_weights(geodesic_distances / self.radius).reshape(-1, 1)
 
         # If for some (future) reason, the selection is empty, cancel
@@ -222,17 +232,45 @@ class Morpher:
 
         # Store state
         self.state = {
+            "action": "",
             "indices": indices,
             "positions": positions,
             "weights": weights,
-            "xy": xy,
-            "pos": pos,
-            "normal": normal,
         }
 
+    def start_smooth(self, xy, fi, coord):
+        """Start a smooth action."""
+
+        assert isinstance(fi, int)
+        assert isinstance(coord, (tuple, list)) and len(coord) == 3
+
+        vii = self.m.faces[fi]
+        coord_vec = np.array(coord).reshape(3, 1)
+        pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
+        ref_distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
+
+        # Select vertices
+        self._select_vertices(vii, ref_distances)
+        if not self.state:
+            return
+
+        # Add more state
+        more_state = {
+            "action": "brush_smooth",
+            "xy": xy,
+        }
+        self.state.update(more_state)
+
+    def move(self, xy):
+        if not self.state:
+            return
+        elif self.state["action"] == "morph":
+            self.move_morph(xy)
+        elif self.state["action"] == "brush_smooth":
+            self.move_smooth(xy)
+
     def move_morph(self, xy):
-        """Process a mouse movement."""
-        if self.state is None:
+        if self.state is None or self.state["action"] != "morph":
             return
 
         # Don't show radius during the drag
@@ -259,10 +297,49 @@ class Morpher:
             self.state["positions"] + delta * self.state["weights"],
         )
 
-    def finish_morph(self):
-        """Stop the morph drag and commit the result."""
-        # AK: I thought of also introducing a cancel method, but it
-        # feels more natural to just finish the drag and then undo it.
+    def move_smooth(self, xy):
+        if self.state is None or self.state["action"] != "brush_smooth":
+            return
+
+        # Get delta movement, and express in world coordinates.
+        # Do a smooth "tick" when the mouse has moved 10 px.
+        moved_pixel_dist = np.linalg.norm(np.array(xy) - self.state["xy"])
+        if moved_pixel_dist > 10:
+            self._smooth_some()
+            self.state["xy"] = xy
+
+    def _smooth_some(self):
+        # We only smooth each vertex with its direct neighbours, but
+        # when these little smooth operations are applied recursively,
+        # we end up with a pretty Gaussian smooth. Selecting multiple
+        # neighbouring vertices (for each vertex), and applying an
+        # actual Gaussian kernel is problematic, because we may select
+        # zero vertices at low scales (woops nothing happens), or many
+        # at high scales (woops performance).
+        smooth_factor = 0.5  # <-- can be a parameter
+        smooth_factor = max(0.0, min(1.0, smooth_factor))
+
+        faces = self.m.faces
+        positions = self.m.positions
+        vertex2faces = self.m.vertex2faces
+
+        s_indices = self.state["indices"]
+        s_weights = self.state["weights"]
+
+        new_positions = np.zeros((len(s_indices), 3), np.float32)
+        for i in range(len(s_indices)):
+            vi = s_indices[i]
+            w = s_weights[i]
+            p = positions[vi]
+            vii = list(vertex_get_neighbours(faces, vertex2faces, vi))
+            p_delta = (positions[vii] - p).sum(axis=0) / len(vii)
+            new_positions[i] = p + p_delta * (w * smooth_factor)
+
+        # Apply new positions
+        self.m.update_vertices(s_indices, new_positions)
+
+    def finish(self):
+        """Stop the morph or smooth action and commit the result."""
         self.wob_gizmo.visible = False
         if self.state:
             indices = self.state["indices"]
@@ -351,12 +428,18 @@ def on_mouse(e):
         morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
         renderer.request_draw()
         e.target.set_pointer_capture(e.pointer_id, e.root)
-    elif e.type == "pointer_up" and e.button == 1:
-        morpher.finish_morph()
+    elif e.type == "pointer_down" and e.button == 2:
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+        morpher.start_smooth((e.x, e.y), face_index, face_coord)
+        renderer.request_draw()
+        e.target.set_pointer_capture(e.pointer_id, e.root)
+    elif e.type == "pointer_up":
+        morpher.finish()
         renderer.request_draw()
     elif e.type == "pointer_move":
         if morpher.state:
-            morpher.move_morph((e.x, e.y))
+            morpher.move((e.x, e.y))
         else:
             face_index = e.pick_info["face_index"]
             face_coord = e.pick_info["face_coord"]
