@@ -202,6 +202,76 @@ class DynamicMesh(BaseDynamicMesh):
         self.add_vertices(positions)
         self.add_faces(faces + vertex_index_offset)
 
+    # %% Low level modifications
+
+    def split_edge(self, vi1, vi2):
+        """Split the edge between vi1 and vi2 into two edges.
+
+        This adds a vertex on the given edge, and splits the two faces
+        that contain that edge. Results in 1 additional vertex, 2
+        additional faces, 3 additional edges.
+        """
+
+        # X______          X______
+        # |\     |         |\    /|
+        # | \    |         | \  / |
+        # |  \   |   -->   |  \/  |
+        # |   \  |         |  /\  |
+        # |    \ |         | /  \ |
+        # |_____\|         |/____\|
+        #        X                X
+
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        # Get what faces to split in two
+        faces1 = vertex2faces[vi1]
+        faces2 = vertex2faces[vi2]
+        faces2split = list(set(faces1).intersection(faces2))
+        if len(faces2split) == 0:
+            raise ValueError("Given vertices do not make an edge.")
+        elif len(faces2split) > 2:
+            raise ValueError("Cannot split edge on a non-manifold piece of the mesh.")
+
+        # Get new vertex
+        vi3 = len(positions)
+        new_position = 0.5 * (positions[vi1] + positions[vi2])
+
+        # Calculate new faces. Needs a bit of triage to get the winding correct.
+        new_faces = []
+        for fi in faces2split:
+            face1 = faces[fi].tolist()
+            if face1[0] == vi1:
+                if face1[1] == vi2:
+                    face1[1] = vi3
+                else:
+                    face1[2] = vi3
+                face2 = vi2, face1[2], face1[1]
+            elif face1[1] == vi1:
+                if face1[0] == vi2:
+                    face1[0] = vi3
+                else:
+                    face1[2] = vi3
+                face2 = face1[2], vi2, face1[0]
+            else:  # face1[2] == vi1:
+                if face1[0] == vi2:
+                    face1[0] = vi3
+                else:
+                    face1[1] = vi3
+                face2 = face1[1], face1[0], vi2
+            new_faces.append(face1)
+            new_faces.append(face2)
+
+        # Apply changes
+        self.add_vertices([new_position])
+        self.delete_faces(faces2split)
+        self.add_faces(new_faces)
+
+        # todo: this could be more efficient if we update the old faces
+        # but maybe we could have a generic delete_and_add_faces on BaseDynamicMesh.
+        # Or perhaps we can optimize here, by combining multiple edge splits and vertex pops?
+
     # %% Repairs
 
     def repair(self, close=False):

@@ -82,6 +82,40 @@ def test_mesh_edges():
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
 
 
+def test_split_edge():
+    # Create a silly mesh consisting of a single triangle
+    triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
+    m = DynamicMesh(triangle, [[0, 1, 2]])
+    assert len(m.positions) == 3
+    assert len(m.faces) == 1
+    assert m.is_manifold
+
+    # Split!
+    m.split_edge(0, 1)
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    # Create a sphere
+    geo = maybe_pygfx.smooth_sphere_geometry()
+    m = DynamicMesh(geo.positions.data, geo.indices.data)
+    assert len(m.positions) == 32
+    assert len(m.faces) == 60
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Split!
+    m.split_edge(5, 27)
+    assert len(m.positions) == 33
+    assert len(m.faces) == 62
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Cannot split a non-edge
+    with pytest.raises(ValueError):
+        m.split_edge(5, 28)
+
+
 def test_mesh_selection_basics():
     # Create a mesh
     geo = maybe_pygfx.smooth_sphere_geometry(1, subdivisions=1)

@@ -308,7 +308,7 @@ class Morpher:
             self._smooth_some()
             self.state["xy"] = xy
 
-    def _smooth_some(self):
+    def _smooth_some(self, smooth_factor=0.5):
         # We only smooth each vertex with its direct neighbours, but
         # when these little smooth operations are applied recursively,
         # we end up with a pretty Gaussian smooth. Selecting multiple
@@ -316,8 +316,7 @@ class Morpher:
         # actual Gaussian kernel is problematic, because we may select
         # zero vertices at low scales (woops nothing happens), or many
         # at high scales (woops performance).
-        smooth_factor = 0.5  # <-- can be a parameter
-        smooth_factor = max(0.0, min(1.0, smooth_factor))
+        smooth_factor = max(0.0, min(1.0, float(smooth_factor)))
 
         faces = self.m.faces
         positions = self.m.positions
@@ -342,6 +341,9 @@ class Morpher:
         """Stop the morph or smooth action and commit the result."""
         self.wob_gizmo.visible = False
         if self.state:
+            if self.state["action"] == "morph":
+                self._smooth_some(0.25)
+                # todo: resample, smooth after resample?
             indices = self.state["indices"]
             self.geometry.sizes.data[indices] = 0
             self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
