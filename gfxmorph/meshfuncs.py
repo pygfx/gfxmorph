@@ -690,3 +690,21 @@ def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
             faces = faces_for_this_group
 
     return faces
+
+
+def tesselate(positions, method="naive"):
+    """Tesselate the given vertex positions.
+
+    Returns an Nx3 array of faces that form a surface-mesh over the given positions,
+    where N is the length of the positions minus 2.
+    """
+
+    nfaces = len(positions) - 2
+
+    if method == "naive":
+        faces = []
+        for i in range(nfaces):
+            faces.append([0, i + 1, i + 2])
+        faces = np.array(faces, np.int32)
+
+    return faces

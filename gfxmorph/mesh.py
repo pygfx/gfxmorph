@@ -204,12 +204,104 @@ class DynamicMesh(BaseDynamicMesh):
 
     # %% Low level modifications
 
-    def split_edge(self, vi1, vi2):
-        """Split the edge between vi1 and vi2 into two edges.
+    def resample(self, reference_distance):
+        raise NotImplementedError()
 
-        This adds a vertex on the given edge, and splits the two faces
-        that contain that edge. Results in 1 additional vertex, 2
-        additional faces, 3 additional edges.
+    def resample_selection(self, vertex_indices, weights, reference_distance):
+        """ """
+
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        # Given the reference_distance, we must define dmin and dmax.
+        # when the length of an edge is above dmax, we split it in two.
+        # When the length of an edge is below dmin, we remove it.
+        #
+        # On first sight, the ratio between dmin and dmax should be
+        # slightly higher than 2 to avoid constant resampling.
+        #
+        # However, splitting an edge in two also creates new edges. In
+        # the below image, consider adding the bottom-center vertex (on
+        # the edge between de two vertices on each side). This also
+        # introduces a new edge between the top-center and bottom-center
+        # vertices, which is quite short. Assuming a ratio of 1.5
+        # between shortest and longest edge of an average triangle, we
+        # can employ a ratio between dmin and dmax of about 3.
+        #
+        #       _ - X - _
+        #   _ -     1     - _
+        # X---------X---------X
+        #
+        # Note that the loosen factor (depending on weight) helps
+        # prevent near-degenerate triangles that can normally can occur
+        # near the boundary of the selection.
+
+        # Calculate dmin and dmax such that: dmax = dmin * dmin_dmax_ratio
+        dmin_dmax_ratio = 3
+        dmin = reference_distance / dmin_dmax_ratio**0.5
+        dmax = reference_distance * dmin_dmax_ratio**0.5
+
+        # Collect edges
+        edges = {}  # (vi1, vi2) -> weight
+        for vi1, w in zip(vertex_indices, weights):
+            vi1 = int(vi1)
+            for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
+                key = (vi1, vi2) if vi1 < vi2 else (vi2, vi1)
+                edges[key] = edges.get(key, 0) + 0.5 * w
+
+        # Determine whether they are too short/long
+        too_short = []
+        too_long = []
+        for vii, w in edges.items():
+            d = np.linalg.norm(positions[vii[0]] - positions[vii[1]])
+            loosen = 1 + 2 * min(max(w, 0), 1)
+            if d > loosen * dmax:
+                too_long.append((d / loosen, *vii))
+            elif d < dmin / loosen:
+                too_short.append((d * loosen, *vii))
+
+        # Sort so that the most extreme cases get handled first
+        too_long.sort(key=lambda x: -x[0])
+        too_short.sort(key=lambda x: x[0])
+
+        # Deteremine vertices that connect multiple edges that are too short.
+        too_short_vertices = {}
+        for d, vi1, vi2 in too_short:
+            too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
+            too_short_vertices[vi2] = too_short_vertices.get(vi2, 0) + 1
+        hot_vertices = [
+            (vi, count) for vi, count in too_short_vertices.items() if count > 1
+        ]
+        hot_vertices.sort(reverse=True)
+
+        # We will pop all of these
+        vertices_to_pop = [vi for vi, _ in hot_vertices]
+
+        # And we also pop one vertex of the other too-short-edges, preferring
+        # the ones with the most neighbours, to avoid star-like structures.
+        for d, vi1, vi2 in too_short:
+            if vi1 in vertices_to_pop or vi2 in vertices_to_pop:
+                continue
+            if len(vertex2faces[vi1]) > len(vertex2faces[vi2]):
+                vertices_to_pop.append(vi1)
+            else:
+                vertices_to_pop.append(vi2)
+
+        # Apply
+        for d, vi1, vi2 in too_long:
+            self.add_vertex_on_edge(vi1, vi2)
+        for vi in vertices_to_pop:
+            self.pop_vertex(vi)
+
+        assert self.is_manifold
+
+    def add_vertex_on_edge(self, vi1, vi2):
+        """Add a vertex on the give edge.
+
+        This splits the edge between vi1 and vi2 into two edges, and
+        splits the two faces that contain that edge. Results in 1
+        additional vertex, 2 additional faces, 3 additional edges.
         """
 
         # X______          X______
@@ -268,9 +360,119 @@ class DynamicMesh(BaseDynamicMesh):
         self.delete_faces(faces2split)
         self.add_faces(new_faces)
 
+        assert self.is_manifold
+        assert self.is_closed
+        assert self.is_oriented
+
         # todo: this could be more efficient if we update the old faces
         # but maybe we could have a generic delete_and_add_faces on BaseDynamicMesh.
         # Or perhaps we can optimize here, by combining multiple edge splits and vertex pops?
+
+    # def pop_edge(self, vi1, vi2):
+    #     """ Remove the edge between vi1 and vi2.
+    #
+    #     Removes either vi1 or vi2 using ``pop_vertex()``.
+    #     Results in 1 less vertex, 2 less faces, 3 less edges.
+    #     """
+    #
+    #     # Note: an alternative way to pop an edge is to merge the two
+    #     # vertices, and position the new vertex in between the original
+    #     # positions. This is a relatively simple approach, and less
+    #     # invasive than smashing a a hole in the mesh by removing a
+    #     # vertex. Unfortunately, this change can cause faces to fold
+    #     # over, making it less suitable.
+    #
+    #     vertex2faces = self.vertex2faces
+    #     n_neighbours1 = len(vertex2faces[vi1])
+    #     n_neighbours2 = len(vertex2faces[vi2])
+    #
+    #     # To pop the edge, it does not matter much which of the two
+    #     # vertices is removed, but let's try to introduce some
+    #     # consistency by popping the vertex with the most neighbours.
+    #     # If that one cannot be popped, we pop the other.
+    #     vii = [vi1, vi2] if (n_neighbours1 >= n_neighbours2) else [vi2, vi1]
+    #     changes = self.pop_vertex(vii[0])
+    #     if changes is None:
+    #         changes = self.pop_vertex(vii[1])
+    #     return changes
+
+    # todo: naming things .. we already have pop_vertices!
+
+    def pop_vertex(self, vi):
+        """Remove the given vertex.
+
+        Removing the vertex creates a hole, which is refilled with new
+        faces. Results in 1 less vertex, 2 less faces, 3 less edges.
+
+        All faces that contain vi are removed, forming a hole. The
+        boundary of this hole is formed by the (former) direct
+        neightbours of vi. This boundary (i.e. polygon) is re-tessalated
+        using an algorithm that makes use of the two-ears-theorem,
+        prioritizing nice (not-elongated) faces, though does not
+        guarantee a Delaunay triangulation (maybe we can try this
+        later).
+        """
+
+        # todo: Summary:
+        # - Obtain the neighbours of the vertex to remove, ordered to form a boundary.
+        # - Calculate how these should be connected to form the new faces. This is
+        #   the hard part, and we may not find a solution (in which case we return).
+        # - Delete the old faces, create the new ones.
+
+        # todo: if vi is on a boundary ...
+
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        vi_to_remove = int(vi)
+        faces_to_remove = vertex2faces[vi_to_remove]
+
+        # Collect the boundary vertices, store as a directed graph
+        boundary_map = {}  # vi -> vi
+        for fi in faces_to_remove:
+            vi1, vi2, vi3 = faces[fi]
+            if vi1 == vi_to_remove:
+                boundary_map[vi2] = vi3
+            elif vi2 == vi_to_remove:
+                boundary_map[vi3] = vi1
+            elif vi3 == vi_to_remove:
+                boundary_map[vi1] = vi2
+            else:
+                assert False, "wut?"
+
+        # Make a boundary list, with consistent winding
+        boundary_list = []
+        vi = next(iter(boundary_map))  # start anywhere (should not matter)
+        while len(boundary_list) < len(boundary_map):
+            vi = boundary_map.get(vi, -1)
+            boundary_list.append(vi)
+            assert vi >= 0  # todo: but can happen if vi_to_remove is on a boundary!
+
+        # Circular
+        assert boundary_map[boundary_list[-1]] == boundary_list[0]
+
+        # Get tesselated faces
+        new_faces = meshfuncs.tesselate(positions[boundary_list])
+
+        # Map vi 0..len(boundary_list) to the real vertex indices
+        vertex_index_map = np.array(boundary_list, np.int32)
+        new_faces = vertex_index_map[new_faces]
+
+        assert len(new_faces) == len(faces_to_remove) - 2
+
+        assert vertex2faces[vi_to_remove] == faces_to_remove
+        pos_to_remove = positions[vi_to_remove].copy()
+
+        # Apply changes
+        self.delete_faces(np.array(faces_to_remove, np.int32))
+        self.add_faces(new_faces)
+        self.delete_vertices([vi_to_remove])
+
+        # todo: this sometimes becomes non-manifold, but I don't understand yet why this can happen
+        assert self.is_manifold
+        assert self.is_closed
+        assert self.is_oriented
 
     # %% Repairs
 

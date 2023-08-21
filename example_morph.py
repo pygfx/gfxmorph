@@ -341,12 +341,15 @@ class Morpher:
         """Stop the morph or smooth action and commit the result."""
         self.wob_gizmo.visible = False
         if self.state:
-            if self.state["action"] == "morph":
-                self._smooth_some(0.25)
-                # todo: resample, smooth after resample?
             indices = self.state["indices"]
             self.geometry.sizes.data[indices] = 0
             self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+            if self.state["action"] == "morph":
+                self._smooth_some(0.25)
+                self.m.resample_selection(
+                    self.state["indices"], self.state["weights"], 0.2
+                )
+                # todo: resample, smooth after resample?
             self.state = None
             self.commit()
 
