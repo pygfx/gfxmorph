@@ -15,6 +15,17 @@ from .utils import (
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
 
 
+class ReadOnlyMap:
+    __slot__ = ["_internal"]
+
+    def __init__(self, internal):
+        self._internal = internal
+        # todo: self.__getitem__ = internal.__getitem__ -> faster?
+
+    def __getitem__(self, index):
+        return self._internal[index]
+
+
 class BaseDynamicMesh:
     """A mesh object that can be modified in-place.
 
@@ -75,7 +86,7 @@ class BaseDynamicMesh:
         # Other data structures are also possibe, e.g. one based on
         # shifts. These structures can be build faster, but using them
         # is slower due to the extra indirection.
-        self._vertex2faces = []  # vi -> [fi1, fi2, ..]
+        self._vertex2faces = []  # vi -> (fi1, fi2, ..)
 
     @property
     def faces(self):
@@ -114,7 +125,8 @@ class BaseDynamicMesh:
         lists face indices in arbitrary order and may contain duplicate
         face indices.
         """
-        return self._vertex2faces
+        return ReadOnlyMap(self._vertex2faces)
+        # return self._vertex2faces
 
     def track_changes(self, tracker, *, remove=False):
         """Track changes using a MeshChangeTracker object.
@@ -172,7 +184,13 @@ class BaseDynamicMesh:
         assert self._positions.base is self._positions_buf
         assert self._normals.base is self._normals_buf
 
-        # Check vertex2faces map
+        # Check vertex2faces map state
+        assert isinstance(self._vertex2faces, list)
+        for fii in self._vertex2faces:
+            assert isinstance(fii, tuple)
+            assert all(isinstance(fi, int) for fi in fii)
+
+        # Check vertex2faces map values
         vertex2faces = make_vertex2faces(self.faces, nverts)
         assert len(vertex2faces) == len(self._vertex2faces)
         for face1, face2 in zip(vertex2faces, self._vertex2faces):
@@ -364,6 +382,7 @@ class BaseDynamicMesh:
 
     def reset(self, positions, faces):
         """Reset the vertices and faces, e.g. from an export."""
+        # todo: this is considerably slower, let's find out why
         self.clear()
         if positions is not None:
             self.add_vertices(positions)
@@ -500,10 +519,10 @@ class BaseDynamicMesh:
 
             # Update reverse map
             for i, face in enumerate(faces):
-                fi = i + n1
-                vertex2faces[face[0]].append(fi)
-                vertex2faces[face[1]].append(fi)
-                vertex2faces[face[2]].append(fi)
+                fi_tuple = (i + n1,)
+                vertex2faces[face[0]] += fi_tuple
+                vertex2faces[face[1]] += fi_tuple
+                vertex2faces[face[2]] += fi_tuple
 
         except Exception:  # pragma: no cover
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
@@ -532,12 +551,17 @@ class BaseDynamicMesh:
                 "Number of faces to pop is larger than the total number of faces."
             )
 
-        nfaces1 = len(self.faces)
+        nfaces1 = len(self._faces)
         nfaces2 = nfaces1 - n
 
         # --- Apply
 
         old_faces = self._faces[nfaces2:].copy()
+
+        def update_vertex2faces(index, fi):
+            vii = list(vertex2faces[index])
+            vii.remove(fi)
+            vertex2faces[index] = tuple(vii)
 
         try:
             # Update reverse map. If over half the faces are removed,
@@ -545,9 +569,9 @@ class BaseDynamicMesh:
             # de-allocating the faces, but only by a bit, so lets not.
             for fi in range(nfaces2, nfaces1):
                 face = self._faces[fi]
-                vertex2faces[face[0]].remove(fi)
-                vertex2faces[face[1]].remove(fi)
-                vertex2faces[face[2]].remove(fi)
+                update_vertex2faces(face[0], fi)
+                update_vertex2faces(face[1], fi)
+                update_vertex2faces(face[2], fi)
 
             # Adjust the array lengths (reset views)
             self._deallocate_faces(n)
@@ -596,26 +620,36 @@ class BaseDynamicMesh:
         try:
             # Update reverse map (unrolled loops for small performance bump)
             for fi1, fi2 in zip(indices1, indices2):
-                face1 = self._faces[fi1]
-                fii = vertex2faces[face1[0]]
+                fi1, fi2 = int(fi1), int(fi2)
+                # fi1 -> fi2
+                # todo: this may be faster if we dont convert to-from list
+                vi1, vi2, vi3 = self._faces[fi1]
+                fii = list(vertex2faces[vi1])
                 fii.remove(fi1)
                 fii.append(fi2)
-                fii = vertex2faces[face1[1]]
+                vertex2faces[vi1] = tuple(fii)
+                fii = list(vertex2faces[vi2])
                 fii.remove(fi1)
                 fii.append(fi2)
-                fii = vertex2faces[face1[2]]
+                vertex2faces[vi2] = tuple(fii)
+                fii = list(vertex2faces[vi3])
                 fii.remove(fi1)
                 fii.append(fi2)
-                face2 = self._faces[fi2]
-                fii = vertex2faces[face2[0]]
+                vertex2faces[vi3] = tuple(fii)
+                # fi2 -> fi1
+                vi1, vi2, vi3 = self._faces[fi2]
+                fii = list(vertex2faces[vi1])
                 fii.remove(fi2)
                 fii.append(fi1)
-                fii = vertex2faces[face2[1]]
+                vertex2faces[vi1] = tuple(fii)
+                fii = list(vertex2faces[vi2])
                 fii.remove(fi2)
                 fii.append(fi1)
-                fii = vertex2faces[face2[2]]
+                vertex2faces[vi2] = tuple(fii)
+                fii = list(vertex2faces[vi3])
                 fii.remove(fi2)
                 fii.append(fi1)
+                vertex2faces[vi3] = tuple(fii)
 
             # Swap the faces themselves
             for a in [self._faces, self._faces_normals]:
@@ -663,12 +697,17 @@ class BaseDynamicMesh:
             # Update reverse map
             for fi, new_face in zip(indices, faces):
                 old_face = self._faces[fi]
-                vertex2faces[old_face[0]].remove(fi)
-                vertex2faces[old_face[1]].remove(fi)
-                vertex2faces[old_face[2]].remove(fi)
-                vertex2faces[new_face[0]].append(fi)
-                vertex2faces[new_face[1]].append(fi)
-                vertex2faces[new_face[2]].append(fi)
+                # Remove fi from old faces
+                vi1, vi2, vi3 = old_face
+                vertex2faces[vi1] = tuple(x for x in vertex2faces[vi1] if x != fi)
+                vertex2faces[vi2] = tuple(x for x in vertex2faces[vi2] if x != fi)
+                vertex2faces[vi3] = tuple(x for x in vertex2faces[vi3] if x != fi)
+                # Append fi from new faces
+                fi_tuple = (int(fi),)
+                vi1, vi2, vi3 = new_face
+                vertex2faces[vi1] += fi_tuple
+                vertex2faces[vi2] += fi_tuple
+                vertex2faces[vi3] += fi_tuple
 
             # Update
             self._faces[indices] = faces
@@ -708,7 +747,7 @@ class BaseDynamicMesh:
             self._positions[n1:] = positions
 
             # Update reverse map
-            vertex2faces.extend([] for i in range(n))
+            vertex2faces.extend(() for i in range(n))
 
         except Exception:  # pragma: no cover
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)

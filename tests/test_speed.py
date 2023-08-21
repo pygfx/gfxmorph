@@ -87,6 +87,19 @@ def benchmark():
             t.toc(f"reset")
 
             t.tic()
+            m.pop_faces(len(m.faces))
+            t.toc(f"clear faces")
+            t.tic()
+            m.pop_vertices(len(m.positions))
+            t.toc(f"clear vertices")
+            t.tic()
+            m.add_vertices(vertices)
+            t.toc(f"add vertices")
+            t.tic()
+            m.add_faces(faces)
+            t.toc(f"add faces")
+
+            t.tic()
             m.delete_faces(np.arange(0, len(m.faces), 2, np.int32))
             t.toc(f"delete 50% faces")
 
