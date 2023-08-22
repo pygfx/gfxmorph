@@ -8,22 +8,12 @@ from .utils import (
     Safecall,
     check_indices,
     as_immutable_array,
+    as_immutable_map,
     make_vertex2faces,
 )
 
 
 EXCEPTION_IN_ATOMIC_CODE = "Unexpected exception in code that is considered atomic!"
-
-
-class ReadOnlyMap:
-    __slot__ = ["_internal"]
-
-    def __init__(self, internal):
-        self._internal = internal
-        # todo: self.__getitem__ = internal.__getitem__ -> faster?
-
-    def __getitem__(self, index):
-        return self._internal[index]
 
 
 class BaseDynamicMesh:
@@ -125,8 +115,7 @@ class BaseDynamicMesh:
         lists face indices in arbitrary order and may contain duplicate
         face indices.
         """
-        return ReadOnlyMap(self._vertex2faces)
-        # return self._vertex2faces
+        return as_immutable_map(self._vertex2faces)
 
     def track_changes(self, tracker, *, remove=False):
         """Track changes using a MeshChangeTracker object.

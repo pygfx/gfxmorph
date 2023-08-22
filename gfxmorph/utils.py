@@ -60,16 +60,37 @@ def as_immutable_array(array):
     return v
 
 
+class ImmutableMap:
+    """A thin readonly wrapper for for a map (e.g. dict or list)."""
+
+    __slots__ = ["__getitem__", "__len__"]
+
+    def __init__(self, real_map):
+        self.__getitem__ = real_map.__getitem__
+        self.__len__ = real_map.__len__
+
+    def __setitem__(self, index, value):
+        raise ValueError("Map is readonly.")
+
+
+def as_immutable_map(map):
+    """Return a read-only view on a list or dict."""
+    return ImmutableMap(map)
+
+
 def make_vertex2faces(faces, nverts=None):
     """Create a simple map to map vertex indices to a list of face indices."""
+    # Prepare
     faces = np.asarray(faces, np.int32)
     if nverts is None:
         nverts = faces.max() + 1
-
+    # Fill
     vertex2faces = [[] for _ in range(nverts)]
     for fi in range(len(faces)):
         face = faces[fi]
         vertex2faces[face[0]].append(fi)
         vertex2faces[face[1]].append(fi)
         vertex2faces[face[2]].append(fi)
-    return vertex2faces
+    # Return as read-only
+    vertex2faces = [tuple(fii) for fii in vertex2faces]
+    return as_immutable_map(vertex2faces)
