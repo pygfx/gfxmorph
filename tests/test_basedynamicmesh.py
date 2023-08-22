@@ -329,10 +329,31 @@ def test_dynamicmesh_readonly():
 
     with pytest.raises(ValueError):
         m.faces[0] = (0, 0, 0)
+    face = m.faces[0]
+    with pytest.raises(ValueError):
+        face[0] = 0
+
     with pytest.raises(ValueError):
         m.positions[0] = (0, 0, 0)
+    position = m.positions[0]
+    with pytest.raises(ValueError):
+        position[0] = 0
+
     with pytest.raises(ValueError):
         m.normals[0] = (0, 0, 0)
+    normal = m.normals[0]
+    with pytest.raises(ValueError):
+        normal[0] = 0
+
+    with pytest.raises(ValueError):
+        m.vertex2faces[0] = (0, 0, 0)
+    with pytest.raises(AttributeError):
+        m.vertex2faces.append((1, 2, 3))  # does not have append
+    fii = m.vertex2faces[0]
+    with pytest.raises(AttributeError):
+        fii.append(-1)  # fii is a tuple
+    with pytest.raises(TypeError):
+        fii[0] = 0  # fii is a tuple
 
 
 def test_dynamicmesh_verts_before_faces():
