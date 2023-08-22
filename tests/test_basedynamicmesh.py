@@ -352,6 +352,8 @@ def test_dynamicmesh_readonly():
     fii = m.vertex2faces[0]
     with pytest.raises(AttributeError):
         fii.append(-1)  # fii is a tuple
+    with pytest.raises(TypeError):
+        fii[0] = 0  # fii is a tuple
 
 
 def test_dynamicmesh_verts_before_faces():
