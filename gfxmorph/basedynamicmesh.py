@@ -558,10 +558,10 @@ class BaseDynamicMesh:
 
         old_faces = self._faces[nfaces2:].copy()
 
-        def update_vertex2faces(index, fi):
-            vii = list(vertex2faces[index])
-            vii.remove(fi)
-            vertex2faces[index] = tuple(vii)
+        def update_vertex2faces(index, fi_rem):
+            fii = list(vertex2faces[index])
+            fii.remove(fi_rem)
+            vertex2faces[index] = tuple(fii)
 
         try:
             # Update reverse map. If over half the faces are removed,
@@ -617,39 +617,26 @@ class BaseDynamicMesh:
 
         # --- Apply
 
+        def update_vertex2faces(index, fi_rem, fi_add):
+            fii = list(vertex2faces[index])
+            fii.remove(fi_rem)
+            fii.append(fi_add)
+            vertex2faces[index] = tuple(fii)
+
         try:
             # Update reverse map (unrolled loops for small performance bump)
             for fi1, fi2 in zip(indices1, indices2):
                 fi1, fi2 = int(fi1), int(fi2)
                 # fi1 -> fi2
-                # todo: this may be faster if we dont convert to-from list
-                vi1, vi2, vi3 = self._faces[fi1]
-                fii = list(vertex2faces[vi1])
-                fii.remove(fi1)
-                fii.append(fi2)
-                vertex2faces[vi1] = tuple(fii)
-                fii = list(vertex2faces[vi2])
-                fii.remove(fi1)
-                fii.append(fi2)
-                vertex2faces[vi2] = tuple(fii)
-                fii = list(vertex2faces[vi3])
-                fii.remove(fi1)
-                fii.append(fi2)
-                vertex2faces[vi3] = tuple(fii)
+                face1 = self._faces[fi1]
+                update_vertex2faces(face1[0], fi1, fi2)
+                update_vertex2faces(face1[1], fi1, fi2)
+                update_vertex2faces(face1[2], fi1, fi2)
                 # fi2 -> fi1
-                vi1, vi2, vi3 = self._faces[fi2]
-                fii = list(vertex2faces[vi1])
-                fii.remove(fi2)
-                fii.append(fi1)
-                vertex2faces[vi1] = tuple(fii)
-                fii = list(vertex2faces[vi2])
-                fii.remove(fi2)
-                fii.append(fi1)
-                vertex2faces[vi2] = tuple(fii)
-                fii = list(vertex2faces[vi3])
-                fii.remove(fi2)
-                fii.append(fi1)
-                vertex2faces[vi3] = tuple(fii)
+                face2 = self._faces[fi2]
+                update_vertex2faces(face2[0], fi2, fi1)
+                update_vertex2faces(face2[1], fi2, fi1)
+                update_vertex2faces(face2[2], fi2, fi1)
 
             # Swap the faces themselves
             for a in [self._faces, self._faces_normals]:
@@ -693,21 +680,24 @@ class BaseDynamicMesh:
 
         old_faces = self._faces[indices]
 
+        def update_vertex2faces(index, fi_rem):
+            fii = list(vertex2faces[index])
+            fii.remove(fi_rem)
+            vertex2faces[index] = tuple(fii)
+
         try:
             # Update reverse map
             for fi, new_face in zip(indices, faces):
                 old_face = self._faces[fi]
                 # Remove fi from old faces
-                vi1, vi2, vi3 = old_face
-                vertex2faces[vi1] = tuple(x for x in vertex2faces[vi1] if x != fi)
-                vertex2faces[vi2] = tuple(x for x in vertex2faces[vi2] if x != fi)
-                vertex2faces[vi3] = tuple(x for x in vertex2faces[vi3] if x != fi)
+                update_vertex2faces(old_face[0], fi)
+                update_vertex2faces(old_face[1], fi)
+                update_vertex2faces(old_face[2], fi)
                 # Append fi from new faces
                 fi_tuple = (int(fi),)
-                vi1, vi2, vi3 = new_face
-                vertex2faces[vi1] += fi_tuple
-                vertex2faces[vi2] += fi_tuple
-                vertex2faces[vi3] += fi_tuple
+                vertex2faces[new_face[0]] += fi_tuple
+                vertex2faces[new_face[1]] += fi_tuple
+                vertex2faces[new_face[2]] += fi_tuple
 
             # Update
             self._faces[indices] = faces
