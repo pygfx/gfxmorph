@@ -371,7 +371,6 @@ class BaseDynamicMesh:
 
     def reset(self, positions, faces):
         """Reset the vertices and faces, e.g. from an export."""
-        # todo: this is considerably slower, let's find out why
         self.clear()
         if positions is not None:
             self.add_vertices(positions)
@@ -547,6 +546,8 @@ class BaseDynamicMesh:
 
         old_faces = self._faces[nfaces2:].copy()
 
+        # Note: this is where having tuples in vertex2faces hurts
+        # performance the most. We must make this as fast as possible.
         def update_vertex2faces(index, fi_rem):
             fii = list(vertex2faces[index])
             fii.remove(fi_rem)

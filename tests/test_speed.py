@@ -88,10 +88,10 @@ def benchmark():
 
             t.tic()
             m.pop_faces(len(m.faces))
-            t.toc(f"clear faces")
+            t.toc(f"pop faces")
             t.tic()
             m.pop_vertices(len(m.positions))
-            t.toc(f"clear vertices")
+            t.toc(f"pop vertices")
             t.tic()
             m.add_vertices(vertices)
             t.toc(f"add vertices")
@@ -101,12 +101,12 @@ def benchmark():
 
             t.tic()
             m.delete_faces(np.arange(0, len(m.faces), 2, np.int32))
-            t.toc(f"delete 50% faces")
+            t.toc(f"delete 50% faces (swap and pop)")
 
             m.reset(vertices, None)
             t.tic()
             m.delete_vertices(np.arange(0, len(m.positions), 2, np.int32))
-            t.toc(f"delete 50% vertices")
+            t.toc(f"delete 50% vertices (swap and pop)")
 
             t.add_data("", "")
 
