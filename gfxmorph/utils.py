@@ -60,22 +60,18 @@ def as_immutable_array(array):
     return v
 
 
-class ImmutableMap:
-    """A thin readonly wrapper for for a map (e.g. dict or list)."""
+class ImmutableMapOfSequences:
+    """A thin readonly wrapper for for a map containing sequences, (e.g. a list of lists) ."""
 
-    __slots__ = ["__getitem__", "__len__"]
+    __slots__ = ["_map", "__len__", "__getitem__"]
 
-    def __init__(self, real_map):
-        self.__getitem__ = real_map.__getitem__
-        self.__len__ = real_map.__len__
+    def __init__(self, map):
+        self._map = map
+        self.__len__ = map.__len__
+        self.__getitem__ = lambda i: tuple(map[i])
 
     def __setitem__(self, index, value):
         raise ValueError("Map is readonly.")
-
-
-def as_immutable_map(map):
-    """Return a read-only view on a list or dict."""
-    return ImmutableMap(map)
 
 
 def make_vertex2faces(faces, nverts=None):
@@ -93,4 +89,4 @@ def make_vertex2faces(faces, nverts=None):
         vertex2faces[face[2]].append(fi)
     # Return as read-only
     vertex2faces = [tuple(fii) for fii in vertex2faces]
-    return as_immutable_map(vertex2faces)
+    return ImmutableMapOfSequences(vertex2faces)

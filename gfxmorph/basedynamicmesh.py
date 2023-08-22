@@ -8,7 +8,7 @@ from .utils import (
     Safecall,
     check_indices,
     as_immutable_array,
-    as_immutable_map,
+    ImmutableMapOfSequences,
     make_vertex2faces,
 )
 
@@ -65,18 +65,29 @@ class BaseDynamicMesh:
         self._normals = self._normals_buf[:0]
 
         # Reverse map
+        #
         # This array is jagged, because the number of faces incident
         # to one vertex can potentially be big (e.g. the top and bottom
         # of a sphere sampled in lon/lat directions). We could use a
         # numpy array of lists, which has the advantage that you can
         # do `vertex2faces[multiple_indices].sum()`. However, benchmarks
         # show that this is *slower* than a simple list of lists. A
-        # list of sets could also work, but is slightly slower.
+        # Similarly, a list of arrays is also slower. A list of sets
+        # could also work, but is slightly slower.
         #
         # Other data structures are also possibe, e.g. one based on
         # shifts. These structures can be build faster, but using them
         # is slower due to the extra indirection.
-        self._vertex2faces = []  # vi -> (fi1, fi2, ..)
+        #
+        # To make this mapping public, it's preferable to have it
+        # immutable. We could use a list of tuples, but then
+        # updating/managing the structure becomes slower, up to 10% for
+        # some operations. The current solution is an immutable view
+        # object that turns the inner lists into tuples on the fly.
+        # This affects the performance of algorithms that use
+        # vertex2faces, like splitting components, by about 10%.
+        #
+        self._vertex2faces = []  # vi -> [fi1, fi2, ..]
 
     @property
     def faces(self):
@@ -115,7 +126,7 @@ class BaseDynamicMesh:
         lists face indices in arbitrary order and may contain duplicate
         face indices.
         """
-        return as_immutable_map(self._vertex2faces)
+        return ImmutableMapOfSequences(self._vertex2faces)
 
     def track_changes(self, tracker, *, remove=False):
         """Track changes using a MeshChangeTracker object.
@@ -176,7 +187,7 @@ class BaseDynamicMesh:
         # Check vertex2faces map state
         assert isinstance(self._vertex2faces, list)
         for fii in self._vertex2faces:
-            assert isinstance(fii, tuple)
+            assert isinstance(fii, list)
             assert all(isinstance(fi, int) for fi in fii)
 
         # Check vertex2faces map values
@@ -507,10 +518,10 @@ class BaseDynamicMesh:
 
             # Update reverse map
             for i, face in enumerate(faces):
-                fi_tuple = (i + n1,)
-                vertex2faces[face[0]] += fi_tuple
-                vertex2faces[face[1]] += fi_tuple
-                vertex2faces[face[2]] += fi_tuple
+                fi = i + n1
+                vertex2faces[face[0]].append(fi)
+                vertex2faces[face[1]].append(fi)
+                vertex2faces[face[2]].append(fi)
 
         except Exception:  # pragma: no cover
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
@@ -546,22 +557,15 @@ class BaseDynamicMesh:
 
         old_faces = self._faces[nfaces2:].copy()
 
-        # Note: this is where having tuples in vertex2faces hurts
-        # performance the most. We must make this as fast as possible.
-        def update_vertex2faces(index, fi_rem):
-            fii = list(vertex2faces[index])
-            fii.remove(fi_rem)
-            vertex2faces[index] = tuple(fii)
-
         try:
             # Update reverse map. If over half the faces are removed,
             # its faster to re-build verte2faces from scratch after
             # de-allocating the faces, but only by a bit, so lets not.
             for fi in range(nfaces2, nfaces1):
                 face = self._faces[fi]
-                update_vertex2faces(face[0], fi)
-                update_vertex2faces(face[1], fi)
-                update_vertex2faces(face[2], fi)
+                vertex2faces[face[0]].remove(fi)
+                vertex2faces[face[1]].remove(fi)
+                vertex2faces[face[2]].remove(fi)
 
             # Adjust the array lengths (reset views)
             self._deallocate_faces(n)
@@ -608,10 +612,9 @@ class BaseDynamicMesh:
         # --- Apply
 
         def update_vertex2faces(index, fi_rem, fi_add):
-            fii = list(vertex2faces[index])
+            fii = vertex2faces[index]
             fii.remove(fi_rem)
             fii.append(fi_add)
-            vertex2faces[index] = tuple(fii)
 
         try:
             # Update reverse map (unrolled loops for small performance bump)
@@ -670,24 +673,19 @@ class BaseDynamicMesh:
 
         old_faces = self._faces[indices]
 
-        def update_vertex2faces(index, fi_rem):
-            fii = list(vertex2faces[index])
-            fii.remove(fi_rem)
-            vertex2faces[index] = tuple(fii)
-
         try:
             # Update reverse map
             for fi, new_face in zip(indices, faces):
+                fi = int(fi)
                 old_face = self._faces[fi]
                 # Remove fi from old faces
-                update_vertex2faces(old_face[0], fi)
-                update_vertex2faces(old_face[1], fi)
-                update_vertex2faces(old_face[2], fi)
+                vertex2faces[old_face[0]].remove(fi)
+                vertex2faces[old_face[1]].remove(fi)
+                vertex2faces[old_face[2]].remove(fi)
                 # Append fi from new faces
-                fi_tuple = (int(fi),)
-                vertex2faces[new_face[0]] += fi_tuple
-                vertex2faces[new_face[1]] += fi_tuple
-                vertex2faces[new_face[2]] += fi_tuple
+                vertex2faces[new_face[0]].append(fi)
+                vertex2faces[new_face[1]].append(fi)
+                vertex2faces[new_face[2]].append(fi)
 
             # Update
             self._faces[indices] = faces
@@ -727,7 +725,7 @@ class BaseDynamicMesh:
             self._positions[n1:] = positions
 
             # Update reverse map
-            vertex2faces.extend(() for i in range(n))
+            vertex2faces.extend([] for i in range(n))
 
         except Exception:  # pragma: no cover
             logger.warn(EXCEPTION_IN_ATOMIC_CODE)
