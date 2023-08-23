@@ -699,6 +699,52 @@ def tesselate(positions, method="naive"):
     where N is the length of the positions minus 2.
     """
 
+    # The purpose of this function is to create new faces to fill a
+    # hole in the mesh, which is given as a contour. Determining where
+    # the edges go is a process usually referred to as tesselation. The
+    # size of the hole, expressed in the number of vertices on the
+    # (closed) contour, can be any value higer than 2.
+    #
+    # With 3 vertices, there is one obvious face, with 4 vertices there
+    # are just two options to divide the quad. From 5 vertices it starts
+    # to get interesting, since there are many ways in which the edges
+    # can be defined.
+    #
+    # 1     2      1     2      1        2
+    # ┌─────       ┌─────┐      ┌────────
+    # │    /       │     │      │        \
+    # │   /        │     │      │         \
+    # │  /         │     │      │          3
+    # │ /          │     │      │         /
+    # │/           │     │      │        /
+    #              └─────┘      └────────
+    # 3            4     3      5        4
+    #
+    # Some configuration of edges are not favorable, e.g. because it
+    # can result in elongated or tiny triangles. What's more, some
+    # configurations may even produce a non-manifold mesh!
+    #
+    # The left-most image below shows that the shapes do not always
+    # represent the convex hull. The vertices on the contour may even
+    # already be connected by edges, as is demonstrated in the middle
+    # image below. And since we consider a 3D space, the mesh can have
+    # sharp folds, which can even lead to situations that look like the
+    # image on the bottom-right. Note that in all cases the contour is
+    # 1-2-3-4-5.
+    #
+    #   1         2       1         2      1         2
+    #   ┌─────────        ┌─────────┐      ┌─────────┐
+    #   │        /        │        /│      │         │\
+    #   │       /         │       / │      │         │ \
+    #   │      3          │      3  │      │         │  3
+    #   │       \         │       \ │      │         │ /
+    #   │        \        │        \│      │         │/
+    #   └─────────        └─────────┘      └─────────┘
+    #   5         4       5         4      5         4
+    #
+    # This basically means that we cannot determine a valid tesselation
+    # from the positions alone.
+
     nfaces = len(positions) - 2
 
     if method == "naive":

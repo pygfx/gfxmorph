@@ -117,5 +117,9 @@ def test_mesh_stitch_boundaries():
     assert faces2.tolist() == [[0, 1, 2], [0, 2, 5], [6, 7, 8], [6, 8, 11]]
 
 
+def test_tesselate():
+    pass
+
+
 if __name__ == "__main__":
     run_tests(globals())

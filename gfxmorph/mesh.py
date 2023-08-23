@@ -462,12 +462,14 @@ class DynamicMesh(BaseDynamicMesh):
         assert len(new_faces) == len(faces_to_remove) - 2
 
         assert vertex2faces[vi_to_remove] == faces_to_remove
-        pos_to_remove = positions[vi_to_remove].copy()
 
         # Apply changes
         self.delete_faces(np.array(faces_to_remove, np.int32))
         self.add_faces(new_faces)
-        self.delete_vertices([vi_to_remove])
+
+        # We cannot delete the vertex, as that'd mess up the vertex indices that we have in resample_selection().
+        # todo: delete the vertices at the end.
+        # self.delete_vertices([vi_to_remove])
 
         # todo: this sometimes becomes non-manifold, but I don't understand yet why this can happen
         assert self.is_manifold

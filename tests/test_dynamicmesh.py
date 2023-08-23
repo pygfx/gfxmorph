@@ -82,7 +82,7 @@ def test_mesh_edges():
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
 
 
-def test_split_edge():
+def test_add_vertex_on_edge():
     # Create a silly mesh consisting of a single triangle
     triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
     m = DynamicMesh(triangle, [[0, 1, 2]])
@@ -90,8 +90,8 @@ def test_split_edge():
     assert len(m.faces) == 1
     assert m.is_manifold
 
-    # Split!
-    m.split_edge(0, 1)
+    # Split edge!
+    m.add_vertex_on_edge(0, 1)
     assert len(m.positions) == 4
     assert len(m.faces) == 2
     assert m.is_manifold
@@ -105,7 +105,7 @@ def test_split_edge():
     assert m.is_closed
 
     # Split!
-    m.split_edge(5, 27)
+    m.add_vertex_on_edge(5, 27)
     assert len(m.positions) == 33
     assert len(m.faces) == 62
     assert m.is_manifold
@@ -113,7 +113,7 @@ def test_split_edge():
 
     # Cannot split a non-edge
     with pytest.raises(ValueError):
-        m.split_edge(5, 28)
+        m.add_vertex_on_edge(5, 28)
 
 
 def test_mesh_selection_basics():
