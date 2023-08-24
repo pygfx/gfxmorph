@@ -14,7 +14,7 @@ def vertex_get_neighbours(faces, vertex2faces, vi):
     neighbour_vertices = set()
     for fi in vertex2faces[vi]:
         neighbour_vertices.update(faces[fi])
-    neighbour_vertices.remove(vi)
+    neighbour_vertices.discard(vi)
     return neighbour_vertices
 
 
@@ -26,7 +26,7 @@ def face_get_neighbours1(faces, vertex2faces, fi):
     neighbour_faces = set()
     for vi in faces[fi]:
         neighbour_faces.update(vertex2faces[vi])
-    neighbour_faces.remove(fi)
+    neighbour_faces.discard(fi)
     return neighbour_faces
 
 
@@ -692,25 +692,24 @@ def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
     return faces
 
 
-def tesselate(positions, method="naive"):
-    """Tesselate the given vertex positions.
+def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="naive"):
+    """Fill a hole in the mesh.
 
-    Returns an Nx3 array of faces that form a surface-mesh over the given positions,
-    where N is the length of the positions minus 2.
+    Returns an array of tesselated faces to add to the mesh to close it.
     """
 
     # The purpose of this function is to create new faces to fill a
-    # hole in the mesh, which is given as a contour. Determining where
-    # the edges go is a process usually referred to as tesselation. The
-    # size of the hole, expressed in the number of vertices on the
-    # (closed) contour, can be any value higer than 2.
+    # hole in the mesh, which is given as a contour/boundary.
+    # Determining where the edges go is a process usually referred to
+    # as tesselation. The size of the hole, expressed in the number of
+    # vertices on the (closed) boundary, can be any value higer than 2.
     #
     # With 3 vertices, there is one obvious face, with 4 vertices there
     # are just two options to divide the quad. From 5 vertices it starts
     # to get interesting, since there are many ways in which the edges
     # can be defined.
     #
-    # 1     2      1     2      1        2
+    # 3     2      4     3      5        4
     # ┌─────       ┌─────┐      ┌────────
     # │    /       │     │      │        \
     # │   /        │     │      │         \
@@ -718,21 +717,21 @@ def tesselate(positions, method="naive"):
     # │ /          │     │      │         /
     # │/           │     │      │        /
     #              └─────┘      └────────
-    # 3            4     3      5        4
+    # 1            1     2      1        2
     #
     # Some configuration of edges are not favorable, e.g. because it
     # can result in elongated or tiny triangles. What's more, some
     # configurations may even produce a non-manifold mesh!
     #
     # The left-most image below shows that the shapes do not always
-    # represent the convex hull. The vertices on the contour may even
+    # represent the convex hull. The vertices on the boundary may even
     # already be connected by edges, as is demonstrated in the middle
     # image below. And since we consider a 3D space, the mesh can have
     # sharp folds, which can even lead to situations that look like the
-    # image on the bottom-right. Note that in all cases the contour is
+    # image on the bottom-right. Note that in all cases the boundary is
     # 1-2-3-4-5.
     #
-    #   1         2       1         2      1         2
+    #   5         4       5         4      5         4
     #   ┌─────────        ┌─────────┐      ┌─────────┐
     #   │        /        │        /│      │         │\
     #   │       /         │       / │      │         │ \
@@ -740,17 +739,74 @@ def tesselate(positions, method="naive"):
     #   │       \         │       \ │      │         │ /
     #   │        \        │        \│      │         │/
     #   └─────────        └─────────┘      └─────────┘
-    #   5         4       5         4      5         4
+    #   1         2       1         2      1         2
     #
     # This basically means that we cannot determine a valid tesselation
     # from the positions alone.
 
-    nfaces = len(positions) - 2
+    positions = np.asanyarray(positions, np.float32)
+    boundary = np.asarray(boundary, np.int32)
+    boundary_len = len(boundary)
+
+    # We're going to convert vertex indices to boundary-indices
+    index_map = {vi: i for i, vi in enumerate(boundary)}
+
+    # Find the edges that are connected via an outside face, and are
+    # therefore unsuited for filling the hole, otherwise the mesh is
+    # no longer edge-manifold. Expressed in boundary indices.
+    forbidden_edges = set()
+    for i1, vi1 in enumerate(boundary):
+        vii = vertex_get_neighbours(faces, vertex2faces, vi1)
+        for vi2 in vii:
+            i2 = index_map.get(vi2, -1)
+            if i2 >= 0 and np.abs(i1 - i2) not in (1, boundary_len - 1):
+                forbidden_edges.add((i1, i2))
+
+    # Tesselate
+    tesselated_faces = tesselate(positions[boundary], forbidden_edges, method)
+
+    # Return as vertex indices
+    return boundary[tesselated_faces]
+
+
+def tesselate(positions, forbidden_edges, method):
+    """Tesselate the given vertex positions.
+
+    Returns an Nx3 array of faces that form a surface-mesh over the
+    given positions, where N is the length of the positions minus 2,
+    expressed in (local) vertex indices. The faces won't contain any
+    forbidden_edges.
+    """
+
+    nverts = len(positions)
+    nfaces = nverts - 2
 
     if method == "naive":
+        # Create an edge from one vertex to all the others
+
+        # Determine a good point to be a reference
+        forbidden_start_points = set()
+        for i1, i2 in forbidden_edges:
+            forbidden_start_points.add(i1)
+            forbidden_start_points.add(i2)
+        for i in range(len(positions)):
+            if i not in forbidden_start_points:
+                start_point = i
+                break
+        else:
+            # In real meshes this cannot happen, but it can from the POV of this function's API
+            raise RuntimeError("Cannot tesselate.")
+
+        # Collect the faces
         faces = []
-        for i in range(nfaces):
-            faces.append([0, i + 1, i + 2])
+        i0 = start_point
+        for i in range(start_point, start_point + nfaces):
+            i1 = (i + 1) % nverts
+            i2 = (i + 2) % nverts
+            faces.append([i0, i1, i2])
         faces = np.array(faces, np.int32)
+
+    else:
+        raise ValueError(f"Invalid tesselation method: {method}")
 
     return faces

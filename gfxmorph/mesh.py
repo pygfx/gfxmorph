@@ -294,8 +294,6 @@ class DynamicMesh(BaseDynamicMesh):
         for vi in vertices_to_pop:
             self.pop_vertex(vi)
 
-        assert self.is_manifold
-
     def add_vertex_on_edge(self, vi1, vi2):
         """Add a vertex on the give edge.
 
@@ -359,10 +357,6 @@ class DynamicMesh(BaseDynamicMesh):
         self.add_vertices([new_position])
         self.delete_faces(faces2split)
         self.add_faces(new_faces)
-
-        assert self.is_manifold
-        assert self.is_closed
-        assert self.is_oriented
 
         # todo: this could be more efficient if we update the old faces
         # but maybe we could have a generic delete_and_add_faces on BaseDynamicMesh.
@@ -453,15 +447,10 @@ class DynamicMesh(BaseDynamicMesh):
         assert boundary_map[boundary_list[-1]] == boundary_list[0]
 
         # Get tesselated faces
-        new_faces = meshfuncs.tesselate(positions[boundary_list])
-
-        # Map vi 0..len(boundary_list) to the real vertex indices
-        vertex_index_map = np.array(boundary_list, np.int32)
-        new_faces = vertex_index_map[new_faces]
-
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, boundary_list
+        )
         assert len(new_faces) == len(faces_to_remove) - 2
-
-        assert vertex2faces[vi_to_remove] == faces_to_remove
 
         # Apply changes
         self.delete_faces(np.array(faces_to_remove, np.int32))
@@ -471,10 +460,6 @@ class DynamicMesh(BaseDynamicMesh):
         # todo: delete the vertices at the end.
         # self.delete_vertices([vi_to_remove])
 
-        # todo: this sometimes becomes non-manifold, but I don't understand yet why this can happen
-        assert self.is_manifold
-        assert self.is_closed
-        assert self.is_oriented
 
     # %% Repairs
 
