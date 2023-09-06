@@ -450,9 +450,13 @@ class DynamicMesh(BaseDynamicMesh):
         new_faces = meshfuncs.mesh_fill_hole(
             positions, faces, vertex2faces, boundary_list
         )
-        assert len(new_faces) == len(faces_to_remove) - 2
+
+        # The component that the vi_to_remove is part of is likely a tetrahedron
+        if new_faces is None:
+            return
 
         # Apply changes
+        assert len(new_faces) == len(faces_to_remove) - 2
         self.delete_faces(np.array(faces_to_remove, np.int32))
         self.add_faces(new_faces)
 

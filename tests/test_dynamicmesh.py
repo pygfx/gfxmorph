@@ -3,8 +3,8 @@ import pytest
 
 from gfxmorph import maybe_pygfx
 from gfxmorph import DynamicMesh
-from testutils import run_tests
 from gfxmorph.mesh import MeshPathSmooth1, MeshPathSmooth2
+from testutils import run_tests, get_tetrahedron
 
 
 def test_mesh_basics():
@@ -114,6 +114,25 @@ def test_add_vertex_on_edge():
     # Cannot split a non-edge
     with pytest.raises(ValueError):
         m.add_vertex_on_edge(5, 28)
+
+
+def test_pop_vertex():
+    pass
+
+
+def test_pop_vertex_tetrahedron():
+    # Test that popping a vertex from a tetrahedron does not do anything.
+
+    positions, faces, _ = get_tetrahedron()
+
+    m = DynamicMesh(positions, faces)
+    assert len(m.positions) == 4
+    assert len(m.faces) == 4
+
+    for i in range(4):
+        m.pop_vertex(i)
+        assert len(m.positions) == 4
+        assert len(m.faces) == 4
 
 
 def test_mesh_selection_basics():

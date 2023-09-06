@@ -696,6 +696,8 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     """Fill a hole in the mesh.
 
     Returns an array of tesselated faces to add to the mesh to close it.
+    Can also return None if the hole cannot be filled. The typical case
+    is that of a single triangle.
     """
 
     # The purpose of this function is to create new faces to fill a
@@ -757,12 +759,19 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     # therefore unsuited for filling the hole, otherwise the mesh is
     # no longer edge-manifold. Expressed in boundary indices.
     forbidden_edges = set()
-    for i1, vi1 in enumerate(boundary):
-        vii = vertex_get_neighbours(faces, vertex2faces, vi1)
-        for vi2 in vii:
-            i2 = index_map.get(vi2, -1)
-            if i2 >= 0 and np.abs(i1 - i2) not in (1, boundary_len - 1):
-                forbidden_edges.add((i1, i2))
+    if boundary_len == 3:
+        fii1 = vertex2faces[boundary[0]]
+        fii2 = vertex2faces[boundary[1]]
+        fii3 = vertex2faces[boundary[2]]
+        if set(fii1) & set(fii2) & set(fii3):
+            return None  # Tetrahedron!
+    else:
+        for i1, vi1 in enumerate(boundary):
+            vii = vertex_get_neighbours(faces, vertex2faces, vi1)
+            for vi2 in vii:
+                i2 = index_map.get(vi2, -1)
+                if i2 >= 0 and np.abs(i1 - i2) not in (1, boundary_len - 1):
+                    forbidden_edges.add((i1, i2))
 
     # Tesselate
     tesselated_faces = tesselate(positions[boundary], forbidden_edges, method)
