@@ -460,7 +460,6 @@ class DynamicMesh(BaseDynamicMesh):
         # todo: delete the vertices at the end.
         # self.delete_vertices([vi_to_remove])
 
-
     # %% Repairs
 
     def repair(self, close=False):
