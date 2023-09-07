@@ -193,10 +193,11 @@ class DynamicMesh(BaseDynamicMesh):
         # The DynamicMesh class also does some checks, but it will
         # only check if incoming faces match any vertex, not just the
         # ones we add here, so we perform that check here.
-        if faces.min() < 0 or faces.max() >= len(positions):
-            raise ValueError(
-                "The faces array containes indices that are out of bounds."
-            )
+        if len(faces) > 0:
+            if faces.min() < 0 or faces.max() >= len(positions):
+                raise ValueError(
+                    "The faces array containes indices that are out of bounds."
+                )
 
         vertex_index_offset = len(self._positions)
         self.add_vertices(positions)
@@ -402,9 +403,7 @@ class DynamicMesh(BaseDynamicMesh):
         boundary of this hole is formed by the (former) direct
         neightbours of vi. This boundary (i.e. polygon) is re-tessalated
         using an algorithm that makes use of the two-ears-theorem,
-        prioritizing nice (not-elongated) faces, though does not
-        guarantee a Delaunay triangulation (maybe we can try this
-        later).
+        prioritizing nice (not-elongated) faces.
         """
 
         # todo: Summary:

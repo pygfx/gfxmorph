@@ -49,6 +49,20 @@ def face_get_neighbours2(faces, vertex2faces, fi):
     return neighbour_faces1, neighbour_faces2
 
 
+def faces_normalize(faces):
+    """Return a normalized version of a faces array. Especially usefull during testing."""
+    # Make numpy array
+    faces = np.asarray(faces, np.int32)
+    # Roll each face so it starts with the smallest vi.
+    shifts = np.argmin(faces, 1)
+    index = np.column_stack([shifts, np.mod(shifts + 1, 3), np.mod(shifts + 2, 3)])
+    rows = np.arange(faces.shape[0]).reshape(-1, 1)
+    faces = faces[rows, index]
+    # Sort so faces with smallest index come first
+    faces.sort(axis=0)
+    return faces
+
+
 def vertex_get_incident_face_groups(
     faces, vertex2faces, vi_check, *, face_adjacency=None
 ):
@@ -696,8 +710,8 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     """Fill a hole in the mesh.
 
     Returns an array of tesselated faces to add to the mesh to close it.
-    Can also return None if the hole cannot be filled. The typical case
-    is that of a single triangle.
+    Can also return None if the hole cannot be filled (the typical case
+    is that of a single triangle).
     """
 
     # The purpose of this function is to create new faces to fill a
@@ -758,6 +772,7 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     # Find the edges that are connected via an outside face, and are
     # therefore unsuited for filling the hole, otherwise the mesh is
     # no longer edge-manifold. Expressed in boundary indices.
+    # todo: comment on the triangle case, move up the stack, since it's a choice whether we want to maintain a tetrahedron, we *can* reduce it to a double-sided triangle!
     forbidden_edges = set()
     if boundary_len == 3:
         fii1 = vertex2faces[boundary[0]]
@@ -918,9 +933,7 @@ def _tesselate_earcut1(positions, forbidden_edges, method, ref_normal=None):
                 )
                 d_factor = min(d_factor, d_alt)
             # Get score and see if it's the best so far
-            this_score = d_factor / min(
-                distances[i1], distances[i2]
-            )  # Should prevent folded faces better
+            this_score = d_factor / max(1e-9, min(distances[i1], distances[i2]))
             if this_score > best_score:
                 best_score = this_score
                 best_ear = q1, q0, q2

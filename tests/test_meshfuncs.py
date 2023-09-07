@@ -161,8 +161,16 @@ def test_mesh_fill_holes_triangle():
     faces = [[0, 1, 2]]
     vertex2faces = [[0], [0], [0], []]
     contour = [0, 2, 3]
-    new_faces = meshfuncs.mesh_fill_hole(positions, faces, vertex2faces, contour)
-    assert new_faces.tolist() == [[0, 2, 3]]
+
+    def mesh_fill_hole(positions, faces, vertex2faces, contour):
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, contour, method=method
+        )
+        return meshfuncs.faces_normalize(new_faces)
+
+    for method in ("naive", "earcut1"):
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 2, 3]]
 
 
 def test_mesh_fill_holes_quad():
@@ -187,14 +195,31 @@ def test_mesh_fill_holes_quad():
     faces = []
     vertex2faces = [(), (), (), ()]
     contour = [0, 1, 2, 3]
-    new_faces = meshfuncs.mesh_fill_hole(positions, faces, vertex2faces, contour)
-    assert new_faces.tolist() == [[0, 1, 2], [0, 2, 3]]
 
-    # Now add an edge between 0 and 2, which should make vertex 1 the ref-point
-    faces = [[0, 2, 99]]
-    vertex2faces = [[0], [], [0], []]
-    faces = meshfuncs.mesh_fill_hole(positions, faces, vertex2faces, contour)
-    assert faces.tolist() == [[1, 2, 3], [1, 3, 0]]
+    def mesh_fill_hole(positions, faces, vertex2faces, contour):
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, contour, method=method
+        )
+        return meshfuncs.faces_normalize(new_faces)
+
+    for method in ("naive", "earcut1"):
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 2], [0, 2, 3]] or new_faces.tolist() == [
+            [0, 1, 3],
+            [1, 2, 3],
+        ]
+
+        # Now add an edge between 1 and 3, which should make vertex 0 the ref-point
+        faces = [[1, 3, 99]]
+        vertex2faces = [[], [0], [], [0]]
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 2], [0, 2, 3]]
+
+        # Now add an edge between 0 and 2, which should make vertex 1 the ref-point
+        faces = [[0, 2, 99]]
+        vertex2faces = [[0], [], [0], []]
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 3], [1, 2, 3]]
 
 
 def test_mesh_fill_holes_tricky():
@@ -220,44 +245,85 @@ def test_mesh_fill_holes_tricky():
     ]
     contour = [0, 1, 2, 3, 4]
 
-    # Start with an initial face to create an edge that "jumps over the
-    # hole". We do this for every possible edge.
-    for initial_face in [
-        [0, 2, 5],
-        [1, 3, 5],
-        [2, 4, 5],
-        [3, 0, 5],
-        [4, 1, 5],
-    ]:
-        m = DynamicMesh(positions, [initial_face])
+    for method in ("naive", "earcut1"):
+        # Start with an initial face to create an edge that "jumps over the
+        # hole". We do this for every possible edge.
+        for initial_face in [
+            [0, 2, 5],
+            [1, 3, 5],
+            [2, 4, 5],
+            [3, 0, 5],
+            [4, 1, 5],
+        ]:
+            m = DynamicMesh(positions, [initial_face])
 
-        new_faces = meshfuncs.mesh_fill_hole(
-            m.positions, m.faces, m.vertex2faces, contour
-        )
-        m.add_faces(new_faces)
+            new_faces = meshfuncs.mesh_fill_hole(
+                m.positions, m.faces, m.vertex2faces, contour, method
+            )
+            m.add_faces(new_faces)
 
-        assert (
-            m.is_edge_manifold
-        )  # is not vertex-manifold, because we added a lose face
+            assert m.is_edge_manifold
+            # is not vertex-manifold, because we added a loose face
 
-    # Cal also jump two vertices, I guess
-    for initial_face in [
-        [0, 3, 5],
-        [1, 4, 5],
-        [2, 0, 5],
-        [3, 1, 5],
-        [4, 2, 5],
-    ]:
-        m = DynamicMesh(positions, [initial_face])
+        # Cal also jump two vertices, I guess
+        for initial_face in [
+            [0, 3, 5],
+            [1, 4, 5],
+            [2, 0, 5],
+            [3, 1, 5],
+            [4, 2, 5],
+        ]:
+            m = DynamicMesh(positions, [initial_face])
 
-        new_faces = meshfuncs.mesh_fill_hole(
-            m.positions, m.faces, m.vertex2faces, contour
-        )
-        m.add_faces(new_faces)
+            new_faces = meshfuncs.mesh_fill_hole(
+                m.positions, m.faces, m.vertex2faces, contour, method
+            )
+            m.add_faces(new_faces)
 
-        assert (
-            m.is_edge_manifold
-        )  # is not vertex-manifold, because we added a lose face
+            assert m.is_edge_manifold
+            # is not vertex-manifold, because we added a lose face
+
+
+def test_mesh_fill_holes_earcut():
+    # Tesselate with a posisble fold. We create the structure below.
+    #
+    #   4         3
+    #   ┌─────────
+    #   │        /
+    #   │       /
+    #   │      2
+    #   │       \
+    #   │        \
+    #   └─────────
+    #   0         1
+
+    positions = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [0, 0, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = []
+    vertex2faces = [[], [], [], [], []]
+    contour = [0, 1, 2, 3, 4]
+
+    # The naive method will just create a "star" from index 0
+    new_faces = meshfuncs.mesh_fill_hole(
+        positions, faces, vertex2faces, contour, "naive"
+    )
+    assert new_faces[0].tolist() == [0, 1, 2]
+    assert new_faces[1].tolist() == [0, 2, 3]  # eek, nog a great triangle :/
+    assert new_faces[2].tolist() == [0, 3, 4]
+
+    # The earcut method will pick smarter
+    new_faces = meshfuncs.mesh_fill_hole(
+        positions, faces, vertex2faces, contour, "earcut1"
+    )
+    new_faces = meshfuncs.faces_normalize(new_faces)
+    assert new_faces[0].tolist() == [0, 1, 2]
+    assert new_faces[1].tolist() == [0, 2, 4]  # much better
+    assert new_faces[2].tolist() == [2, 3, 4]
 
 
 if __name__ == "__main__":
