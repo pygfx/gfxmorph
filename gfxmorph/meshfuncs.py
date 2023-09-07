@@ -52,7 +52,7 @@ def face_get_neighbours2(faces, vertex2faces, fi):
 def faces_normalize(faces):
     """Return a normalized version of a faces array. Especially usefull during testing."""
     # Make numpy array
-    faces = np.asarray(faces, np.int32)
+    faces = np.asarray(faces, np.int32).reshape(-1, 3)
     # Roll each face so it starts with the smallest vi.
     shifts = np.argmin(faces, 1)
     index = np.column_stack([shifts, np.mod(shifts + 1, 3), np.mod(shifts + 2, 3)])

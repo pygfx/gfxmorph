@@ -128,7 +128,7 @@ def test_pop_vertex():
     for i in (1, 3):
         m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
         m.pop_vertex(i)
-        # todo: assert len(m.positions) == 3
+        assert len(m.positions) == 3
         assert len(m.faces) == 1
         assert m.is_manifold
 
@@ -144,7 +144,7 @@ def test_pop_vertex():
     for i in (0, 5, 21, 22, 28, 31):
         m = DynamicMesh(geo.positions.data, geo.indices.data)
         m.pop_vertex(i)
-        # assert len(m.positions) == 31
+        assert len(m.positions) == 31
         assert len(m.faces) == 58
         assert m.is_manifold
         assert m.is_closed

@@ -238,6 +238,14 @@ class DynamicMesh(BaseDynamicMesh):
         # prevent near-degenerate triangles that can normally can occur
         # near the boundary of the selection.
 
+        # Note: A method that we could have used but don't, is to pop
+        # an edge by merging the two vertices, and position the new
+        # vertex in between the original positions. This is a relatively
+        # simple approach, and less invasive than smashing a a hole in
+        # the mesh by removing a vertex. Unfortunately, we also have
+        # less control over this change, and it more quickly results
+        # into folded faces.
+
         # Calculate dmin and dmax such that: dmax = dmin * dmin_dmax_ratio
         dmin_dmax_ratio = 3
         dmin = reference_distance / dmin_dmax_ratio**0.5
@@ -266,7 +274,26 @@ class DynamicMesh(BaseDynamicMesh):
         too_long.sort(key=lambda x: -x[0])
         too_short.sort(key=lambda x: x[0])
 
-        # Deteremine vertices that connect multiple edges that are too short.
+        # Determine vertices incident to edges that are too long.
+        too_long_vertices = {}
+        for d, vi1, vi2 in too_long:
+            too_long_vertices.setdefault(vi1, []).append((d, vi1, vi2))
+            too_long_vertices.setdefault(vi2, []).append((d, vi1, vi2))
+
+        # Only handle longest edges for each face ...
+        # The problem why we must apply each change directly is because two too-long
+        # edges can belong to the same face, and consequently the both delete that face and ... woops!
+        # One idea could be to split these too-long edges in three waves, by using the
+        # too_long_vertices thing above. That did not seem to work, maybe because
+        # it should be too_long_faces? Anyway, I was in the middle of this when I had to stop.
+
+        # TODO: >> I was here <<
+
+        # too_long = [edges[0] for edges in too_long_vertices.values()]
+
+        # todo: exclude vertices that are also too long, or the other way around ...
+
+        # Determine vertices that connect multiple edges that are too short.
         too_short_vertices = {}
         for d, vi1, vi2 in too_short:
             too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
@@ -289,11 +316,46 @@ class DynamicMesh(BaseDynamicMesh):
             else:
                 vertices_to_pop.append(vi2)
 
-        # Apply
+        # Prepare changes
+        vertices_to_remove = []
+        vertices_to_add = []
+        faces_to_remove = []
+        faces_to_add = []
+
+        # Collect changes
         for d, vi1, vi2 in too_long:
-            self.add_vertex_on_edge(vi1, vi2)
+            a_verts, r_faces, a_faces = self._add_vertex_on_edge(vi1, vi2)
+            vertices_to_add.extend(a_verts)
+            faces_to_remove.extend(r_faces)
+            faces_to_add.extend(a_faces)
+
+            # TEMP STUFF: apply each change directly
+            if len(vertices_to_add) > 0:
+                self.add_vertices(vertices_to_add)
+            vertices_to_add = []
+            if len(faces_to_remove) > 0:
+                self.delete_faces(faces_to_remove)
+            faces_to_remove = []
+            if len(faces_to_add) > 0:
+                self.add_faces(faces_to_add)
+            faces_to_add = []
+
         for vi in vertices_to_pop:
-            self.pop_vertex(vi)
+            r_verts, r_faces, a_faces = self._pop_vertex(vi)
+            vertices_to_remove.extend(r_verts)
+            faces_to_remove.extend(r_faces)
+            faces_to_add.extend(a_faces)
+
+        # Apply changes
+        # todo: adding and removing faces can possibly be combined by re-using slots
+        if len(vertices_to_add) > 0:
+            self.add_vertices(vertices_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(vertices_to_remove) > 0:
+            self.delete_vertices(vertices_to_remove)
 
     def add_vertex_on_edge(self, vi1, vi2):
         """Add a vertex on the give edge.
@@ -303,6 +365,26 @@ class DynamicMesh(BaseDynamicMesh):
         additional vertex, 2 additional faces, 3 additional edges.
         """
 
+        # Do the algorithmic
+        vertices_to_add, faces_to_remove, faces_to_add = self._add_vertex_on_edge(
+            vi1, vi2
+        )
+
+        # Apply changes
+        if len(vertices_to_add) > 0:
+            self.add_vertices(vertices_to_add)
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+
+    def _add_vertex_on_edge(self, vi1, vi2):
+        # This code:
+        #
+        # - place a vertex on the given edge
+        # - removes the faces incident to that edge
+        # - creates new faces incident to the new vertex
+        #
         # X______          X______
         # |\     |         |\    /|
         # | \    |         | \  / |
@@ -328,6 +410,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Get new vertex
         vi3 = len(positions)
         new_position = 0.5 * (positions[vi1] + positions[vi2])
+        # todo: use normals to place the point on the surface better
 
         # Calculate new faces. Needs a bit of triage to get the winding correct.
         new_faces = []
@@ -354,46 +437,11 @@ class DynamicMesh(BaseDynamicMesh):
             new_faces.append(face1)
             new_faces.append(face2)
 
-        # Apply changes
-        self.add_vertices([new_position])
-        self.delete_faces(faces2split)
-        self.add_faces(new_faces)
-
-        # todo: this could be more efficient if we update the old faces
-        # but maybe we could have a generic delete_and_add_faces on BaseDynamicMesh.
-        # Or perhaps we can optimize here, by combining multiple edge splits and vertex pops?
-
-    # def pop_edge(self, vi1, vi2):
-    #     """ Remove the edge between vi1 and vi2.
-    #
-    #     Removes either vi1 or vi2 using ``pop_vertex()``.
-    #     Results in 1 less vertex, 2 less faces, 3 less edges.
-    #     """
-    #
-    #     # Note: an alternative way to pop an edge is to merge the two
-    #     # vertices, and position the new vertex in between the original
-    #     # positions. This is a relatively simple approach, and less
-    #     # invasive than smashing a a hole in the mesh by removing a
-    #     # vertex. Unfortunately, this change can cause faces to fold
-    #     # over, making it less suitable.
-    #
-    #     vertex2faces = self.vertex2faces
-    #     n_neighbours1 = len(vertex2faces[vi1])
-    #     n_neighbours2 = len(vertex2faces[vi2])
-    #
-    #     # To pop the edge, it does not matter much which of the two
-    #     # vertices is removed, but let's try to introduce some
-    #     # consistency by popping the vertex with the most neighbours.
-    #     # If that one cannot be popped, we pop the other.
-    #     vii = [vi1, vi2] if (n_neighbours1 >= n_neighbours2) else [vi2, vi1]
-    #     changes = self.pop_vertex(vii[0])
-    #     if changes is None:
-    #         changes = self.pop_vertex(vii[1])
-    #     return changes
+        return [new_position], faces2split, new_faces
 
     # todo: naming things .. we already have pop_vertices!
 
-    def pop_vertex(self, vi):
+    def pop_vertex(self, vi, delete_vertex=True):
         """Remove the given vertex.
 
         Removing the vertex creates a hole, which is refilled with new
@@ -406,18 +454,39 @@ class DynamicMesh(BaseDynamicMesh):
         prioritizing nice (not-elongated) faces.
         """
 
-        # todo: Summary:
-        # - Obtain the neighbours of the vertex to remove, ordered to form a boundary.
-        # - Calculate how these should be connected to form the new faces. This is
-        #   the hard part, and we may not find a solution (in which case we return).
-        # - Delete the old faces, create the new ones.
+        # Do the algorithmic
+        vertices_to_remove, faces_to_remove, faces_to_add = self._pop_vertex(vi)
+
+        # Apply changes
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+        if len(vertices_to_remove) > 0:
+            self.delete_vertices(vertices_to_remove)
+
+    def _pop_vertex(self, vi):
+        # This code:
+        #
+        # - Obtains the faces incident to the vertex to remove.
+        # - We calculate how removing these faces affects the neighborhood of the component.
+        # - In some cases this code will return early.
+        # - If the vertex is on a boundary, we can just remove the vertex and incident faces.
+        # - Otherwise, we calculate the  boundary of the hole.
+        # - This boundary is tesselated. This is the hard part.
+
+        # This method contains a few asserts, but they should never
+        # happen if the mesh is manifold. We have them in place to guard
+        # some assumptions without explicitly testing manifoldness on
+        # each call.
 
         positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
 
         vi_to_remove = int(vi)
-        faces_to_remove = vertex2faces[vi_to_remove]
+        vertices_to_remove = [vi_to_remove]
+        faces_to_remove = list(vertex2faces[vi_to_remove])
 
         # Compute the context_faces: the faces in this component that border the ones we remove
         vii = set()
@@ -430,17 +499,15 @@ class DynamicMesh(BaseDynamicMesh):
 
         # If no faces remain in this component, we dont pop the vertex
         if not context_faces:
-            return
+            return [], [], []
 
         # Some cases are easy ...
-        # todo: delete the vertices somehow
         if not faces_to_remove:
             # This is a standalone vertex
-            return
+            return vertices_to_remove, [], []
         elif len(faces_to_remove) <= 2:
             # This vertex is on a boundary, we can just remove the faces!
-            self.delete_faces(np.array(faces_to_remove, np.int32))
-            return
+            return vertices_to_remove, faces_to_remove, []
 
         # Otherwise, removing the faces creates a hole that we must tesselate ...
 
@@ -451,7 +518,7 @@ class DynamicMesh(BaseDynamicMesh):
         # faces, but that's probably fine (deteting this case is
         # relatively expensive).
         if len(context_faces) <= 1:
-            return
+            return [], [], []
 
         # Collect the boundary vertices, store as a directed graph
         boundary_map = {}  # vi -> vi
@@ -464,7 +531,7 @@ class DynamicMesh(BaseDynamicMesh):
             elif vi3 == vi_to_remove:
                 boundary_map[vi1] = vi2
             else:
-                assert False, "wut?"
+                assert False
 
         # Make a boundary list, with consistent winding
         boundary_list = []
@@ -474,7 +541,7 @@ class DynamicMesh(BaseDynamicMesh):
             boundary_list.append(vi)
             assert vi >= 0
 
-        # Must be ircular
+        # Must be circular
         assert boundary_map[boundary_list[-1]] == boundary_list[0]
 
         # Get tesselated faces
@@ -483,13 +550,7 @@ class DynamicMesh(BaseDynamicMesh):
         )
         assert len(new_faces) == len(faces_to_remove) - 2
 
-        # Apply changes
-        self.delete_faces(np.array(faces_to_remove, np.int32))
-        self.add_faces(new_faces)
-
-        # We cannot delete the vertex, as that'd mess up the vertex indices that we have in resample_selection().
-        # todo: delete the vertices at the end.
-        # self.delete_vertices([vi_to_remove])
+        return vertices_to_remove, faces_to_remove, new_faces
 
     # %% Repairs
 
