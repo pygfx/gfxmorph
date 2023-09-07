@@ -412,14 +412,46 @@ class DynamicMesh(BaseDynamicMesh):
         #   the hard part, and we may not find a solution (in which case we return).
         # - Delete the old faces, create the new ones.
 
-        # todo: if vi is on a boundary ...
-
         positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
 
         vi_to_remove = int(vi)
         faces_to_remove = vertex2faces[vi_to_remove]
+
+        # Compute the context_faces: the faces in this component that border the ones we remove
+        vii = set()
+        for fi in faces_to_remove:
+            vii.update(faces[fi])
+        nearby_faces = set()
+        for vi in vii:
+            nearby_faces.update(vertex2faces[vi])
+        context_faces = nearby_faces - set(faces_to_remove)
+
+        # If no faces remain in this component, we dont pop the vertex
+        if not context_faces:
+            return
+
+        # Some cases are easy ...
+        # todo: delete the vertices somehow
+        if not faces_to_remove:
+            # This is a standalone vertex
+            return
+        elif len(faces_to_remove) <= 2:
+            # This vertex is on a boundary, we can just remove the faces!
+            self.delete_faces(np.array(faces_to_remove, np.int32))
+            return
+
+        # Otherwise, removing the faces creates a hole that we must tesselate ...
+
+        # If we assume the mesh to be closed, having just one context
+        # face means that we have a tetrahedron which we dont want to
+        # reduce. This rule means that if (this component of) the mesh
+        # is not closed, we cannot reduce components further than 4
+        # faces, but that's probably fine (deteting this case is
+        # relatively expensive).
+        if len(context_faces) <= 1:
+            return
 
         # Collect the boundary vertices, store as a directed graph
         boundary_map = {}  # vi -> vi
@@ -440,22 +472,18 @@ class DynamicMesh(BaseDynamicMesh):
         while len(boundary_list) < len(boundary_map):
             vi = boundary_map.get(vi, -1)
             boundary_list.append(vi)
-            assert vi >= 0  # todo: but can happen if vi_to_remove is on a boundary!
+            assert vi >= 0
 
-        # Circular
+        # Must be ircular
         assert boundary_map[boundary_list[-1]] == boundary_list[0]
 
         # Get tesselated faces
         new_faces = meshfuncs.mesh_fill_hole(
             positions, faces, vertex2faces, boundary_list
         )
-
-        # The component that the vi_to_remove is part of is likely a tetrahedron
-        if new_faces is None:
-            return
+        assert len(new_faces) == len(faces_to_remove) - 2
 
         # Apply changes
-        assert len(new_faces) == len(faces_to_remove) - 2
         self.delete_faces(np.array(faces_to_remove, np.int32))
         self.add_faces(new_faces)
 

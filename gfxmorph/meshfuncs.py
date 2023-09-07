@@ -710,8 +710,6 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     """Fill a hole in the mesh.
 
     Returns an array of tesselated faces to add to the mesh to close it.
-    Can also return None if the hole cannot be filled (the typical case
-    is that of a single triangle).
     """
 
     # The purpose of this function is to create new faces to fill a
@@ -766,27 +764,23 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     boundary = np.asarray(boundary, np.int32)
     boundary_len = len(boundary)
 
+    # If the hole is a triangle, tesselation is easy (and there cannot be any forbidden edges)
+    if boundary_len == 3:
+        return boundary
+
     # We're going to convert vertex indices to boundary-indices
     index_map = {vi: i for i, vi in enumerate(boundary)}
 
     # Find the edges that are connected via an outside face, and are
     # therefore unsuited for filling the hole, otherwise the mesh is
     # no longer edge-manifold. Expressed in boundary indices.
-    # todo: comment on the triangle case, move up the stack, since it's a choice whether we want to maintain a tetrahedron, we *can* reduce it to a double-sided triangle!
     forbidden_edges = set()
-    if boundary_len == 3:
-        fii1 = vertex2faces[boundary[0]]
-        fii2 = vertex2faces[boundary[1]]
-        fii3 = vertex2faces[boundary[2]]
-        if set(fii1) & set(fii2) & set(fii3):
-            return None  # Tetrahedron!
-    else:
-        for i1, vi1 in enumerate(boundary):
-            vii = vertex_get_neighbours(faces, vertex2faces, vi1)
-            for vi2 in vii:
-                i2 = index_map.get(vi2, -1)
-                if i2 >= 0 and np.abs(i1 - i2) not in (1, boundary_len - 1):
-                    forbidden_edges.add((i1, i2))
+    for i1, vi1 in enumerate(boundary):
+        vii = vertex_get_neighbours(faces, vertex2faces, vi1)
+        for vi2 in vii:
+            i2 = index_map.get(vi2, -1)
+            if i2 >= 0 and np.abs(i1 - i2) not in (1, boundary_len - 1):
+                forbidden_edges.add((i1, i2))
 
     # Tesselate
     tesselated_faces = tesselate(positions[boundary], forbidden_edges, method)
@@ -810,6 +804,7 @@ def tesselate(positions, forbidden_edges, method):
         try:
             faces = _tesselate_earcut1(positions, forbidden_edges, method)
         except RuntimeError as err:
+            # I think this should not happen, but if I'm wrong, we still produce a result
             logger.warning(str(err))
             faces = _tesselate_naive(positions, forbidden_edges, method)
     else:

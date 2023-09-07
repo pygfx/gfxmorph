@@ -117,11 +117,73 @@ def test_add_vertex_on_edge():
 
 
 def test_pop_vertex():
-    pass
+    # Create a silly mesh consisting of a quad
+    quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
+    m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    # Remove a vertex
+    for i in (1, 3):
+        m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+        m.pop_vertex(i)
+        # todo: assert len(m.positions) == 3
+        assert len(m.faces) == 1
+        assert m.is_manifold
+
+    # Create a sphere
+    geo = maybe_pygfx.smooth_sphere_geometry()
+    m = DynamicMesh(geo.positions.data, geo.indices.data)
+    assert len(m.positions) == 32
+    assert len(m.faces) == 60
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Remove a vertex
+    for i in (0, 5, 21, 22, 28, 31):
+        m = DynamicMesh(geo.positions.data, geo.indices.data)
+        m.pop_vertex(i)
+        # assert len(m.positions) == 31
+        assert len(m.faces) == 58
+        assert m.is_manifold
+        assert m.is_closed
 
 
-def test_pop_vertex_tetrahedron():
-    # Test that popping a vertex from a tetrahedron does not do anything.
+def test_pop_vertex_does_not_remove_a_component():
+    # Popping a vertex from a triangle does not do anything.
+
+    triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
+    m = DynamicMesh(triangle, [[0, 1, 2]])
+    assert len(m.positions) == 3
+    assert len(m.faces) == 1
+    assert m.is_manifold
+
+    for i in (0, 1, 2):
+        m = DynamicMesh(triangle, [[0, 1, 2]])
+        m.pop_vertex(i)
+        assert len(m.positions) == 3
+        assert len(m.faces) == 1
+        assert m.is_manifold
+
+    # Popping a vertex from a quad that connects to all faces, does not do anything.
+
+    quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
+    m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    for i in (0, 2):
+        m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+        m.pop_vertex(i)
+        assert len(m.positions) == 4
+        assert len(m.faces) == 2
+        assert m.is_manifold
+
+    # Popping a vertex from a tetrahedron does not do anything.
+    # Even though the mesh would still be manifold, it would no longer be closed,
+    # so this is prevented.
 
     positions, faces, _ = get_tetrahedron()
 
