@@ -766,7 +766,7 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
 
     # If the hole is a triangle, tesselation is easy (and there cannot be any forbidden edges)
     if boundary_len == 3:
-        return boundary
+        return boundary.reshape(1, 3)
 
     # We're going to convert vertex indices to boundary-indices
     index_map = {vi: i for i, vi in enumerate(boundary)}
