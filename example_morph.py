@@ -228,7 +228,8 @@ class Morpher:
 
         # Update data for points that highlight the selection
         self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
-        self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+        first, last = indices.min(), indices.max()
+        self.geometry.sizes.update_range(first, last - first + 1)
 
         # Store state
         self.state = {
@@ -343,7 +344,8 @@ class Morpher:
         if self.state:
             indices = self.state["indices"]
             self.geometry.sizes.data[indices] = 0
-            self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+            first, last = indices.min(), indices.max()
+            self.geometry.sizes.update_range(first, last - first + 1)
             if self.state["action"] == "morph":
                 self._smooth_some(0.25)
                 self.m.resample_selection(
@@ -369,7 +371,6 @@ scene = gfx.Scene()
 scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
 scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
 scene.add(morpher.world_objects)
-
 
 # %% Functions to modify the mesh
 

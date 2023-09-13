@@ -29,7 +29,7 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     def add_faces(self, faces):
         old_n = self._nfaces
         self._nfaces += len(faces)
-        self.indices.update_range(old_n, self._nfaces)
+        self.indices.update_range(old_n, len(faces))
         self.indices.draw_range = 0, self._nfaces
 
     def pop_faces(self, n, old):
@@ -37,23 +37,28 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         self.indices.draw_range = 0, self._nfaces
 
     def swap_faces(self, indices1, indices2):
-        self.indices.update_range(indices1.min(), indices1.max() + 1)
-        self.indices.update_range(indices2.min(), indices2.max() + 1)
+        first1, last1 = indices1.min(), indices1.max()
+        first2, last2 = indices2.min(), indices2.max()
+        self.indices.update_range(first1, last1 - first1 + 1)
+        self.indices.update_range(first2, last2 - first2 + 1)
 
     def update_faces(self, indices, faces, old):
-        self.indices.update_range(indices.min(), indices.max() + 1)
+        first, last = indices.min(), indices.max()
+        self.indices.update_range(first, last - first + 1)
 
     def add_vertices(self, positions):
         old_n = self._nverts
         self._nverts += len(positions)
-        self.positions.update_range(old_n, self._nverts)
+        self.positions.update_range(old_n, len(positions))
 
     def pop_vertices(self, n, old):
         self._nverts -= n
 
     def swap_vertices(self, indices1, indices2):
-        self.positions.update_range(indices1.min(), indices1.max() + 1)
-        self.positions.update_range(indices2.min(), indices2.max() + 1)
+        first1, last1 = indices1.min(), indices1.max()
+        first2, last2 = indices2.min(), indices2.max()
+        self.positions.update_range(first1, last1 - first1 + 1)
+        self.positions.update_range(first2, last2 - first2 + 1)
 
     def update_vertices(self, indices, positions, old):
         # todo: Optimize this, both here and on the pygfx side.
@@ -62,10 +67,12 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         #   maybe this would be more efficient than using indices?
         # - If we render with flat_shading, we don't need the normals!
         #   So if the normal-updates are a bottleneck, it could be made optional.
-        self.positions.update_range(indices.min(), indices.max() + 1)
+        first, last = indices.min(), indices.max()
+        self.positions.update_range(first, last - first + 1)
 
     def update_normals(self, indices):
-        self.normals.update_range(indices.min(), indices.max() + 1)
+        first, last = indices.min(), indices.max()
+        self.normals.update_range(first, last - first + 1)
 
 
 def solid_tetrahedon():
