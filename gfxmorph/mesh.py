@@ -15,6 +15,7 @@
 import numpy as np
 
 from .basedynamicmesh import BaseDynamicMesh
+from .utils import logger
 
 # from .maybe_pylinalg import ()
 # from .maybe_pygfx import ()
@@ -274,24 +275,23 @@ class DynamicMesh(BaseDynamicMesh):
         too_long.sort(key=lambda x: -x[0])
         too_short.sort(key=lambda x: x[0])
 
+        # Next, we take a few steps to determine what edges we split,
+        # and what vertices we will pop. In this process, we keep track
+        # of the faces that effected by the planned changes so far.
+        # This is to prevent changes to clash and create a corrupt mesh.
+        # Another solution is to apply each change separetely, but this
+        # results in relatively large undo stacks. It is somewhat
+        # assumed that this method is called in an interactive setting.
+        # If necessary, a new subset can be selected and resampled.
+        affected_faces = set()
+
         # Determine vertices incident to edges that are too long.
-        too_long_vertices = {}
+        edges_to_split = []
         for d, vi1, vi2 in too_long:
-            too_long_vertices.setdefault(vi1, []).append((d, vi1, vi2))
-            too_long_vertices.setdefault(vi2, []).append((d, vi1, vi2))
-
-        # Only handle longest edges for each face ...
-        # The problem why we must apply each change directly is because two too-long
-        # edges can belong to the same face, and consequently the both delete that face and ... woops!
-        # One idea could be to split these too-long edges in three waves, by using the
-        # too_long_vertices thing above. That did not seem to work, maybe because
-        # it should be too_long_faces? Anyway, I was in the middle of this when I had to stop.
-
-        # TODO: >> I was here <<
-
-        # too_long = [edges[0] for edges in too_long_vertices.values()]
-
-        # todo: exclude vertices that are also too long, or the other way around ...
+            touched_faces = set(vertex2faces[vi1]) & set(vertex2faces[vi2])
+            if not (touched_faces & affected_faces):
+                affected_faces.update(touched_faces)
+                edges_to_split.append((vi1, vi2))
 
         # Determine vertices that connect multiple edges that are too short.
         too_short_vertices = {}
@@ -299,49 +299,54 @@ class DynamicMesh(BaseDynamicMesh):
             too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
             too_short_vertices[vi2] = too_short_vertices.get(vi2, 0) + 1
         hot_vertices = [
-            (vi, count) for vi, count in too_short_vertices.items() if count > 1
+            (count, vi) for vi, count in too_short_vertices.items() if count > 1
         ]
         hot_vertices.sort(reverse=True)
 
-        # We will pop all of these
-        vertices_to_pop = [vi for vi, _ in hot_vertices]
+        # We will pop the ones that we can
+        vertices_to_pop = []
+        for _, vi in hot_vertices:
+            touched_faces = set(vertex2faces[vi])
+            if not (touched_faces & affected_faces):
+                affected_faces.update(touched_faces)
+                vertices_to_pop.append(vi)
 
         # And we also pop one vertex of the other too-short-edges, preferring
         # the ones with the most neighbours, to avoid star-like structures.
         for d, vi1, vi2 in too_short:
             if vi1 in vertices_to_pop or vi2 in vertices_to_pop:
                 continue
-            if len(vertex2faces[vi1]) > len(vertex2faces[vi2]):
-                vertices_to_pop.append(vi1)
-            else:
-                vertices_to_pop.append(vi2)
+            vii = vi1, vi2
+            if len(vertex2faces[vi1]) < len(vertex2faces[vi2]):
+                vii = vi2, vi1
+            for vi in vii:
+                touched_faces = set(vertex2faces[vi])
+                if not (touched_faces & affected_faces):
+                    affected_faces.update(touched_faces)
+                    vertices_to_pop.append(vi)
+                    break
 
-        # Prepare changes
+        # Next we collect the changes, so we can apply them in one go...
         vertices_to_remove = []
         vertices_to_add = []
         faces_to_remove = []
         faces_to_add = []
 
-        # Collect changes
-        for d, vi1, vi2 in too_long:
-            a_verts, r_faces, a_faces = self._add_vertex_on_edge(vi1, vi2)
+        # Changes to make the mesh more detailed
+        for vi1, vi2 in edges_to_split:
+            new_index = len(self.positions) + len(vertices_to_add)
+            a_verts, r_faces, a_faces = self._add_vertex_on_edge(vi1, vi2, new_index)
             vertices_to_add.extend(a_verts)
             faces_to_remove.extend(r_faces)
             faces_to_add.extend(a_faces)
 
-            # TEMP STUFF: apply each change directly
-            if len(vertices_to_add) > 0:
-                self.add_vertices(vertices_to_add)
-            vertices_to_add = []
-            if len(faces_to_remove) > 0:
-                self.delete_faces(faces_to_remove)
-            faces_to_remove = []
-            if len(faces_to_add) > 0:
-                self.add_faces(faces_to_add)
-            faces_to_add = []
-
+        # Changes to make the mesh more coarse
         for vi in vertices_to_pop:
-            r_verts, r_faces, a_faces = self._pop_vertex(vi)
+            try:
+                r_verts, r_faces, a_faces = self._pop_vertex(vi)
+            except RuntimeError as err:
+                logger.warn(str(err))
+                continue
             vertices_to_remove.extend(r_verts)
             faces_to_remove.extend(r_faces)
             faces_to_add.extend(a_faces)
@@ -367,7 +372,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Do the algorithmic
         vertices_to_add, faces_to_remove, faces_to_add = self._add_vertex_on_edge(
-            vi1, vi2
+            vi1, vi2, len(self.positions)
         )
 
         # Apply changes
@@ -378,7 +383,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
-    def _add_vertex_on_edge(self, vi1, vi2):
+    def _add_vertex_on_edge(self, vi1, vi2, new_index):
         # This code:
         #
         # - place a vertex on the given edge
@@ -408,7 +413,7 @@ class DynamicMesh(BaseDynamicMesh):
             raise ValueError("Cannot split edge on a non-manifold piece of the mesh.")
 
         # Get new vertex
-        vi3 = len(positions)
+        vi3 = new_index
         new_position = 0.5 * (positions[vi1] + positions[vi2])
         # todo: use normals to place the point on the surface better
 
@@ -455,7 +460,11 @@ class DynamicMesh(BaseDynamicMesh):
         """
 
         # Do the algorithmic
-        vertices_to_remove, faces_to_remove, faces_to_add = self._pop_vertex(vi)
+        try:
+            vertices_to_remove, faces_to_remove, faces_to_add = self._pop_vertex(vi)
+        except RuntimeError as err:
+            logger.warn(str(err))
+            return
 
         # Apply changes
         if len(faces_to_add) > 0:
@@ -475,10 +484,11 @@ class DynamicMesh(BaseDynamicMesh):
         # - Otherwise, we calculate the  boundary of the hole.
         # - This boundary is tesselated. This is the hard part.
 
-        # This method contains a few asserts, but they should never
-        # happen if the mesh is manifold. We have them in place to guard
-        # some assumptions without explicitly testing manifoldness on
-        # each call.
+        # This method contains a few checks that raise a runtime error.
+        # Some of these cases can occur in particular topologies. Others cannot
+        # in theory, but that's what I thought of the aforementioned cases too,
+        # so let's assume nothing. Also, if the mesh is not manifold, some of these
+        # cases may be triggered.
 
         positions = self.positions
         faces = self.faces
@@ -531,24 +541,29 @@ class DynamicMesh(BaseDynamicMesh):
             elif vi3 == vi_to_remove:
                 boundary_map[vi1] = vi2
             else:
-                assert False
+                raise RuntimeError("Unexpected face winding for contour?")
 
         # Make a boundary list, with consistent winding
-        boundary_list = []
         vi = next(iter(boundary_map))  # start anywhere (should not matter)
+        boundary_list = [vi]
         while len(boundary_list) < len(boundary_map):
             vi = boundary_map.get(vi, -1)
             boundary_list.append(vi)
-            assert vi >= 0
+            if vi < 0:
+                raise RuntimeError("Unexpected error while tracing the boundary.")
 
-        # Must be circular
-        assert boundary_map[boundary_list[-1]] == boundary_list[0]
+        # Must be circular. Note that the second case *can* indeed occur.
+        if len(boundary_list) < 3:
+            raise RuntimeError("Unexpected boundary too short.")
+        if boundary_map[boundary_list[-1]] != boundary_list[0]:
+            raise RuntimeError("Unexpected boundary not circular or has a shortcut.")
 
         # Get tesselated faces
         new_faces = meshfuncs.mesh_fill_hole(
             positions, faces, vertex2faces, boundary_list
         )
-        assert len(new_faces) == len(faces_to_remove) - 2
+        if len(new_faces) != len(faces_to_remove) - 2:
+            raise RuntimeError("Unexpected tesselation result.")
 
         return vertices_to_remove, faces_to_remove, new_faces
 

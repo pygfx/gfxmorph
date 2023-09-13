@@ -11,6 +11,7 @@ import pylinalg as la
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
 from gfxmorph.meshfuncs import vertex_get_neighbours
+from gfxmorph.utils import logger
 
 
 # %% Morph logic
@@ -342,18 +343,33 @@ class Morpher:
         """Stop the morph or smooth action and commit the result."""
         self.wob_gizmo.visible = False
         if self.state:
+            # Update
             indices = self.state["indices"]
             self.geometry.sizes.data[indices] = 0
             first, last = indices.min(), indices.max()
             self.geometry.sizes.update_range(first, last - first + 1)
-            if self.state["action"] == "morph":
+            # Commit or cancel
+            if self.m.is_manifold:
                 self._smooth_some(0.25)
+                self.commit()
+            else:
+                self.cancel()
+            # Post-processing
+            if self.state["action"] == "morph" and self.m.is_manifold:
                 self.m.resample_selection(
                     self.state["indices"], self.state["weights"], 0.2
                 )
-                # todo: resample, smooth after resample?
+                if self.m.is_manifold:
+                    self.undo_tracker.commit_amend()
+                else:
+                    # Idially this never happens, but it's a failsafe
+                    # todo: it does happen for small components :(
+                    self.cancel()
+                    logger.warn(
+                        "Discarding resampling step because it made the mesh non-manifold"
+                    )
+
             self.state = None
-            self.commit()
 
 
 morpher = Morpher()

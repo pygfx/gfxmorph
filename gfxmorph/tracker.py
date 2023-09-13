@@ -249,6 +249,21 @@ class MeshUndoTracker(MeshChangeTracker):
             self._redo.clear()
         return self.get_version()
 
+    def commit_amend(self):
+        """Add the current state to the latest version, and return the version number.
+
+        In other words, this commits the pending changes to the undo stack,
+        but instead of making a new entry, it's appended to the last entry.
+        If the object is currently used as a context, this does nothing.
+        """
+        if not self._undo:
+            return self._commit()
+        if not (self._work_in_progress or self._stack_level > 0):
+            self._undo[-1].extend(self._pending)
+            self._pending = []
+            self._redo.clear()
+        return self.get_version()
+
     def cancel(self, dynamic_mesh):
         """Cancel any uncommited changes.
 
