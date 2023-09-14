@@ -400,6 +400,7 @@ class DynamicMesh(BaseDynamicMesh):
         #        X                X
 
         positions = self.positions
+        normals = self.normals
         faces = self.faces
         vertex2faces = self.vertex2faces
 
@@ -412,12 +413,32 @@ class DynamicMesh(BaseDynamicMesh):
         elif len(faces2split) > 2:
             raise ValueError("Cannot split edge on a non-manifold piece of the mesh.")
 
-        # Get new vertex
-        vi3 = new_index
-        new_position = 0.5 * (positions[vi1] + positions[vi2])
-        # todo: use normals to place the point on the surface better
+        # Position it right in between
+        p1, p2 = positions[vi1], positions[vi2]
+        new_position = 0.5 * (p1 + p2)
+
+        # Add contribution for curvature ...
+        # In practice there is very little difference, and when
+        # interactively morphing and smoothing, we should perhaps not
+        # not make things too fancy.
+        if False:
+            n1, n2 = normals[vi1], normals[vi2]
+            dist = np.linalg.norm(p1 - p2)
+            # Get orthogonal vector
+            dir = p2 - p1
+            dir /= np.linalg.norm(dir)
+            ort = np.cross(n1, dir) + np.cross(n2, dir)
+            ort /= np.linalg.norm(ort)
+            # Get directional vectors
+            dir1 = -np.cross(n1, ort)
+            dir2 = +np.cross(n2, ort)
+            dir1 /= np.linalg.norm(dir1)
+            dir2 /= np.linalg.norm(dir2)
+            # Add contribution for surface curvature
+            new_position += 0.125 * dist * (dir1 + dir2)
 
         # Calculate new faces. Needs a bit of triage to get the winding correct.
+        vi3 = new_index
         new_faces = []
         for fi in faces2split:
             face1 = faces[fi].tolist()

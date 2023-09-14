@@ -350,7 +350,7 @@ class Morpher:
             self.geometry.sizes.update_range(first, last - first + 1)
             # Commit or cancel
             if self.m.is_manifold:
-                self._smooth_some(0.25)
+                self._smooth_some(0.1)
                 self.commit()
             else:
                 self.cancel()
