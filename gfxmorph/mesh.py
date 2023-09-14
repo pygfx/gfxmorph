@@ -279,10 +279,15 @@ class DynamicMesh(BaseDynamicMesh):
         # and what vertices we will pop. In this process, we keep track
         # of the faces that effected by the planned changes so far.
         # This is to prevent changes to clash and create a corrupt mesh.
+        #
+        # This means that some edges which are too short or too long
+        # are not handled in this call. Though the worst cases are
+        # prioritized. It is somewhat assumed that this method is called
+        # in an interactive setting. If necessary, a new subset can be
+        # selected and resampled.
+        #
         # Another solution is to apply each change separetely, but this
-        # results in relatively large undo stacks. It is somewhat
-        # assumed that this method is called in an interactive setting.
-        # If necessary, a new subset can be selected and resampled.
+        # results in relatively large undo stacks.
         affected_faces = set()
 
         # Determine vertices incident to edges that are too long.
@@ -769,12 +774,9 @@ class DynamicMesh(BaseDynamicMesh):
     def repair_holes(self):
         """Repair holes in the mesh.
 
-        Small boundaries are removed by filling these holes with new faces.
+        Boundaries are removed by filling these holes with new faces.
 
-        At the moment this only repairs holes of 3 or 4 vertices (i.e.
-        1  or 2 faces), but this can later be improved. So if only small
-        holes are present, the result will be a closed mesh. However,
-        if the mesh is not manifold, this method may not be able to
+        If the mesh is not manifold, this method may not be able to
         repair all holes. Also note that e.g. the four courners of a
         rectangular surface would be connected with new faces.
 
@@ -793,23 +795,21 @@ class DynamicMesh(BaseDynamicMesh):
             return 0
 
         # Now we check all boundaries
-        new_faces = []
+        new_faces_list = []
         for boundary in boundaries:
             assert len(boundary) >= 3  # I don't think they can be smaller, right?
-            if len(boundary) == 3:
-                new_faces.append(boundary)
-            elif len(boundary) == 4:
-                new_faces.append(boundary[:3])
-                new_faces.append(boundary[2:] + boundary[:1])
-            else:
-                pass
-                # We can apply the earcut algororithm to fill larger
-                # holes as well. Leaving this open for now.
+            new_faces = meshfuncs.mesh_fill_hole(
+                self.positions, self.faces, self.vertex2faces, boundary
+            )
+            new_faces_list.append(new_faces)
 
-        if new_faces:
+        # Apply
+        if new_faces_list:
+            new_faces = np.concatenate(new_faces_list)
             self.add_faces(new_faces)
-
-        return len(new_faces)
+            return len(new_faces)
+        else:
+            return 0
 
     def remove_unused_vertices(self):
         """Delete vertices that are not used by the faces.
