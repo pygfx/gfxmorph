@@ -709,7 +709,10 @@ def mesh_stitch_boundaries(vertices, faces, *, atol=1e-5):
 def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     """Fill a hole in the mesh.
 
-    Returns an array of tesselated faces to add to the mesh to close it.
+    Returns an array of tesselated faces to add to the mesh to close
+    it. This function takes the connectivity of the surroundings of the
+    hole into account, to prevent the fill to introduce non-manifold
+    edges.
     """
 
     # The purpose of this function is to create new faces to fill a
@@ -738,7 +741,7 @@ def mesh_fill_hole(positions, faces, vertex2faces, boundary, method="earcut1"):
     # * It can result in sharp folds in the mesh.
     # * It can even produce a non-manifold mesh!
     #
-    # To understand the last point, watch the the left-most image below.
+    # To understand the last point, watch the left-most image below.
     # It shows that the shapes do not always represent the convex hull.
     # The vertices on the boundary may even already be connected by
     # edges, as is demonstrated in the middle image below. And since

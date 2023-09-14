@@ -393,7 +393,7 @@ class BaseDynamicMesh:
 
         The faces with indices `face_indices` are deleted, and the `new_faces`
         are added. This convenience method re-uses slots of the faces to
-        delete, thereby minimizing the change.
+        delete, thereby minimizing the amount of changes to the mesh.
         """
 
         # --- Prepare / checks

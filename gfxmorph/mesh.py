@@ -210,7 +210,19 @@ class DynamicMesh(BaseDynamicMesh):
         raise NotImplementedError()
 
     def resample_selection(self, vertex_indices, weights, reference_distance):
-        """ """
+        """Resample the selected region of the mesh.
+
+        Edges that are too long are split, and edges that are too short
+        are resolved by removing a vertex and filling up the hole.
+
+        Note: although this code tries to prevent the mesh from becoming
+        non-manifold, it's hard to foresee all edge-cases (get it?
+        *edge* cases?), and it's probably a good idea to test for this
+        and cancel the change if this happens.
+
+        """
+
+        # todo: I've observed this algorithm to sometimes produces a non-manifold mesh for small components.
 
         positions = self.positions
         faces = self.faces

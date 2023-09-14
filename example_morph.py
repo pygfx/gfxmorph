@@ -362,8 +362,7 @@ class Morpher:
                 if self.m.is_manifold:
                     self.undo_tracker.commit_amend()
                 else:
-                    # Idially this never happens, but it's a failsafe
-                    # todo: it does happen for small components :(
+                    # Ideally this never happens, but it's a failsafe. At time of writing, it actually happens sometimes.
                     self.cancel()
                     logger.warn(
                         "Discarding resampling step because it made the mesh non-manifold"
