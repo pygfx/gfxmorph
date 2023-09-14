@@ -368,7 +368,10 @@ class Morpher:
                     logger.warn(
                         "Discarding resampling step because it made the mesh non-manifold"
                     )
-
+            # todo: sometimes faces are missing or weird faces occur, due to the faces data not being synced correctlty
+            # -> I've looked into why this happens but have not been able to find the cause.
+            # -> Let's revisit when we implement a more efficient way to do the updates.
+            self.geometry.indices.update_range()
             self.state = None
 
 
