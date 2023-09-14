@@ -352,13 +352,9 @@ class DynamicMesh(BaseDynamicMesh):
             faces_to_add.extend(a_faces)
 
         # Apply changes
-        # todo: adding and removing faces can possibly be combined by re-using slots
         if len(vertices_to_add) > 0:
             self.add_vertices(vertices_to_add)
-        if len(faces_to_remove) > 0:
-            self.delete_faces(faces_to_remove)
-        if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+        self.delete_and_add_faces(faces_to_remove, faces_to_add)
         if len(vertices_to_remove) > 0:
             self.delete_vertices(vertices_to_remove)
 

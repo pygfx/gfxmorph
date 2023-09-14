@@ -377,7 +377,7 @@ def test_dynamicmesh_verts_before_faces():
     m.delete_vertices(list(range(len(vertices))))
 
 
-def test_dynamicmesh_add_and_delete_faces():
+def test_dynamicmesh_add_and_delete_faces1():
     # Deleting faces can change the order of other faces due to the
     # defragmentation process.
 
@@ -465,6 +465,60 @@ def test_dynamicmesh_add_and_delete_faces():
     m.delete_faces([2, 0, 1])
 
     assert [tuple(x) for x in m.faces] == []
+
+
+def test_dynamicmesh_add_and_delete_faces2():
+    # Deleting faces can change the order of other faces due to the
+    # defragmentation process.
+
+    vertices = [[i, i, i] for i in range(20)]
+    faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
+
+    m = DynamicMesh()
+    m.add_vertices(vertices)
+    m.add_faces(faces)
+    check_mesh(m, 20, 3)
+
+    assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
+
+    # Fail add
+    with pytest.raises(ValueError):
+        m.delete_and_add_faces([], [1, 2, 3, 4])  # Must be (castable to) Nx3
+    with pytest.raises(ValueError):
+        m.delete_and_add_faces([], [(0, -1, 2)])  # Out of bounds
+    with pytest.raises(ValueError):
+        m.delete_and_add_faces([], [(0, 999, 2)])  # Out of bounds
+
+    # Fail delete
+    with pytest.raises(TypeError):
+        m.delete_and_add_faces({1, 2, 3}, [])  # Need list or ndarray
+    with pytest.raises(ValueError):
+        m.delete_and_add_faces([0, -1], [])  # Out of bounds
+    with pytest.raises(ValueError):
+        m.delete_and_add_faces([0, 999], [])  # Out of bounds
+
+    # But we can delete / add zero faces!!
+    m.delete_and_add_faces([], np.zeros((0, 3), np.int32))
+    m.delete_and_add_faces(np.zeros((0,), np.int32), [])
+    m.delete_and_add_faces([], [])
+
+    # Should still be the same (or atomicity would be broken)
+    assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
+
+    # delete one, add one
+
+    m.delete_and_add_faces([0], [(11, 12, 13)])
+    assert [tuple(x) for x in m.faces] == [(11, 12, 13), (3, 4, 5), (6, 7, 8)]
+
+    # delete two, add one (duplicates don't matter)
+
+    m.delete_and_add_faces([0, 0, 1, 1], [(14, 15, 16)])
+    assert [tuple(x) for x in m.faces] == [(14, 15, 16), (6, 7, 8)]
+
+    # delete one, add two
+
+    m.delete_and_add_faces([0], [(0, 1, 2), (3, 4, 5)])  # int is allowed
+    assert [tuple(x) for x in m.faces] == [(0, 1, 2), (6, 7, 8), (3, 4, 5)]
 
 
 def test_dynamicmesh_update_faces():
