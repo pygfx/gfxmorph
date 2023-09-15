@@ -896,7 +896,7 @@ class DynamicMesh(BaseDynamicMesh):
         return vi, distances[vi]
 
     def select_vertices_over_surface(
-        self, ref_vertices, ref_distances, max_distance, distance_measure="smooth2"
+        self, ref_vertices, ref_distances, max_distance, distance_measure="auto"
     ):
         """Select nearby vertices, starting from the given reference vertices.
 
@@ -924,8 +924,9 @@ class DynamicMesh(BaseDynamicMesh):
             The method to calculate the geodesic distance. With "edge"
             it sums the edge lengths, with "smooth1" it smooths the
             path to compensate for zig-zag patterns, with "smooth2" it
-            does this smarter to avoid deviating from the surface.
-            Default "smooth2".
+            does this smarter to avoid deviating from the surface. With
+            "auto" it starts with smooth2, and falls back to "edge" halfway.
+            Default "auto".
 
         Returns
         -------
@@ -949,15 +950,19 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Select path class
         distance_measure = distance_measure or "smooth2"
+        defer_to_edge_measure = False
         if distance_measure == "edge":
             MeshPath = MeshPathEdge  # noqa
         elif distance_measure == "smooth1":
             MeshPath = MeshPathSmooth1  # noqa
         elif distance_measure == "smooth2":
             MeshPath = MeshPathSmooth2  # noqa
+        elif distance_measure == "auto":
+            MeshPath = MeshPathSmooth2  # noqa
+            defer_to_edge_measure = True
         else:
             raise ValueError(
-                "The distance_measure arg must be 'edge' 'smooth1' or 'smooth2'."
+                "The distance_measure arg must be 'edge' 'smooth1', 'smooth2' or 'auto'."
             )
 
         # The list of vertices to check for neighbours.
@@ -973,10 +978,12 @@ class DynamicMesh(BaseDynamicMesh):
             if vi1 in selected_vertices:
                 continue
             selected_vertices[vi1] = path1.dist
+            if defer_to_edge_measure and path1.dist > 0.5 * max_distance:
+                MeshPath = MeshPathEdge  # noqa
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
                 if vi2 in selected_vertices:
                     continue
-                path2 = path1.add(positions[vi2], normals[vi2])
+                path2 = path1.add(positions[vi2], normals[vi2], MeshPath)
                 if path2.dist < max_distance:
                     heapq.heappush(vertices2check, (path2, vi2))
 
@@ -1001,8 +1008,9 @@ class BaseMeshPath:
     def __lt__(self, other):
         return self.dist < other.dist
 
-    def add(self, p, n):
-        new = self.__class__()
+    def add(self, p, n, cls=None):
+        cls = cls or self.__class__
+        new = cls()
         new.positions = self.positions[-3:] + [p]
         new.normals = self.normals[-3:] + [n]
         new.edist = self.edist

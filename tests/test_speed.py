@@ -174,7 +174,7 @@ def benchmark_selecting_vertices():
     faces = geo.indices.data
     m = DynamicMesh(vertices, faces)
 
-    for method in ["edge", "smooth1", "smooth2"]:
+    for method in ["edge", "smooth1", "smooth2", "auto"]:
         t0 = time.perf_counter()
         verts, dists = m.select_vertices_over_surface(
             0, 0, 100, distance_measure=method

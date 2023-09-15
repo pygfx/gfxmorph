@@ -214,9 +214,8 @@ class Morpher:
         self.finish()
 
         # Select vertices.
-        # Use a (simpler, more performant) method when the radius is large
         search_distance = self.radius * 3  # 3 x std
-        method = "edge" if self.radius > 1.5 else "smooth2"
+        method = "auto"  # method = "edge" if self.radius > 1.5 else "smooth2"
         indices, geodesic_distances = self.m.select_vertices_over_surface(
             vii, ref_distances, search_distance, method
         )
