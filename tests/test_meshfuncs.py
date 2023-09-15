@@ -5,6 +5,7 @@ Here we have a few more tests to test some functions more directly.
 
 from gfxmorph import meshfuncs
 from testutils import run_tests, iter_fans, get_sphere
+from gfxmorph import DynamicMesh
 
 
 def test_face_get_neighbours():
@@ -23,6 +24,26 @@ def test_face_get_neighbours():
     n1, n2 = meshfuncs.face_get_neighbours2(faces, vertex2faces, 0)
     assert n1 == {1, 2}
     assert n2 == {1}
+
+
+def test_vertex_get_neighbours():
+    # Simple triangle
+    faces = [[0, 1, 2]]
+    vertex2faces = [[0], [0], [0]]
+
+    vii = meshfuncs.vertex_get_neighbours(faces, vertex2faces, 0)
+    assert vii == {1, 2}
+    vii = meshfuncs.vertex_get_neighbours(faces, vertex2faces, 1)
+    assert vii == {0, 2}
+    vii = meshfuncs.vertex_get_neighbours(faces, vertex2faces, 2)
+    assert vii == {0, 1}
+
+    # Empty triangle (no faces)
+    faces = []
+    vertex2faces = [[], [], []]
+
+    vii = meshfuncs.vertex_get_neighbours(faces, vertex2faces, 0)
+    assert vii == set()
 
 
 def test_mesh_boundaries():
@@ -115,6 +136,194 @@ def test_mesh_stitch_boundaries():
     # Stitch with tolerances -> 2 components.
     faces2 = meshfuncs.mesh_stitch_boundaries(vertices, faces, atol=0.001)
     assert faces2.tolist() == [[0, 1, 2], [0, 2, 5], [6, 7, 8], [6, 8, 11]]
+
+
+def test_mesh_fill_holes_triangle():
+    # Tesselate a simple triangular hole. Just to make sure that this
+    # simple case isn't overlooked in a weird way.
+    #
+    # 3     2
+    # ┌─────
+    # │    /
+    # │   /
+    # │  /
+    # │ /   |
+    # │/    |
+    #     --
+    # 0     1
+
+    positions = [
+        [-1, -1, 0],
+        [+1, -1, 0],  # extra point
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = [[0, 1, 2]]
+    vertex2faces = [[0], [0], [0], []]
+    contour = [0, 2, 3]
+
+    def mesh_fill_hole(positions, faces, vertex2faces, contour):
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, contour, method=method
+        )
+        return meshfuncs.faces_normalize(new_faces)
+
+    for method in ("naive", "earcut1"):
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 2, 3]]
+
+
+def test_mesh_fill_holes_quad():
+    # Tesselate a quad hole.
+    #
+    #  3     2
+    #  ┌─────┐
+    #  │     │
+    #  │     │
+    #  │     │
+    #  │     │
+    #  │     │
+    #  └─────┘
+    #  0     1
+
+    positions = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = []
+    vertex2faces = [(), (), (), ()]
+    contour = [0, 1, 2, 3]
+
+    def mesh_fill_hole(positions, faces, vertex2faces, contour):
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, contour, method=method
+        )
+        return meshfuncs.faces_normalize(new_faces)
+
+    for method in ("naive", "earcut1"):
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 2], [0, 2, 3]] or new_faces.tolist() == [
+            [0, 1, 3],
+            [1, 2, 3],
+        ]
+
+        # Now add an edge between 1 and 3, which should make vertex 0 the ref-point
+        faces = [[1, 3, 99]]
+        vertex2faces = [[], [0], [], [0]]
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 2], [0, 2, 3]]
+
+        # Now add an edge between 0 and 2, which should make vertex 1 the ref-point
+        faces = [[0, 2, 99]]
+        vertex2faces = [[0], [], [0], []]
+        new_faces = mesh_fill_hole(positions, faces, vertex2faces, contour)
+        assert new_faces.tolist() == [[0, 1, 3], [1, 2, 3]]
+
+
+def test_mesh_fill_holes_tricky():
+    # Tesselate with a posisble fold. We create the structure below.
+    #
+    #   4         3
+    #   ┌─────────
+    #   │        /
+    #   │       /
+    #   │      2
+    #   │       \
+    #   │        \
+    #   └─────────
+    #   0         1
+
+    positions = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [0, 0, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+        [0, 0, 99],  # aux point
+    ]
+    contour = [0, 1, 2, 3, 4]
+
+    for method in ("naive", "earcut1"):
+        # Start with an initial face to create an edge that "jumps over the
+        # hole". We do this for every possible edge.
+        for initial_face in [
+            [0, 2, 5],
+            [1, 3, 5],
+            [2, 4, 5],
+            [3, 0, 5],
+            [4, 1, 5],
+        ]:
+            m = DynamicMesh(positions, [initial_face])
+
+            new_faces = meshfuncs.mesh_fill_hole(
+                m.positions, m.faces, m.vertex2faces, contour, method
+            )
+            m.add_faces(new_faces)
+
+            assert m.is_edge_manifold
+            # is not vertex-manifold, because we added a loose face
+
+        # Cal also jump two vertices, I guess
+        for initial_face in [
+            [0, 3, 5],
+            [1, 4, 5],
+            [2, 0, 5],
+            [3, 1, 5],
+            [4, 2, 5],
+        ]:
+            m = DynamicMesh(positions, [initial_face])
+
+            new_faces = meshfuncs.mesh_fill_hole(
+                m.positions, m.faces, m.vertex2faces, contour, method
+            )
+            m.add_faces(new_faces)
+
+            assert m.is_edge_manifold
+            # is not vertex-manifold, because we added a lose face
+
+
+def test_mesh_fill_holes_earcut():
+    # Tesselate with a posisble fold. We create the structure below.
+    #
+    #   4         3
+    #   ┌─────────
+    #   │        /
+    #   │       /
+    #   │      2
+    #   │       \
+    #   │        \
+    #   └─────────
+    #   0         1
+
+    positions = [
+        [-1, -1, 0],
+        [+1, -1, 0],
+        [0, 0, 0],
+        [+1, +1, 0],
+        [-1, +1, 0],
+    ]
+    faces = []
+    vertex2faces = [[], [], [], [], []]
+    contour = [0, 1, 2, 3, 4]
+
+    # The naive method will just create a "star" from index 0
+    new_faces = meshfuncs.mesh_fill_hole(
+        positions, faces, vertex2faces, contour, "naive"
+    )
+    assert new_faces[0].tolist() == [0, 1, 2]
+    assert new_faces[1].tolist() == [0, 2, 3]  # eek, nog a great triangle :/
+    assert new_faces[2].tolist() == [0, 3, 4]
+
+    # The earcut method will pick smarter
+    new_faces = meshfuncs.mesh_fill_hole(
+        positions, faces, vertex2faces, contour, "earcut1"
+    )
+    new_faces = meshfuncs.faces_normalize(new_faces)
+    assert new_faces[0].tolist() == [0, 1, 2]
+    assert new_faces[1].tolist() == [0, 2, 4]  # much better
+    assert new_faces[2].tolist() == [2, 3, 4]
 
 
 if __name__ == "__main__":

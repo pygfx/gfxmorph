@@ -388,6 +388,35 @@ class BaseDynamicMesh:
         if faces is not None:
             self.add_faces(faces)
 
+    def delete_and_add_faces(self, face_indices, new_faces):
+        """Delete and add faces.
+
+        The faces with indices `face_indices` are deleted, and the `new_faces`
+        are added. This convenience method re-uses slots of the faces to
+        delete, thereby minimizing the amount of changes to the mesh.
+        """
+
+        # --- Prepare / checks
+
+        indices = check_indices(
+            face_indices, len(self._faces), "face indices to delete", allow_empty=True
+        )
+        indices = np.unique(indices)  # cause we're counting them!
+        faces = np.asarray(new_faces, np.int32).reshape(-1, self._verts_per_face)
+
+        n_delete = len(indices)
+        n_add = len(faces)
+        n_reuse = min(n_delete, n_add)
+
+        # --- Apply -> delegate
+
+        if n_reuse > 0:
+            self.update_faces(indices[:n_reuse], faces[:n_reuse])
+        if n_delete - n_reuse > 0:
+            self.delete_faces(indices[n_reuse:])
+        if n_add - n_reuse > 0:
+            self.add_faces(faces[n_reuse:])
+
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
 
@@ -501,9 +530,7 @@ class BaseDynamicMesh:
             raise ValueError("Cannot add zero faces.")
         # Check sanity of the faces
         if faces.min() < 0 or faces.max() >= len(self._positions):
-            raise ValueError(
-                "The faces array containes indices that are out of bounds."
-            )
+            raise ValueError("The faces array contains indices that are out of bounds.")
 
         n = len(faces)
         n1 = len(self._faces)
@@ -665,9 +692,7 @@ class BaseDynamicMesh:
 
         # Check sanity of the faces
         if faces.min() < 0 or faces.max() >= len(self._positions):
-            raise ValueError(
-                "The faces array containes indices that are out of bounds."
-            )
+            raise ValueError("The faces array contains indices that are out of bounds.")
 
         # --- Apply
 

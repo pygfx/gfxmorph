@@ -3,8 +3,8 @@ import pytest
 
 from gfxmorph import maybe_pygfx
 from gfxmorph import DynamicMesh
-from testutils import run_tests
 from gfxmorph.mesh import MeshPathSmooth1, MeshPathSmooth2
+from testutils import run_tests, get_tetrahedron
 
 
 def test_mesh_basics():
@@ -80,6 +80,121 @@ def test_mesh_edges():
     m = DynamicMesh(vertices, faces)
 
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
+
+
+def test_add_vertex_on_edge():
+    # Create a silly mesh consisting of a single triangle
+    triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
+    m = DynamicMesh(triangle, [[0, 1, 2]])
+    assert len(m.positions) == 3
+    assert len(m.faces) == 1
+    assert m.is_manifold
+
+    # Split edge!
+    m.add_vertex_on_edge(0, 1)
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    # Create a sphere
+    geo = maybe_pygfx.smooth_sphere_geometry()
+    m = DynamicMesh(geo.positions.data, geo.indices.data)
+    assert len(m.positions) == 32
+    assert len(m.faces) == 60
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Split!
+    m.add_vertex_on_edge(5, 27)
+    assert len(m.positions) == 33
+    assert len(m.faces) == 62
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Cannot split a non-edge
+    with pytest.raises(ValueError):
+        m.add_vertex_on_edge(5, 28)
+
+
+def test_pop_vertex():
+    # Create a silly mesh consisting of a quad
+    quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
+    m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    # Remove a vertex
+    for i in (1, 3):
+        m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+        m.pop_vertex(i)
+        assert len(m.positions) == 3
+        assert len(m.faces) == 1
+        assert m.is_manifold
+
+    # Create a sphere
+    geo = maybe_pygfx.smooth_sphere_geometry()
+    m = DynamicMesh(geo.positions.data, geo.indices.data)
+    assert len(m.positions) == 32
+    assert len(m.faces) == 60
+    assert m.is_manifold
+    assert m.is_closed
+
+    # Remove a vertex
+    for i in (0, 5, 21, 22, 28, 31):
+        m = DynamicMesh(geo.positions.data, geo.indices.data)
+        m.pop_vertex(i)
+        assert len(m.positions) == 31
+        assert len(m.faces) == 58
+        assert m.is_manifold
+        assert m.is_closed
+
+
+def test_pop_vertex_does_not_remove_a_component():
+    # Popping a vertex from a triangle does not do anything.
+
+    triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
+    m = DynamicMesh(triangle, [[0, 1, 2]])
+    assert len(m.positions) == 3
+    assert len(m.faces) == 1
+    assert m.is_manifold
+
+    for i in (0, 1, 2):
+        m = DynamicMesh(triangle, [[0, 1, 2]])
+        m.pop_vertex(i)
+        assert len(m.positions) == 3
+        assert len(m.faces) == 1
+        assert m.is_manifold
+
+    # Popping a vertex from a quad that connects to all faces, does not do anything.
+
+    quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
+    m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+    assert len(m.positions) == 4
+    assert len(m.faces) == 2
+    assert m.is_manifold
+
+    for i in (0, 2):
+        m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
+        m.pop_vertex(i)
+        assert len(m.positions) == 4
+        assert len(m.faces) == 2
+        assert m.is_manifold
+
+    # Popping a vertex from a tetrahedron does not do anything.
+    # Even though the mesh would still be manifold, it would no longer be closed,
+    # so this is prevented.
+
+    positions, faces, _ = get_tetrahedron()
+
+    m = DynamicMesh(positions, faces)
+    assert len(m.positions) == 4
+    assert len(m.faces) == 4
+
+    for i in range(4):
+        m.pop_vertex(i)
+        assert len(m.positions) == 4
+        assert len(m.faces) == 4
 
 
 def test_mesh_selection_basics():

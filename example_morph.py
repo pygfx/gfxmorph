@@ -11,6 +11,7 @@ import pylinalg as la
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
 from gfxmorph.meshfuncs import vertex_get_neighbours
+from gfxmorph.utils import logger
 
 
 # %% Morph logic
@@ -228,7 +229,8 @@ class Morpher:
 
         # Update data for points that highlight the selection
         self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
-        self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+        first, last = indices.min(), indices.max()
+        self.geometry.sizes.update_range(first, last - first + 1)
 
         # Store state
         self.state = {
@@ -308,7 +310,7 @@ class Morpher:
             self._smooth_some()
             self.state["xy"] = xy
 
-    def _smooth_some(self):
+    def _smooth_some(self, smooth_factor=0.5):
         # We only smooth each vertex with its direct neighbours, but
         # when these little smooth operations are applied recursively,
         # we end up with a pretty Gaussian smooth. Selecting multiple
@@ -316,8 +318,7 @@ class Morpher:
         # actual Gaussian kernel is problematic, because we may select
         # zero vertices at low scales (woops nothing happens), or many
         # at high scales (woops performance).
-        smooth_factor = 0.5  # <-- can be a parameter
-        smooth_factor = max(0.0, min(1.0, smooth_factor))
+        smooth_factor = max(0.0, min(1.0, float(smooth_factor)))
 
         faces = self.m.faces
         positions = self.m.positions
@@ -342,11 +343,35 @@ class Morpher:
         """Stop the morph or smooth action and commit the result."""
         self.wob_gizmo.visible = False
         if self.state:
+            # Update
             indices = self.state["indices"]
             self.geometry.sizes.data[indices] = 0
-            self.geometry.sizes.update_range(indices.min(), indices.max() + 1)
+            first, last = indices.min(), indices.max()
+            self.geometry.sizes.update_range(first, last - first + 1)
+            # Commit or cancel
+            if self.m.is_manifold:
+                self._smooth_some(0.1)
+                self.commit()
+            else:
+                self.cancel()
+            # Post-processing
+            if self.state["action"] == "morph" and self.m.is_manifold:
+                self.m.resample_selection(
+                    self.state["indices"], self.state["weights"], 0.2
+                )
+                if self.m.is_manifold:
+                    self.undo_tracker.commit_amend()
+                else:
+                    # Ideally this never happens, but it's a failsafe. At time of writing, it actually happens sometimes.
+                    self.cancel()
+                    logger.warn(
+                        "Discarding resampling step because it made the mesh non-manifold"
+                    )
+            # todo: sometimes faces are missing or weird faces occur, due to the faces data not being synced correctlty
+            # -> I've looked into why this happens but have not been able to find the cause.
+            # -> Let's revisit when we implement a more efficient way to do the updates.
+            self.geometry.indices.update_range()
             self.state = None
-            self.commit()
 
 
 morpher = Morpher()
@@ -364,7 +389,6 @@ scene = gfx.Scene()
 scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
 scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
 scene.add(morpher.world_objects)
-
 
 # %% Functions to modify the mesh
 

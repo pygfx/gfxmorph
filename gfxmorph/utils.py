@@ -22,7 +22,7 @@ class Safecall:
         return True  # Yes, we handled the exception
 
 
-def check_indices(indices, n, what_for):
+def check_indices(indices, n, what_for, *, allow_empty=False):
     """Check indices and convert to an in32 array (if necessary)."""
     result = None
     typ = type(indices).__name__
@@ -43,7 +43,9 @@ def check_indices(indices, n, what_for):
             f"The {what_for} must be given as int, list, or 1D int array, not {typ}."
         )
     result = np.asarray(result, np.int32)
-    if len(result) == 0:
+    if allow_empty and len(result) == 0:
+        return result
+    elif len(result) == 0:
         raise ValueError(f"The {what_for} must not be empty.")
     elif result.min() < 0:
         raise ValueError("Negative indices not allowed.")

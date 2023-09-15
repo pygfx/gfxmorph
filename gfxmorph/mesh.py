@@ -15,6 +15,7 @@
 import numpy as np
 
 from .basedynamicmesh import BaseDynamicMesh
+from .utils import logger
 
 # from .maybe_pylinalg import ()
 # from .maybe_pygfx import ()
@@ -193,14 +194,412 @@ class DynamicMesh(BaseDynamicMesh):
         # The DynamicMesh class also does some checks, but it will
         # only check if incoming faces match any vertex, not just the
         # ones we add here, so we perform that check here.
-        if faces.min() < 0 or faces.max() >= len(positions):
-            raise ValueError(
-                "The faces array containes indices that are out of bounds."
-            )
+        if len(faces) > 0:
+            if faces.min() < 0 or faces.max() >= len(positions):
+                raise ValueError(
+                    "The faces array containes indices that are out of bounds."
+                )
 
         vertex_index_offset = len(self._positions)
         self.add_vertices(positions)
         self.add_faces(faces + vertex_index_offset)
+
+    # %% Low level modifications
+
+    def resample(self, reference_distance):
+        raise NotImplementedError()
+
+    def resample_selection(self, vertex_indices, weights, reference_distance):
+        """Resample the selected region of the mesh.
+
+        Edges that are too long are split, and edges that are too short
+        are resolved by removing a vertex and filling up the hole.
+
+        Note: although this code tries to prevent the mesh from becoming
+        non-manifold, it's hard to foresee all edge-cases (get it?
+        *edge* cases?), and it's probably a good idea to test for this
+        and cancel the change if this happens.
+
+        """
+
+        # todo: I've observed this algorithm to sometimes produces a non-manifold mesh for small components.
+
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        # Given the reference_distance, we must define dmin and dmax.
+        # when the length of an edge is above dmax, we split it in two.
+        # When the length of an edge is below dmin, we remove it.
+        #
+        # On first sight, the ratio between dmin and dmax should be
+        # slightly higher than 2 to avoid constant resampling.
+        #
+        # However, splitting an edge in two also creates new edges. In
+        # the below image, consider adding the bottom-center vertex (on
+        # the edge between de two vertices on each side). This also
+        # introduces a new edge between the top-center and bottom-center
+        # vertices, which is quite short. Assuming a ratio of 1.5
+        # between shortest and longest edge of an average triangle, we
+        # can employ a ratio between dmin and dmax of about 3.
+        #
+        #       _ - X - _
+        #   _ -     1     - _
+        # X---------X---------X
+        #
+        # Note that the loosen factor (depending on weight) helps
+        # prevent near-degenerate triangles that can normally can occur
+        # near the boundary of the selection.
+
+        # Note: A method that we could have used but don't, is to pop
+        # an edge by merging the two vertices, and position the new
+        # vertex in between the original positions. This is a relatively
+        # simple approach, and less invasive than smashing a a hole in
+        # the mesh by removing a vertex. Unfortunately, we also have
+        # less control over this change, and it more quickly results
+        # into folded faces.
+
+        # Calculate dmin and dmax such that: dmax = dmin * dmin_dmax_ratio
+        dmin_dmax_ratio = 3
+        dmin = reference_distance / dmin_dmax_ratio**0.5
+        dmax = reference_distance * dmin_dmax_ratio**0.5
+
+        # Collect edges
+        edges = {}  # (vi1, vi2) -> weight
+        for vi1, w in zip(vertex_indices, weights):
+            vi1 = int(vi1)
+            for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
+                key = (vi1, vi2) if vi1 < vi2 else (vi2, vi1)
+                edges[key] = edges.get(key, 0) + 0.5 * w
+
+        # Determine whether they are too short/long
+        too_short = []
+        too_long = []
+        for vii, w in edges.items():
+            d = np.linalg.norm(positions[vii[0]] - positions[vii[1]])
+            loosen = 1 + 2 * min(max(w, 0), 1)
+            if d > loosen * dmax:
+                too_long.append((d / loosen, *vii))
+            elif d < dmin / loosen:
+                too_short.append((d * loosen, *vii))
+
+        # Sort so that the most extreme cases get handled first
+        too_long.sort(key=lambda x: -x[0])
+        too_short.sort(key=lambda x: x[0])
+
+        # Next, we take a few steps to determine what edges we split,
+        # and what vertices we will pop. In this process, we keep track
+        # of the faces that effected by the planned changes so far.
+        # This is to prevent changes to clash and create a corrupt mesh.
+        #
+        # This means that some edges which are too short or too long
+        # are not handled in this call. Though the worst cases are
+        # prioritized. It is somewhat assumed that this method is called
+        # in an interactive setting. If necessary, a new subset can be
+        # selected and resampled.
+        #
+        # Another solution is to apply each change separetely, but this
+        # results in relatively large undo stacks.
+        affected_faces = set()
+
+        # Determine vertices incident to edges that are too long.
+        edges_to_split = []
+        for d, vi1, vi2 in too_long:
+            touched_faces = set(vertex2faces[vi1]) & set(vertex2faces[vi2])
+            if not (touched_faces & affected_faces):
+                affected_faces.update(touched_faces)
+                edges_to_split.append((vi1, vi2))
+
+        # Determine vertices that connect multiple edges that are too short.
+        too_short_vertices = {}
+        for d, vi1, vi2 in too_short:
+            too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
+            too_short_vertices[vi2] = too_short_vertices.get(vi2, 0) + 1
+        hot_vertices = [
+            (count, vi) for vi, count in too_short_vertices.items() if count > 1
+        ]
+        hot_vertices.sort(reverse=True)
+
+        # We will pop the ones that we can
+        vertices_to_pop = []
+        for _, vi in hot_vertices:
+            touched_faces = set(vertex2faces[vi])
+            if not (touched_faces & affected_faces):
+                affected_faces.update(touched_faces)
+                vertices_to_pop.append(vi)
+
+        # And we also pop one vertex of the other too-short-edges, preferring
+        # the ones with the most neighbours, to avoid star-like structures.
+        for d, vi1, vi2 in too_short:
+            if vi1 in vertices_to_pop or vi2 in vertices_to_pop:
+                continue
+            vii = vi1, vi2
+            if len(vertex2faces[vi1]) < len(vertex2faces[vi2]):
+                vii = vi2, vi1
+            for vi in vii:
+                touched_faces = set(vertex2faces[vi])
+                if not (touched_faces & affected_faces):
+                    affected_faces.update(touched_faces)
+                    vertices_to_pop.append(vi)
+                    break
+
+        # Next we collect the changes, so we can apply them in one go...
+        vertices_to_remove = []
+        vertices_to_add = []
+        faces_to_remove = []
+        faces_to_add = []
+
+        # Changes to make the mesh more detailed
+        for vi1, vi2 in edges_to_split:
+            new_index = len(self.positions) + len(vertices_to_add)
+            a_verts, r_faces, a_faces = self._add_vertex_on_edge(vi1, vi2, new_index)
+            vertices_to_add.extend(a_verts)
+            faces_to_remove.extend(r_faces)
+            faces_to_add.extend(a_faces)
+
+        # Changes to make the mesh more coarse
+        for vi in vertices_to_pop:
+            try:
+                r_verts, r_faces, a_faces = self._pop_vertex(vi)
+            except RuntimeError as err:
+                logger.warn(str(err))
+                continue
+            vertices_to_remove.extend(r_verts)
+            faces_to_remove.extend(r_faces)
+            faces_to_add.extend(a_faces)
+
+        # Apply changes
+        if len(vertices_to_add) > 0:
+            self.add_vertices(vertices_to_add)
+        self.delete_and_add_faces(faces_to_remove, faces_to_add)
+        if len(vertices_to_remove) > 0:
+            self.delete_vertices(vertices_to_remove)
+
+    def add_vertex_on_edge(self, vi1, vi2):
+        """Add a vertex on the give edge.
+
+        This splits the edge between vi1 and vi2 into two edges, and
+        splits the two faces that contain that edge. Results in 1
+        additional vertex, 2 additional faces, 3 additional edges.
+        """
+
+        # Do the algorithmic
+        vertices_to_add, faces_to_remove, faces_to_add = self._add_vertex_on_edge(
+            vi1, vi2, len(self.positions)
+        )
+
+        # Apply changes
+        if len(vertices_to_add) > 0:
+            self.add_vertices(vertices_to_add)
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+
+    def _add_vertex_on_edge(self, vi1, vi2, new_index):
+        # This code:
+        #
+        # - place a vertex on the given edge
+        # - removes the faces incident to that edge
+        # - creates new faces incident to the new vertex
+        #
+        # X______          X______
+        # |\     |         |\    /|
+        # | \    |         | \  / |
+        # |  \   |   -->   |  \/  |
+        # |   \  |         |  /\  |
+        # |    \ |         | /  \ |
+        # |_____\|         |/____\|
+        #        X                X
+
+        positions = self.positions
+        normals = self.normals
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        # Get what faces to split in two
+        faces1 = vertex2faces[vi1]
+        faces2 = vertex2faces[vi2]
+        faces2split = list(set(faces1).intersection(faces2))
+        if len(faces2split) == 0:
+            raise ValueError("Given vertices do not make an edge.")
+        elif len(faces2split) > 2:
+            raise ValueError("Cannot split edge on a non-manifold piece of the mesh.")
+
+        # Position it right in between
+        p1, p2 = positions[vi1], positions[vi2]
+        new_position = 0.5 * (p1 + p2)
+
+        # Add contribution for curvature ...
+        # In practice there is very little difference, and when
+        # interactively morphing and smoothing, we should perhaps not
+        # not make things too fancy.
+        if False:
+            n1, n2 = normals[vi1], normals[vi2]
+            dist = np.linalg.norm(p1 - p2)
+            # Get orthogonal vector
+            dir = p2 - p1
+            dir /= np.linalg.norm(dir)
+            ort = np.cross(n1, dir) + np.cross(n2, dir)
+            ort /= np.linalg.norm(ort)
+            # Get directional vectors
+            dir1 = -np.cross(n1, ort)
+            dir2 = +np.cross(n2, ort)
+            dir1 /= np.linalg.norm(dir1)
+            dir2 /= np.linalg.norm(dir2)
+            # Add contribution for surface curvature
+            new_position += 0.125 * dist * (dir1 + dir2)
+
+        # Calculate new faces. Needs a bit of triage to get the winding correct.
+        vi3 = new_index
+        new_faces = []
+        for fi in faces2split:
+            face1 = faces[fi].tolist()
+            if face1[0] == vi1:
+                if face1[1] == vi2:
+                    face1[1] = vi3
+                else:
+                    face1[2] = vi3
+                face2 = vi2, face1[2], face1[1]
+            elif face1[1] == vi1:
+                if face1[0] == vi2:
+                    face1[0] = vi3
+                else:
+                    face1[2] = vi3
+                face2 = face1[2], vi2, face1[0]
+            else:  # face1[2] == vi1:
+                if face1[0] == vi2:
+                    face1[0] = vi3
+                else:
+                    face1[1] = vi3
+                face2 = face1[1], face1[0], vi2
+            new_faces.append(face1)
+            new_faces.append(face2)
+
+        return [new_position], faces2split, new_faces
+
+    # todo: naming things .. we already have pop_vertices!
+
+    def pop_vertex(self, vi, delete_vertex=True):
+        """Remove the given vertex.
+
+        Removing the vertex creates a hole, which is refilled with new
+        faces. Results in 1 less vertex, 2 less faces, 3 less edges.
+
+        All faces that contain vi are removed, forming a hole. The
+        boundary of this hole is formed by the (former) direct
+        neightbours of vi. This boundary (i.e. polygon) is re-tessalated
+        using an algorithm that makes use of the two-ears-theorem,
+        prioritizing nice (not-elongated) faces.
+        """
+
+        # Do the algorithmic
+        try:
+            vertices_to_remove, faces_to_remove, faces_to_add = self._pop_vertex(vi)
+        except RuntimeError as err:
+            logger.warn(str(err))
+            return
+
+        # Apply changes
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+        if len(vertices_to_remove) > 0:
+            self.delete_vertices(vertices_to_remove)
+
+    def _pop_vertex(self, vi):
+        # This code:
+        #
+        # - Obtains the faces incident to the vertex to remove.
+        # - We calculate how removing these faces affects the neighborhood of the component.
+        # - In some cases this code will return early.
+        # - If the vertex is on a boundary, we can just remove the vertex and incident faces.
+        # - Otherwise, we calculate the  boundary of the hole.
+        # - This boundary is tesselated. This is the hard part.
+
+        # This method contains a few checks that raise a runtime error.
+        # Some of these cases can occur in particular topologies. Others cannot
+        # in theory, but that's what I thought of the aforementioned cases too,
+        # so let's assume nothing. Also, if the mesh is not manifold, some of these
+        # cases may be triggered.
+
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        vi_to_remove = int(vi)
+        vertices_to_remove = [vi_to_remove]
+        faces_to_remove = list(vertex2faces[vi_to_remove])
+
+        # Compute the context_faces: the faces in this component that border the ones we remove
+        vii = set()
+        for fi in faces_to_remove:
+            vii.update(faces[fi])
+        nearby_faces = set()
+        for vi in vii:
+            nearby_faces.update(vertex2faces[vi])
+        context_faces = nearby_faces - set(faces_to_remove)
+
+        # If no faces remain in this component, we dont pop the vertex
+        if not context_faces:
+            return [], [], []
+
+        # Some cases are easy ...
+        if not faces_to_remove:
+            # This is a standalone vertex
+            return vertices_to_remove, [], []
+        elif len(faces_to_remove) <= 2:
+            # This vertex is on a boundary, we can just remove the faces!
+            return vertices_to_remove, faces_to_remove, []
+
+        # Otherwise, removing the faces creates a hole that we must tesselate ...
+
+        # If we assume the mesh to be closed, having just one context
+        # face means that we have a tetrahedron which we dont want to
+        # reduce. This rule means that if (this component of) the mesh
+        # is not closed, we cannot reduce components further than 4
+        # faces, but that's probably fine (deteting this case is
+        # relatively expensive).
+        if len(context_faces) <= 1:
+            return [], [], []
+
+        # Collect the boundary vertices, store as a directed graph
+        boundary_map = {}  # vi -> vi
+        for fi in faces_to_remove:
+            vi1, vi2, vi3 = faces[fi]
+            if vi1 == vi_to_remove:
+                boundary_map[vi2] = vi3
+            elif vi2 == vi_to_remove:
+                boundary_map[vi3] = vi1
+            elif vi3 == vi_to_remove:
+                boundary_map[vi1] = vi2
+            else:
+                raise RuntimeError("Unexpected face winding for contour?")
+
+        # Make a boundary list, with consistent winding
+        vi = next(iter(boundary_map))  # start anywhere (should not matter)
+        boundary_list = [vi]
+        while len(boundary_list) < len(boundary_map):
+            vi = boundary_map.get(vi, -1)
+            boundary_list.append(vi)
+            if vi < 0:
+                raise RuntimeError("Unexpected error while tracing the boundary.")
+
+        # Must be circular. Note that the second case *can* indeed occur.
+        if len(boundary_list) < 3:
+            raise RuntimeError("Unexpected boundary too short.")
+        if boundary_map[boundary_list[-1]] != boundary_list[0]:
+            raise RuntimeError("Unexpected boundary not circular or has a shortcut.")
+
+        # Get tesselated faces
+        new_faces = meshfuncs.mesh_fill_hole(
+            positions, faces, vertex2faces, boundary_list
+        )
+        if len(new_faces) != len(faces_to_remove) - 2:
+            raise RuntimeError("Unexpected tesselation result.")
+
+        return vertices_to_remove, faces_to_remove, new_faces
 
     # %% Repairs
 
@@ -387,12 +786,9 @@ class DynamicMesh(BaseDynamicMesh):
     def repair_holes(self):
         """Repair holes in the mesh.
 
-        Small boundaries are removed by filling these holes with new faces.
+        Boundaries are removed by filling these holes with new faces.
 
-        At the moment this only repairs holes of 3 or 4 vertices (i.e.
-        1  or 2 faces), but this can later be improved. So if only small
-        holes are present, the result will be a closed mesh. However,
-        if the mesh is not manifold, this method may not be able to
+        If the mesh is not manifold, this method may not be able to
         repair all holes. Also note that e.g. the four courners of a
         rectangular surface would be connected with new faces.
 
@@ -411,23 +807,21 @@ class DynamicMesh(BaseDynamicMesh):
             return 0
 
         # Now we check all boundaries
-        new_faces = []
+        new_faces_list = []
         for boundary in boundaries:
             assert len(boundary) >= 3  # I don't think they can be smaller, right?
-            if len(boundary) == 3:
-                new_faces.append(boundary)
-            elif len(boundary) == 4:
-                new_faces.append(boundary[:3])
-                new_faces.append(boundary[2:] + boundary[:1])
-            else:
-                pass
-                # We can apply the earcut algororithm to fill larger
-                # holes as well. Leaving this open for now.
+            new_faces = meshfuncs.mesh_fill_hole(
+                self.positions, self.faces, self.vertex2faces, boundary
+            )
+            new_faces_list.append(new_faces)
 
-        if new_faces:
+        # Apply
+        if new_faces_list:
+            new_faces = np.concatenate(new_faces_list)
             self.add_faces(new_faces)
-
-        return len(new_faces)
+            return len(new_faces)
+        else:
+            return 0
 
     def remove_unused_vertices(self):
         """Delete vertices that are not used by the faces.

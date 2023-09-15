@@ -286,6 +286,39 @@ def test_non_manifold_add_face_5():
         assert m.is_oriented
 
 
+def test_non_manifold_add_face_6():
+    """A 'closed' triangle."""
+
+    # This is an unexpected edge-case: intuitively, a tetrahedron is
+    # the smallest mesh that can be manifold and closed , but if you
+    # follow the rules, it's actually a double-sided triangle ...
+
+    vertices = [[0, 0, 0], [0, 1, 0], [0, 0, 1]]
+    for faces in [
+        [[0, 1, 2], [0, 1, 2]],  # exact duplicate
+        [[0, 1, 2], [1, 2, 0]],  # shifted
+        [[0, 1, 2], [2, 0, 1]],  # shifted
+    ]:
+        m = MeshClass(vertices, faces)
+
+        assert m.is_edge_manifold
+        assert m.is_manifold  # double-check
+        assert m.is_closed
+        assert not m.is_oriented
+
+    for faces in [
+        [[0, 1, 2], [0, 2, 1]],  # other side
+        [[0, 1, 2], [2, 1, 0]],  # other side
+        [[0, 1, 2], [1, 0, 2]],  # other side
+    ]:
+        m = MeshClass(vertices, faces)
+
+        assert m.is_edge_manifold
+        assert m.is_manifold  # double-check
+        assert m.is_closed
+        assert m.is_oriented
+
+
 def test_non_manifold_weakly_connected_1():
     """Attach one part of the mesh to another part, using just one vertex."""
 
