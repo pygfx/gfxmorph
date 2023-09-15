@@ -352,7 +352,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Changes to make the mesh more detailed
         for vi1, vi2 in edges_to_split:
             new_index = len(self.positions) + len(vertices_to_add)
-            a_verts, r_faces, a_faces = self._add_vertex_on_edge(vi1, vi2, new_index)
+            a_verts, r_faces, a_faces = self._split_edge(vi1, vi2, new_index)
             vertices_to_add.extend(a_verts)
             faces_to_remove.extend(r_faces)
             faces_to_add.extend(a_faces)
@@ -360,7 +360,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Changes to make the mesh more coarse
         for vi in vertices_to_pop:
             try:
-                r_verts, r_faces, a_faces = self._pop_vertex(vi)
+                r_verts, r_faces, a_faces = self._erase_vertex(vi)
             except RuntimeError as err:
                 logger.warn(str(err))
                 continue
@@ -375,7 +375,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_remove) > 0:
             self.delete_vertices(vertices_to_remove)
 
-    def add_vertex_on_edge(self, vi1, vi2):
+    def split_edge(self, vi1, vi2):
         """Add a vertex on the give edge.
 
         This splits the edge between vi1 and vi2 into two edges, and
@@ -384,7 +384,7 @@ class DynamicMesh(BaseDynamicMesh):
         """
 
         # Do the algorithmic
-        vertices_to_add, faces_to_remove, faces_to_add = self._add_vertex_on_edge(
+        vertices_to_add, faces_to_remove, faces_to_add = self._split_edge(
             vi1, vi2, len(self.positions)
         )
 
@@ -396,7 +396,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
-    def _add_vertex_on_edge(self, vi1, vi2, new_index):
+    def _split_edge(self, vi1, vi2, new_index):
         # This code:
         #
         # - place a vertex on the given edge
@@ -480,11 +480,12 @@ class DynamicMesh(BaseDynamicMesh):
 
     # todo: naming things .. we already have pop_vertices!
 
-    def pop_vertex(self, vi, delete_vertex=True):
-        """Remove the given vertex.
+    def erase_vertex(self, vi, delete_vertex=True):
+        """Remove the given vertex and fill up the hole.
 
-        Removing the vertex creates a hole, which is refilled with new
-        faces. Results in 1 less vertex, 2 less faces, 3 less edges.
+        If removing the vertex creates a hole (i.e. it is not on a
+        boundary), it is refilled with new faces. Results in 1 less
+        vertex, 2 less faces, 3 less edges.
 
         All faces that contain vi are removed, forming a hole. The
         boundary of this hole is formed by the (former) direct
@@ -495,7 +496,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Do the algorithmic
         try:
-            vertices_to_remove, faces_to_remove, faces_to_add = self._pop_vertex(vi)
+            vertices_to_remove, faces_to_remove, faces_to_add = self._erase_vertex(vi)
         except RuntimeError as err:
             logger.warn(str(err))
             return
@@ -508,7 +509,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_remove) > 0:
             self.delete_vertices(vertices_to_remove)
 
-    def _pop_vertex(self, vi):
+    def _erase_vertex(self, vi):
         # This code:
         #
         # - Obtains the faces incident to the vertex to remove.
