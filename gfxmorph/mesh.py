@@ -12,6 +12,8 @@
 #
 # Vertex indices are denoted with vi, face indices with fi.
 
+import heapq
+
 import numpy as np
 
 from .basedynamicmesh import BaseDynamicMesh
@@ -946,6 +948,7 @@ class DynamicMesh(BaseDynamicMesh):
             ref_distances = [ref_distances]
 
         # Select path class
+        distance_measure = distance_measure or "smooth2"
         if distance_measure == "edge":
             MeshPath = MeshPathEdge  # noqa
         elif distance_measure == "smooth1":
@@ -957,33 +960,28 @@ class DynamicMesh(BaseDynamicMesh):
                 "The distance_measure arg must be 'edge' 'smooth1' or 'smooth2'."
             )
 
-        # The list of vertices to check for neighbours
-        vertices2check = []
+        # The list of vertices to check for neighbours.
+        vertices2check = []  # binary heap
         selected_vertices = {}
         for vi, dist in zip(ref_vertices, ref_distances):
-            vertices2check.append((vi, dist))
-            selected_vertices[vi] = MeshPath().add(positions[vi], normals[vi])
+            path = MeshPath(dist).add(positions[vi], normals[vi])
+            heapq.heappush(vertices2check, (path, vi))
 
         # Walk over the surface
-        while len(vertices2check) > 0:
-            vi1, cumdist = vertices2check.pop(0)
-            path1 = selected_vertices[vi1]
+        while vertices2check:
+            path1, vi1 = heapq.heappop(vertices2check)
+            if vi1 in selected_vertices:
+                continue
+            selected_vertices[vi1] = path1.dist
             for vi2 in meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1):
-                p2 = positions[vi2]
-                n2 = normals[vi2]
-                path2 = path1.add(p2, n2)
+                if vi2 in selected_vertices:
+                    continue
+                path2 = path1.add(positions[vi2], normals[vi2])
                 if path2.dist < max_distance:
-                    # We will have a closer look if we have not yet selected this
-                    # vertex, but also if we did but found a shorter route to it.
-                    # This means that we may sometimes do duplicate work. To avoid
-                    # this, we'd need a binary heap to store the front.
-                    path2_prev = selected_vertices.get(vi2, None)
-                    if path2_prev is None or path2.dist < path2_prev.dist:
-                        selected_vertices[vi2] = path2
-                        vertices2check.append((vi2, path2.dist))
+                    heapq.heappush(vertices2check, (path2, vi2))
 
         vertices = np.array(sorted(selected_vertices.keys()), np.int32)
-        distances = np.array([selected_vertices[vi].dist for vi in vertices], "f4")
+        distances = np.array([selected_vertices[vi] for vi in vertices], "f4")
         return vertices, distances
 
 
@@ -994,11 +992,14 @@ class BaseMeshPath:
 
     mode = ""
 
-    def __init__(self):
+    def __init__(self, initial_dist=0.0):
         self.positions = []
         self.normals = []
-        self.edist = 0.0  # edge distance
-        self.dist = 0.0  # the processed distance
+        self.edist = initial_dist  # edge distance
+        self.dist = initial_dist  # the processed distance
+
+    def __lt__(self, other):
+        return self.dist < other.dist
 
     def add(self, p, n):
         new = self.__class__()
@@ -1075,15 +1076,17 @@ class MeshPathSmooth2(MeshPathSmooth1):
     __slots__ = []
 
     def _refine_position(self, p1, p2, p3, n1, n2, n3):
+        norm = np.linalg.norm
+
         # Get current distance
-        dist1 = np.linalg.norm(p1 - p2)
-        dist3 = np.linalg.norm(p2 - p3)
+        dist1 = norm(p1 - p2)
+        dist3 = norm(p2 - p3)
         dist_before = dist1 + dist3
         if dist1 == 0 or dist3 == 0:
             return p2, 0
 
         # Normalize the normal, make sure its nonzero
-        n2_len = np.linalg.norm(n2)
+        n2_len = norm(n2)
         if n2_len == 0:
             return p2, 0
         n2 = n2 / n2_len
@@ -1099,14 +1102,14 @@ class MeshPathSmooth2(MeshPathSmooth1):
         # p1 and p3, it makes sense to include contributions of these normals.
         plane_pos = p2
         plane_normal = n1 + n2 + n2 + n3
-        length = np.linalg.norm(plane_normal)
+        length = norm(plane_normal)
         plane_normal = n2 if length == 0 else plane_normal / length
 
         # Project the point on the surface. The surface is estimated using the plane avove.
         p = p_between - np.dot(plane_normal, (p_between - plane_pos)) * plane_normal
 
         # Calculate new distance
-        dist_after = np.linalg.norm(p1 - p) + np.linalg.norm(p - p3)
+        dist_after = norm(p1 - p) + norm(p - p3)
         delta_dist = dist_after - dist_before
 
         return p, delta_dist

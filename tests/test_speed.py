@@ -168,6 +168,24 @@ def benchmark_sphere():
     print(t.measurements)
 
 
+def benchmark_selecting_vertices():
+    geo = smooth_sphere_geometry(100, subdivisions=5)
+    vertices = geo.positions.data
+    faces = geo.indices.data
+    m = DynamicMesh(vertices, faces)
+
+    for method in ["edge", "smooth1", "smooth2"]:
+        t0 = time.perf_counter()
+        verts, dists = m.select_vertices_over_surface(
+            0, 0, 100, distance_measure=method
+        )
+        t1 = time.perf_counter()
+        print(
+            f"Selecting {len(verts)}/{len(m.positions)} vertices using {method}: {t1-t0:0.3f}"
+        )
+
+
 if __name__ == "__main__":
-    benchmark()
+    # benchmark()
     # benchmark_sphere()
+    benchmark_selecting_vertices()
