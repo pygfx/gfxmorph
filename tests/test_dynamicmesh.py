@@ -82,7 +82,7 @@ def test_mesh_edges():
     assert m.edges.tolist() == [[0, 1], [1, 2], [2, 0], [0, 2], [2, 3], [3, 0]]
 
 
-def test_add_vertex_on_edge():
+def test_split_edge():
     # Create a silly mesh consisting of a single triangle
     triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
     m = DynamicMesh(triangle, [[0, 1, 2]])
@@ -91,7 +91,7 @@ def test_add_vertex_on_edge():
     assert m.is_manifold
 
     # Split edge!
-    m.add_vertex_on_edge(0, 1)
+    m.split_edge(0, 1)
     assert len(m.positions) == 4
     assert len(m.faces) == 2
     assert m.is_manifold
@@ -105,7 +105,7 @@ def test_add_vertex_on_edge():
     assert m.is_closed
 
     # Split!
-    m.add_vertex_on_edge(5, 27)
+    m.split_edge(5, 27)
     assert len(m.positions) == 33
     assert len(m.faces) == 62
     assert m.is_manifold
@@ -113,10 +113,10 @@ def test_add_vertex_on_edge():
 
     # Cannot split a non-edge
     with pytest.raises(ValueError):
-        m.add_vertex_on_edge(5, 28)
+        m.split_edge(5, 28)
 
 
-def test_pop_vertex():
+def test_erase_vertex():
     # Create a silly mesh consisting of a quad
     quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
     m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
@@ -127,7 +127,7 @@ def test_pop_vertex():
     # Remove a vertex
     for i in (1, 3):
         m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
-        m.pop_vertex(i)
+        m.erase_vertex(i)
         assert len(m.positions) == 3
         assert len(m.faces) == 1
         assert m.is_manifold
@@ -143,14 +143,14 @@ def test_pop_vertex():
     # Remove a vertex
     for i in (0, 5, 21, 22, 28, 31):
         m = DynamicMesh(geo.positions.data, geo.indices.data)
-        m.pop_vertex(i)
+        m.erase_vertex(i)
         assert len(m.positions) == 31
         assert len(m.faces) == 58
         assert m.is_manifold
         assert m.is_closed
 
 
-def test_pop_vertex_does_not_remove_a_component():
+def test_erase_vertex_does_not_remove_a_component():
     # Popping a vertex from a triangle does not do anything.
 
     triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
@@ -161,7 +161,7 @@ def test_pop_vertex_does_not_remove_a_component():
 
     for i in (0, 1, 2):
         m = DynamicMesh(triangle, [[0, 1, 2]])
-        m.pop_vertex(i)
+        m.erase_vertex(i)
         assert len(m.positions) == 3
         assert len(m.faces) == 1
         assert m.is_manifold
@@ -176,7 +176,7 @@ def test_pop_vertex_does_not_remove_a_component():
 
     for i in (0, 2):
         m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
-        m.pop_vertex(i)
+        m.erase_vertex(i)
         assert len(m.positions) == 4
         assert len(m.faces) == 2
         assert m.is_manifold
@@ -192,7 +192,7 @@ def test_pop_vertex_does_not_remove_a_component():
     assert len(m.faces) == 4
 
     for i in range(4):
-        m.pop_vertex(i)
+        m.erase_vertex(i)
         assert len(m.positions) == 4
         assert len(m.faces) == 4
 
