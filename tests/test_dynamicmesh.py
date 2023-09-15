@@ -227,6 +227,33 @@ def test_mesh_selection_basics():
     assert np.all(selected1 == selected2)
     assert len(selected1) == len(vertices)
 
+    # --
+
+    # Create a triangle that's on a line
+    vertices = [(0, 0, 0), (10, 0, 0), (-10, 0, 0)]
+    faces = [0, 1, 2]
+    m = DynamicMesh(vertices, faces)
+
+    # Select from the center vertex
+    selected, distances = m.select_vertices_over_surface(0, 0, 11)
+    assert len(selected) == 3
+    assert distances.tolist() == [0, 10, 10]
+
+    # Select from one side
+    selected, distances = m.select_vertices_over_surface(1, 0, 21)
+    assert len(selected) == 3
+    assert distances.tolist() == [10, 0, 20]
+
+    # Select from one side, plus offset
+    selected, distances = m.select_vertices_over_surface(1, 5, 30)
+    assert len(selected) == 3
+    assert distances.tolist() == [15, 5, 25]
+
+    # Select from in between
+    selected, distances = m.select_vertices_over_surface([0, 1], [5, 5], 30)
+    assert len(selected) == 3
+    assert distances.tolist() == [5, 5, 15]
+
 
 def test_mesh_path_distance():
     """This test validates the test_MeshPathSmooth2 class directly."""

@@ -213,10 +213,11 @@ class Morpher:
         self.cancel()
         self.finish()
 
-        # Select vertices
+        # Select vertices.
         search_distance = self.radius * 3  # 3 x std
+        method = "auto"  # method = "edge" if self.radius > 1.5 else "smooth2"
         indices, geodesic_distances = self.m.select_vertices_over_surface(
-            vii, ref_distances, search_distance
+            vii, ref_distances, search_distance, method
         )
         positions = self.m.positions[indices]
 
