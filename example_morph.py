@@ -2,6 +2,7 @@
 Example morphing.
 """
 
+import os
 import json
 
 import numpy as np
@@ -12,6 +13,9 @@ from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
 from gfxmorph.meshfuncs import vertex_get_neighbours
 from gfxmorph.utils import logger
+
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
 # %% Morph logic
@@ -381,17 +385,44 @@ morpher = Morpher()
 # %% Setup the viz
 
 
-renderer = gfx.WgpuRenderer(WgpuCanvas())
+renderer = gfx.WgpuRenderer(WgpuCanvas(size=(1000, 700)))
 
-camera = gfx.PerspectiveCamera()
-camera.show_object((0, 0, 0, 8))
+# View 0: xy
+viewport0 = gfx.Viewport(renderer)
+camera0 = gfx.OrthographicCamera(8, 8)
+controller0 = gfx.PanZoomController(camera0, register_events=viewport0)
 
+# View 1: xz
+viewport1 = gfx.Viewport(renderer)
+camera1 = gfx.OrthographicCamera(8, 8)
+controller1 = gfx.PanZoomController(camera1, register_events=viewport1)
+
+# View 2: yz
+viewport2 = gfx.Viewport(renderer)
+camera2 = gfx.OrthographicCamera(8, 8)
+controller2 = gfx.PanZoomController(camera2, register_events=viewport2)
+
+# View 3: 3D
+viewport3 = gfx.Viewport(renderer)
+camera3 = gfx.PerspectiveCamera()
+controller3 = gfx.OrbitController(camera3, register_events=viewport3)
+
+# Setup the scene
 scene = gfx.Scene()
 scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
-scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
+scene.add(camera3.add(gfx.DirectionalLight()), gfx.AmbientLight())
 scene.add(morpher.world_objects)
 
+
 # %% Functions to modify the mesh
+
+
+def show_scene():
+    camera0.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
+    camera1.show_object(scene, view_dir=(0, -1, 0), up=(0, 0, 1))
+    camera2.show_object(scene, view_dir=(-1, 0, 0), up=(0, 0, 1))
+    camera3.show_object(scene)
+    renderer.request_draw()
 
 
 def add_sphere(dx=0, dy=0, dz=0):
@@ -401,9 +432,19 @@ def add_sphere(dx=0, dy=0, dz=0):
 
     morpher.m.add_mesh(positions, faces)
     morpher.commit()
+    show_scene()
 
-    camera.show_object(scene)
-    renderer.request_draw()
+
+def add_bone(name):
+    filename = os.path.join(DATA_DIR, name)
+    if not os.path.isfile(filename):
+        raise RuntimeError(f"Invalid bone dataset '{name}'.")
+
+    meshes = gfx.load_scene(filename)
+    geo = meshes[0].geometry
+    morpher.m.add_mesh(geo.positions.data, geo.indices.data)
+    morpher.commit()
+    show_scene()
 
 
 # %% Create key and mouse bindings
@@ -412,9 +453,9 @@ print(__doc__)
 
 
 # Create controller, also bind it to shift, so we can always hit shift and use the camera
-controller = gfx.OrbitController(camera, register_events=renderer)
-for k in list(controller.controls.keys()):
-    controller.controls["shift+" + k] = controller.controls[k]
+for contr in [controller0, controller1, controller2, controller3]:
+    for k in list(contr.controls.keys()):
+        contr.controls["shift+" + k] = contr.controls[k]
 
 
 @renderer.add_event_handler("key_down")
@@ -488,14 +529,34 @@ def on_mouse(e):
 
 # %% Run
 
-add_sphere()
-add_sphere(3, 0, 0)
+
+@renderer.add_event_handler("resize")
+def layout(event=None):
+    w, h = renderer.logical_size
+    w2, h2 = (w - 30) / 2, (h - 30) / 2
+    viewport0.rect = 10, 10, w2, h2
+    viewport1.rect = w / 2 + 5, 10, w2, h2
+    viewport2.rect = 10, h / 2 + 5, w2, h2
+    viewport3.rect = w / 2 + 5, h / 2 + 5, w2, h2
 
 
 def animate():
-    renderer.render(scene, camera)
+    viewport0.render(scene, camera0)
+    viewport1.render(scene, camera1)
+    viewport2.render(scene, camera2)
+    viewport3.render(scene, camera3)
+    renderer.flush()
 
 
-renderer.request_draw(animate)
+layout()
 
-run()
+
+if __name__ == "__main__":
+    # add_sphere(0, 0, 0)
+    # add_sphere(3, 0, 0)
+    add_bone("coxae.stl")
+
+    morpher.radius = 12
+
+    renderer.request_draw(animate)
+    run()
