@@ -18,20 +18,23 @@ from gfxmorph.utils import logger
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
+MESH_COLOR = 0, 0.7, 0.8, 1
+MESH_COLOR_MORPH = 0.7, 0.7, 0.2, 1
+
 
 # %% Morph logic
 
 
-class DynamicMeshGeometryWithSizes(DynamicMeshGeometry):
+class DynamicMeshGeometryForMorphing(DynamicMeshGeometry):
     # This is a subclass of both gfx.Geometry and MeshChangeTracker.
     # This illustrates how we can relatively easily associate additional
-    # buffers with the mesh. In this case we add a buffer for points
-    # sizes to show the selected vertices. If we'd instead use colors
-    # to show selected vertices, that'd work in much the same way.
+    # buffers with the mesh.
 
     def new_vertices_buffer(self, mesh):
         super().new_vertices_buffer(mesh)
-        self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
+        # self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
+        self.colors = gfx.Buffer(np.zeros((self.positions.nitems, 4), np.float32))
+        self.colors.data[:] = MESH_COLOR
 
 
 def softlimit(i, limit):
@@ -56,7 +59,7 @@ class Morpher:
         self.m.track_changes(self.undo_tracker)
 
         # Tracker that maps the mesh to a gfx Geometry (with live updates)
-        self.geometry = DynamicMeshGeometryWithSizes()
+        self.geometry = DynamicMeshGeometryForMorphing()
         self.m.track_changes(self.geometry)
 
         self.state = None
@@ -84,7 +87,7 @@ class Morpher:
         self.wob_front = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                color="#6ff", flat_shading=False, side="FRONT"
+                vertex_colors=True, color="#6ff", flat_shading=False, side="FRONT"
             ),
         )
 
@@ -133,7 +136,7 @@ class Morpher:
             self.wob_front,
             self.wob_back,
             self.wob_wire,
-            self.wob_points,
+            # self.wob_points,
             self.wob_gizmo,
             self.wob_radius,
         )
@@ -250,9 +253,11 @@ class Morpher:
             return
 
         # Update data for points that highlight the selection
-        self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
         first, last = indices.min(), indices.max()
-        self.geometry.sizes.update_range(first, last - first + 1)
+        self.geometry.colors.data[indices] = MESH_COLOR_MORPH
+        self.geometry.colors.update_range(first, last - first + 1)
+        # self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
+        # self.geometry.sizes.update_range(first, last - first + 1)
 
         # Store state
         self.state = {
@@ -372,9 +377,11 @@ class Morpher:
         if self.state:
             # Update
             indices = self.state["indices"]
-            self.geometry.sizes.data[indices] = 0
             first, last = indices.min(), indices.max()
-            self.geometry.sizes.update_range(first, last - first + 1)
+            self.geometry.colors.data[indices] = MESH_COLOR
+            self.geometry.colors.update_range(first, last - first + 1)
+            # self.geometry.sizes.data[indices] = 0
+            # self.geometry.sizes.update_range(first, last - first + 1)
             # Commit or cancel
             if self.m.is_manifold:
                 self._smooth_some(0.1)
@@ -435,9 +442,15 @@ for i in range(4):
     scenes[i].add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
     scenes[i].add(gfx.AmbientLight())
 
-mesh0 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
-mesh1 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
-mesh2 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
+mesh0 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+)
+mesh1 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+)
+mesh2 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+)
 
 mesh0.xdirection, mesh0.ydirection = np.array([1, 0, 0]), np.array([0, -1, 0])
 mesh1.xdirection, mesh1.ydirection = np.array([-1, 0, 0]), np.array([0, 0, -1])
