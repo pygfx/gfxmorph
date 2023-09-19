@@ -60,9 +60,24 @@ class Morpher:
         self.m.track_changes(self.geometry)
 
         self.state = None
-        self.radius = 0.3
+        self.ref_edge_length = 0.1
+        self.radius = 1
 
         self._create_world_objects()
+
+    def calibrate_scale(self):
+        edge_positions = self.m.positions[self.m.edges]
+        edge_lengths = np.linalg.norm(
+            edge_positions[:, 0, :] - edge_positions[:, 1, :], axis=1
+        )
+        mean_edge_length = edge_lengths.mean()
+
+        object_size = np.linalg.norm(
+            self.m.positions.max(axis=0) - self.m.positions.min(axis=0)
+        )
+
+        self.ref_edge_length = mean_edge_length * 0.9
+        self.radius = object_size / 15
 
     def _create_world_objects(self):
         # The front, to show the mesh itself.
@@ -369,7 +384,7 @@ class Morpher:
             # Post-processing
             if self.state["action"] == "morph" and self.m.is_manifold:
                 self.m.resample_selection(
-                    self.state["indices"], self.state["weights"], 0.2
+                    self.state["indices"], self.state["weights"], self.ref_edge_length
                 )
                 if self.m.is_manifold:
                     self.undo_tracker.commit_amend()
@@ -665,11 +680,11 @@ layout()
 
 
 if __name__ == "__main__":
-    add_sphere(0, 0, 0)
+    # add_sphere(0, 0, 0)
     # add_sphere(3, 0, 0)
-    # add_bone( "coxae.stl")
+    add_bone("coxae.stl")
 
-    morpher.radius = 0.2
+    morpher.calibrate_scale()
 
     renderer.request_draw(animate)
     run()
