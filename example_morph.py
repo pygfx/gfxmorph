@@ -5,6 +5,7 @@ Example morphing.
 import os
 import json
 
+import trimesh
 import numpy as np
 from wgpu.gui.auto import WgpuCanvas, run
 import pygfx as gfx
@@ -146,6 +147,7 @@ class Morpher:
         # Get pos
         coordvec = np.array(coord).reshape(3, 1)
         vii = self.m.faces[fi]
+        assert np.sum(coordvec) > 0, "how can this happen?"
         pos = (self.m.positions[vii] * coordvec).sum(axis=0) / np.sum(coordvec)
         # Adjust world objects
         self.wob_radius.local.position = pos
@@ -285,7 +287,12 @@ class Morpher:
 
         # Get delta movement, and express in world coordinates
         dxy = np.array(xy) - self.state["xy"]
-        delta = self.state["normal"] * (dxy[1] / 100)
+        if "xdirection" in self.state:
+            delta = (
+                self.state["xdirection"] * dxy[0] + self.state["ydirection"] * dxy[1]
+            )
+        else:
+            delta = self.state["normal"] * (dxy[1] / 100)
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
         # We limit it to 2 sigma. Vertices up to 3 sigma are displaced.
@@ -407,22 +414,45 @@ viewport3 = gfx.Viewport(renderer)
 camera3 = gfx.PerspectiveCamera()
 controller3 = gfx.OrbitController(camera3, register_events=viewport3)
 
-# Setup the scene
-scene = gfx.Scene()
-scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
-scene.add(camera3.add(gfx.DirectionalLight()), gfx.AmbientLight())
-scene.add(morpher.world_objects)
+# Setup the scenes
+scenes = [gfx.Scene() for i in range(4)]
+for i in range(4):
+    scenes[i].add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
+    scenes[i].add(gfx.AmbientLight())
 
+mesh0 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
+mesh1 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
+mesh2 = gfx.Mesh(morpher.geometry, gfx.MeshSliceMaterial(thickness=4, color="c"))
+
+mesh0.xdirection, mesh0.ydirection = np.array([1, 0, 0]), np.array([0, -1, 0])
+mesh1.xdirection, mesh1.ydirection = np.array([-1, 0, 0]), np.array([0, 0, -1])
+mesh2.xdirection, mesh2.ydirection = np.array([0, 1, 0]), np.array([0, 0, -1])
+
+
+scenes[0].add(mesh0)
+scenes[1].add(mesh1)
+scenes[2].add(mesh2)
+scenes[3].add(morpher.world_objects)
+scenes[3].add(camera3.add(gfx.DirectionalLight()))
 
 # %% Functions to modify the mesh
 
 
 def show_scene():
+    scene = scenes[3]
     camera0.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
     camera1.show_object(scene, view_dir=(0, -1, 0), up=(0, 0, 1))
     camera2.show_object(scene, view_dir=(-1, 0, 0), up=(0, 0, 1))
     camera3.show_object(scene)
+    x, y, z, _ = scene.get_bounding_sphere()
+    look_at(x, y, z)
     renderer.request_draw()
+
+
+def look_at(x, y, z):
+    mesh0.material.plane = 0, 0, -1, z  # xy
+    mesh1.material.plane = 0, -1, 0, y  # xz
+    mesh2.material.plane = -1, 0, 0, x  # yz
 
 
 def add_sphere(dx=0, dy=0, dz=0):
@@ -440,8 +470,9 @@ def add_bone(name):
     if not os.path.isfile(filename):
         raise RuntimeError(f"Invalid bone dataset '{name}'.")
 
-    meshes = gfx.load_scene(filename)
-    geo = meshes[0].geometry
+    geo = gfx.geometry_from_trimesh(trimesh.load(filename))
+    # meshes = gfx.load_scene(filename)
+    # geo = meshes[0].geometry
     morpher.m.add_mesh(geo.positions.data, geo.indices.data)
     morpher.commit()
     show_scene()
@@ -483,7 +514,75 @@ def on_key(e):
     "pointer_leave",
     "wheel",
 )
-def on_mouse(e):
+def on_mouse_3d(e):
+    if "Shift" in e.modifiers:
+        # Don't react when shift is down, so that the controller can work
+        morpher.highlight(None)
+        renderer.request_draw()
+    elif e.type == "pointer_down" and e.button == 1:
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+
+        # vi = morpher.m.faces[face_index][0]
+        # look_at(*morpher.m.positions[vi])
+        vii = morpher.m.faces[face_index]
+        coord_vec = np.array(face_coord).reshape(3, 1)
+        pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(face_coord)
+        look_at(*pos)
+
+        # morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
+        # renderer.request_draw()
+        # e.target.set_pointer_capture(e.pointer_id, e.root)
+    elif e.type == "pointer_down" and e.button == 2:
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+        morpher.start_smooth((e.x, e.y), face_index, face_coord)
+        renderer.request_draw()
+        e.target.set_pointer_capture(e.pointer_id, e.root)
+    elif e.type == "pointer_up":
+        morpher.finish()
+        renderer.request_draw()
+    elif e.type == "pointer_move":
+        if morpher.state:
+            morpher.move((e.x, e.y))
+        else:
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            morpher.show_morph_grab(face_index, face_coord)
+        renderer.request_draw()
+    elif e.type == "pointer_enter":
+        morpher.highlight(True)
+        renderer.request_draw()
+    elif e.type == "pointer_leave":
+        morpher.highlight(False)
+        renderer.request_draw()
+    elif e.type == "wheel":
+        if not morpher.state:
+            morpher.radius *= 2 ** (e.dy / 500)
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            morpher.show_morph_grab(face_index, face_coord)
+            renderer.request_draw()
+            e.cancel()
+
+
+def get_directions_for_mesh(mesh):
+    # Get the corresponding camera
+    if mesh == mesh0:
+        cam = camera0
+        size = viewport0.logical_size
+    elif mesh == mesh1:
+        cam = camera1
+        size = viewport1.logical_size
+    elif mesh == mesh2:
+        cam = camera2
+        size = viewport2.logical_size
+    # Determine vector that maps xy mouse movement to movement in world space
+    movement_scale = max(cam.width / size[0], cam.height / size[1])
+    return mesh.xdirection * movement_scale, mesh.ydirection * movement_scale
+
+
+def on_mouse_2d(e):
     if "Shift" in e.modifiers:
         # Don't react when shift is down, so that the controller can work
         morpher.highlight(None)
@@ -492,6 +591,8 @@ def on_mouse(e):
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
         morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
+        dir = get_directions_for_mesh(e.target)
+        morpher.state["xdirection"], morpher.state["ydirection"] = dir
         renderer.request_draw()
         e.target.set_pointer_capture(e.pointer_id, e.root)
     elif e.type == "pointer_down" and e.button == 2:
@@ -527,6 +628,18 @@ def on_mouse(e):
             e.cancel()
 
 
+for m in [mesh0, mesh1, mesh2]:
+    m.add_event_handler(
+        on_mouse_2d,
+        "pointer_down",
+        "pointer_up",
+        "pointer_move",
+        "pointer_enter",
+        "pointer_leave",
+        "wheel",
+    )
+
+
 # %% Run
 
 
@@ -541,10 +654,10 @@ def layout(event=None):
 
 
 def animate():
-    viewport0.render(scene, camera0)
-    viewport1.render(scene, camera1)
-    viewport2.render(scene, camera2)
-    viewport3.render(scene, camera3)
+    viewport0.render(scenes[0], camera0)
+    viewport1.render(scenes[1], camera1)
+    viewport2.render(scenes[2], camera2)
+    viewport3.render(scenes[3], camera3)
     renderer.flush()
 
 
@@ -552,11 +665,11 @@ layout()
 
 
 if __name__ == "__main__":
-    # add_sphere(0, 0, 0)
+    add_sphere(0, 0, 0)
     # add_sphere(3, 0, 0)
-    add_bone("coxae.stl")
+    # add_bone( "coxae.stl")
 
-    morpher.radius = 12
+    morpher.radius = 0.2
 
     renderer.request_draw(animate)
     run()
