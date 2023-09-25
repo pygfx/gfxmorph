@@ -87,7 +87,7 @@ class Morpher:
         self.wob_front = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                vertex_colors=True, color="#6ff", flat_shading=False, side="FRONT"
+                color_mode='vertex', color="#6ff", flat_shading=False, side="FRONT"
             ),
         )
 
@@ -104,7 +104,7 @@ class Morpher:
             self.geometry,
             gfx.materials.MeshPhongMaterial(
                 color="#777",
-                opacity=0.05,
+                opacity=0.1,
                 wireframe=True,
                 wireframe_thickness=2,
                 side="FRONT",
@@ -156,16 +156,16 @@ class Morpher:
     def highlight(self, highlight):
         if highlight:
             # self.wob_radius.visible = True
-            self.wob_wire.material.opacity = 0.075
+            self.wob_wire.material.opacity = 0.2
         else:
             self.wob_radius.visible = False
-            self.wob_wire.material.opacity = 0.05
+            self.wob_wire.material.opacity = 0.1
 
     def show_morph_grab(self, fi, coord):
         # Get pos
         coordvec = np.array(coord).reshape(3, 1)
         vii = self.m.faces[fi]
-        assert np.sum(coordvec) > 0, "how can this happen?"
+        assert np.sum(coordvec) > 0, f"unexpected pick coord: {coord}"
         pos = (self.m.positions[vii] * coordvec).sum(axis=0) / np.sum(coordvec)
         # Adjust world objects
         self.wob_radius.local.position = pos
@@ -443,13 +443,13 @@ for i in range(4):
     scenes[i].add(gfx.AmbientLight())
 
 mesh0 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
 )
 mesh1 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
 )
 mesh2 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=4, vertex_colors=True)
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
 )
 
 mesh0.xdirection, mesh0.ydirection = np.array([1, 0, 0]), np.array([0, -1, 0])
@@ -693,6 +693,7 @@ layout()
 
 
 if __name__ == "__main__":
+
     # add_sphere(0, 0, 0)
     # add_sphere(3, 0, 0)
     add_bone("coxae.stl")
