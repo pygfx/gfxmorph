@@ -20,8 +20,9 @@ INSTRUCTIONS = """
 * Morph by pulling on the mesh slices.
 * Morph in the direction of the normal by clicking in 3D view and pulling up/down.
 * Hold shift to pan/zoom/rotate.
-* Click with control/command in the 3D view to select that point in the slice views.
 * Scroll with the radius-sphere visisible to change its size.
+* Click with control/command in the 3D view to select that point in the slice views.
+* Scroll with control/command in a slice view to move the plane.
 """
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -682,6 +683,25 @@ for m in [mesh0, mesh1, mesh2]:
         "pointer_leave",
         "wheel",
     )
+
+
+@renderer.add_event_handler("wheel")
+def slice_scroll(e):
+    if "Shift" in e.modifiers:
+        return
+    elif "Control" in e.modifiers or "Meta" in e.modifiers:
+        mesh = None
+        if viewport0.is_inside(e.x, e.y):
+            mesh = mesh0
+        elif viewport1.is_inside(e.x, e.y):
+            mesh = mesh1
+        elif viewport2.is_inside(e.x, e.y):
+            mesh = mesh2
+        if mesh is not None:
+            step = mesh.material.plane[-1]
+            mesh.material.plane = mesh.material.plane[:3] + (step + np.sign(e.dy),)
+            renderer.request_draw()
+            e.cancel()
 
 
 # %% Run
