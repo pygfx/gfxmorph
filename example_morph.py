@@ -2,14 +2,6 @@
 Example morphing.
 """
 
-INSTRUCTIONS = """
-* Morph by pulling on the mesh slices.
-* Morph in the direction of the normal by clicking in 3D view and pulling up/down.
-* Hold shift to pan/zoom/rotate.
-* Click with control/command in the 3D view to select that point in the slice views.
-* Scroll with the radius-sphere visisible to change its size.
-"""
-
 import os
 import json
 
@@ -23,6 +15,14 @@ from gfxmorph import DynamicMesh, MeshUndoTracker
 from gfxmorph.meshfuncs import vertex_get_neighbours
 from gfxmorph.utils import logger
 
+
+INSTRUCTIONS = """
+* Morph by pulling on the mesh slices.
+* Morph in the direction of the normal by clicking in 3D view and pulling up/down.
+* Hold shift to pan/zoom/rotate.
+* Click with control/command in the 3D view to select that point in the slice views.
+* Scroll with the radius-sphere visisible to change its size.
+"""
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -95,7 +95,7 @@ class Morpher:
         self.wob_front = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                color_mode='vertex', color="#6ff", flat_shading=False, side="FRONT"
+                color_mode="vertex", color="#6ff", flat_shading=False, side="FRONT"
             ),
         )
 
@@ -459,13 +459,13 @@ for i in range(4):
     scenes[i].add(gfx.AmbientLight())
 
 mesh0 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
 )
 mesh1 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
 )
 mesh2 = gfx.Mesh(
-    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode='vertex')
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
 )
 
 mesh0.xdirection, mesh0.ydirection = np.array([1, 0, 0]), np.array([0, -1, 0])
@@ -566,10 +566,12 @@ def on_mouse_3d(e):
     elif e.type == "pointer_down" and e.button == 1:
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
-        if "Control" in e.modifiers or "Meta"in e.modifiers:
+        if "Control" in e.modifiers or "Meta" in e.modifiers:
             vii = morpher.m.faces[face_index]
             coord_vec = np.array(face_coord).reshape(3, 1)
-            pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(face_coord)
+            pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(
+                face_coord
+            )
             look_at(*pos)
         else:
             morpher.start_morph_from_face((e.x, e.y), face_index, face_coord, True)
