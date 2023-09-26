@@ -2,6 +2,14 @@
 Example morphing.
 """
 
+INSTRUCTIONS = """
+* Morph by pulling on the mesh slices.
+* Morph in the direction of the normal by clicking in 3D view and pulling up/down.
+* Hold shift to pan/zoom/rotate.
+* Click with control/command in the 3D view to select that point in the slice views.
+* Scroll with the radius-sphere visisible to change its size.
+"""
+
 import os
 import json
 
@@ -187,7 +195,7 @@ class Morpher:
 
         return self._start_morph(xy, vii, distances, pos, normal)
 
-    def start_morph_from_face(self, xy, fi, coord):
+    def start_morph_from_face(self, xy, fi, coord, in_dir_of_normal=False):
         """Initiate a drag, based on a face index and face coordinates.
 
         This allows precise grabbing of the mesh. The face coordinates
@@ -204,10 +212,13 @@ class Morpher:
         coord_vec = np.array(coord).reshape(3, 1)
         pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
 
-        normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
-        normal = normal / np.linalg.norm(normal)
-        distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
+        if in_dir_of_normal:
+            normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
+            normal = normal / np.linalg.norm(normal)
+        else:
+            normal = None
 
+        distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
         return self._start_morph(xy, vii, distances, pos, normal)
 
     def _start_morph(self, xy, vii, ref_distances, pos, normal):
@@ -226,9 +237,11 @@ class Morpher:
         self.state.update(more_state)
 
         # Bring gizmo into place
-        self.wob_gizmo.visible = True
-        self.wob_gizmo.world.position = pos
-        self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
+        if normal is not None:
+            self.wob_gizmo.visible = True
+            self.wob_gizmo.local.scale = self.radius * 2
+            self.wob_gizmo.world.position = pos
+            self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
 
     def _select_vertices(self, vii, ref_distances):
         # Cancel any pending changes to the mesh. If we were already dragging,
@@ -307,12 +320,15 @@ class Morpher:
 
         # Get delta movement, and express in world coordinates
         dxy = np.array(xy) - self.state["xy"]
-        if "xdirection" in self.state:
+        if self.state["normal"] is not None:
+            delta = self.state["normal"] * (dxy[1] / 10)
+        elif "xdirection" in self.state and "ydirection" in self.state:
             delta = (
                 self.state["xdirection"] * dxy[0] + self.state["ydirection"] * dxy[1]
             )
         else:
-            delta = self.state["normal"] * (dxy[1] / 100)
+            print("zz")
+            return
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
         # We limit it to 2 sigma. Vertices up to 3 sigma are displaced.
@@ -550,17 +566,15 @@ def on_mouse_3d(e):
     elif e.type == "pointer_down" and e.button == 1:
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
-
-        # vi = morpher.m.faces[face_index][0]
-        # look_at(*morpher.m.positions[vi])
-        vii = morpher.m.faces[face_index]
-        coord_vec = np.array(face_coord).reshape(3, 1)
-        pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(face_coord)
-        look_at(*pos)
-
-        # morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
-        # renderer.request_draw()
-        # e.target.set_pointer_capture(e.pointer_id, e.root)
+        if "Control" in e.modifiers or "Meta"in e.modifiers:
+            vii = morpher.m.faces[face_index]
+            coord_vec = np.array(face_coord).reshape(3, 1)
+            pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(face_coord)
+            look_at(*pos)
+        else:
+            morpher.start_morph_from_face((e.x, e.y), face_index, face_coord, True)
+            renderer.request_draw()
+            e.target.set_pointer_capture(e.pointer_id, e.root)
     elif e.type == "pointer_down" and e.button == 2:
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
@@ -693,6 +707,7 @@ layout()
 
 
 if __name__ == "__main__":
+    print(INSTRUCTIONS)
 
     # add_sphere(0, 0, 0)
     # add_sphere(3, 0, 0)
