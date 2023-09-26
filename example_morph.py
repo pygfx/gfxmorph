@@ -2,8 +2,10 @@
 Example morphing.
 """
 
+import os
 import json
 
+import trimesh
 import numpy as np
 from wgpu.gui.auto import WgpuCanvas, run
 import pygfx as gfx
@@ -14,19 +16,34 @@ from gfxmorph.meshfuncs import vertex_get_neighbours
 from gfxmorph.utils import logger
 
 
+INSTRUCTIONS = """
+* Morph by pulling on the mesh slices.
+* Morph in the direction of the normal by clicking in 3D view and pulling up/down.
+* Hold shift to pan/zoom/rotate.
+* Scroll with the radius-sphere visisible to change its size.
+* Click with control/command in the 3D view to select that point in the slice views.
+* Scroll with control/command in a slice view to move the plane.
+"""
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+MESH_COLOR = 0, 0.7, 0.8, 1
+MESH_COLOR_MORPH = 0.7, 0.7, 0.2, 1
+
+
 # %% Morph logic
 
 
-class DynamicMeshGeometryWithSizes(DynamicMeshGeometry):
+class DynamicMeshGeometryForMorphing(DynamicMeshGeometry):
     # This is a subclass of both gfx.Geometry and MeshChangeTracker.
     # This illustrates how we can relatively easily associate additional
-    # buffers with the mesh. In this case we add a buffer for points
-    # sizes to show the selected vertices. If we'd instead use colors
-    # to show selected vertices, that'd work in much the same way.
+    # buffers with the mesh.
 
     def new_vertices_buffer(self, mesh):
         super().new_vertices_buffer(mesh)
-        self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
+        # self.sizes = gfx.Buffer(np.zeros((self.positions.nitems,), np.float32))
+        self.colors = gfx.Buffer(np.zeros((self.positions.nitems, 4), np.float32))
+        self.colors.data[:] = MESH_COLOR
 
 
 def softlimit(i, limit):
@@ -51,20 +68,35 @@ class Morpher:
         self.m.track_changes(self.undo_tracker)
 
         # Tracker that maps the mesh to a gfx Geometry (with live updates)
-        self.geometry = DynamicMeshGeometryWithSizes()
+        self.geometry = DynamicMeshGeometryForMorphing()
         self.m.track_changes(self.geometry)
 
         self.state = None
-        self.radius = 0.3
+        self.ref_edge_length = 0.1
+        self.radius = 1
 
         self._create_world_objects()
+
+    def calibrate_scale(self):
+        edge_positions = self.m.positions[self.m.edges]
+        edge_lengths = np.linalg.norm(
+            edge_positions[:, 0, :] - edge_positions[:, 1, :], axis=1
+        )
+        mean_edge_length = edge_lengths.mean()
+
+        object_size = np.linalg.norm(
+            self.m.positions.max(axis=0) - self.m.positions.min(axis=0)
+        )
+
+        self.ref_edge_length = mean_edge_length * 0.9
+        self.radius = object_size / 15
 
     def _create_world_objects(self):
         # The front, to show the mesh itself.
         self.wob_front = gfx.Mesh(
             self.geometry,
             gfx.materials.MeshPhongMaterial(
-                color="#6ff", flat_shading=False, side="FRONT"
+                color_mode="vertex", color="#6ff", flat_shading=False, side="FRONT"
             ),
         )
 
@@ -81,7 +113,7 @@ class Morpher:
             self.geometry,
             gfx.materials.MeshPhongMaterial(
                 color="#777",
-                opacity=0.05,
+                opacity=0.1,
                 wireframe=True,
                 wireframe_thickness=2,
                 side="FRONT",
@@ -113,7 +145,7 @@ class Morpher:
             self.wob_front,
             self.wob_back,
             self.wob_wire,
-            self.wob_points,
+            # self.wob_points,
             self.wob_gizmo,
             self.wob_radius,
         )
@@ -133,15 +165,16 @@ class Morpher:
     def highlight(self, highlight):
         if highlight:
             # self.wob_radius.visible = True
-            self.wob_wire.material.opacity = 0.075
+            self.wob_wire.material.opacity = 0.2
         else:
             self.wob_radius.visible = False
-            self.wob_wire.material.opacity = 0.05
+            self.wob_wire.material.opacity = 0.1
 
     def show_morph_grab(self, fi, coord):
         # Get pos
         coordvec = np.array(coord).reshape(3, 1)
         vii = self.m.faces[fi]
+        assert np.sum(coordvec) > 0, f"unexpected pick coord: {coord}"
         pos = (self.m.positions[vii] * coordvec).sum(axis=0) / np.sum(coordvec)
         # Adjust world objects
         self.wob_radius.local.position = pos
@@ -163,7 +196,7 @@ class Morpher:
 
         return self._start_morph(xy, vii, distances, pos, normal)
 
-    def start_morph_from_face(self, xy, fi, coord):
+    def start_morph_from_face(self, xy, fi, coord, in_dir_of_normal=False):
         """Initiate a drag, based on a face index and face coordinates.
 
         This allows precise grabbing of the mesh. The face coordinates
@@ -180,10 +213,13 @@ class Morpher:
         coord_vec = np.array(coord).reshape(3, 1)
         pos = (self.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(coord)
 
-        normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
-        normal = normal / np.linalg.norm(normal)
-        distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
+        if in_dir_of_normal:
+            normal = (self.m.normals[vii] * coord_vec).sum(axis=0)
+            normal = normal / np.linalg.norm(normal)
+        else:
+            normal = None
 
+        distances = np.linalg.norm(self.m.positions[vii] - pos, axis=1)
         return self._start_morph(xy, vii, distances, pos, normal)
 
     def _start_morph(self, xy, vii, ref_distances, pos, normal):
@@ -202,9 +238,11 @@ class Morpher:
         self.state.update(more_state)
 
         # Bring gizmo into place
-        self.wob_gizmo.visible = True
-        self.wob_gizmo.world.position = pos
-        self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
+        if normal is not None:
+            self.wob_gizmo.visible = True
+            self.wob_gizmo.local.scale = self.radius * 2
+            self.wob_gizmo.world.position = pos
+            self.wob_gizmo.local.rotation = la.quat_from_vecs((0, 0, 1), normal)
 
     def _select_vertices(self, vii, ref_distances):
         # Cancel any pending changes to the mesh. If we were already dragging,
@@ -229,9 +267,11 @@ class Morpher:
             return
 
         # Update data for points that highlight the selection
-        self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
         first, last = indices.min(), indices.max()
-        self.geometry.sizes.update_range(first, last - first + 1)
+        self.geometry.colors.data[indices] = MESH_COLOR_MORPH
+        self.geometry.colors.update_range(first, last - first + 1)
+        # self.geometry.sizes.data[indices] = 7  # 2 + 20*weights.flatten()
+        # self.geometry.sizes.update_range(first, last - first + 1)
 
         # Store state
         self.state = {
@@ -281,7 +321,15 @@ class Morpher:
 
         # Get delta movement, and express in world coordinates
         dxy = np.array(xy) - self.state["xy"]
-        delta = self.state["normal"] * (dxy[1] / 100)
+        if self.state["normal"] is not None:
+            delta = self.state["normal"] * (dxy[1] / 10)
+        elif "xdirection" in self.state and "ydirection" in self.state:
+            delta = (
+                self.state["xdirection"] * dxy[0] + self.state["ydirection"] * dxy[1]
+            )
+        else:
+            print("zz")
+            return
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
         # We limit it to 2 sigma. Vertices up to 3 sigma are displaced.
@@ -346,9 +394,11 @@ class Morpher:
         if self.state:
             # Update
             indices = self.state["indices"]
-            self.geometry.sizes.data[indices] = 0
             first, last = indices.min(), indices.max()
-            self.geometry.sizes.update_range(first, last - first + 1)
+            self.geometry.colors.data[indices] = MESH_COLOR
+            self.geometry.colors.update_range(first, last - first + 1)
+            # self.geometry.sizes.data[indices] = 0
+            # self.geometry.sizes.update_range(first, last - first + 1)
             # Commit or cancel
             if self.m.is_manifold:
                 self._smooth_some(0.1)
@@ -358,7 +408,7 @@ class Morpher:
             # Post-processing
             if self.state["action"] == "morph" and self.m.is_manifold:
                 self.m.resample_selection(
-                    self.state["indices"], self.state["weights"], 0.2
+                    self.state["indices"], self.state["weights"], self.ref_edge_length
                 )
                 if self.m.is_manifold:
                     self.undo_tracker.commit_amend()
@@ -381,17 +431,73 @@ morpher = Morpher()
 # %% Setup the viz
 
 
-renderer = gfx.WgpuRenderer(WgpuCanvas())
+renderer = gfx.WgpuRenderer(WgpuCanvas(size=(1000, 700)))
 
-camera = gfx.PerspectiveCamera()
-camera.show_object((0, 0, 0, 8))
+# View 0: xy
+viewport0 = gfx.Viewport(renderer)
+camera0 = gfx.OrthographicCamera(8, 8)
+controller0 = gfx.PanZoomController(camera0, register_events=viewport0)
 
-scene = gfx.Scene()
-scene.add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
-scene.add(camera.add(gfx.DirectionalLight()), gfx.AmbientLight())
-scene.add(morpher.world_objects)
+# View 1: xz
+viewport1 = gfx.Viewport(renderer)
+camera1 = gfx.OrthographicCamera(8, 8)
+controller1 = gfx.PanZoomController(camera1, register_events=viewport1)
+
+# View 2: yz
+viewport2 = gfx.Viewport(renderer)
+camera2 = gfx.OrthographicCamera(8, 8)
+controller2 = gfx.PanZoomController(camera2, register_events=viewport2)
+
+# View 3: 3D
+viewport3 = gfx.Viewport(renderer)
+camera3 = gfx.PerspectiveCamera()
+controller3 = gfx.OrbitController(camera3, register_events=viewport3)
+
+# Setup the scenes
+scenes = [gfx.Scene() for i in range(4)]
+for i in range(4):
+    scenes[i].add(gfx.Background(None, gfx.BackgroundMaterial(0.4, 0.6)))
+    scenes[i].add(gfx.AmbientLight())
+
+mesh0 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
+)
+mesh1 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
+)
+mesh2 = gfx.Mesh(
+    morpher.geometry, gfx.MeshSliceMaterial(thickness=10, color_mode="vertex")
+)
+
+mesh0.xdirection, mesh0.ydirection = np.array([1, 0, 0]), np.array([0, -1, 0])
+mesh1.xdirection, mesh1.ydirection = np.array([-1, 0, 0]), np.array([0, 0, -1])
+mesh2.xdirection, mesh2.ydirection = np.array([0, 1, 0]), np.array([0, 0, -1])
+
+
+scenes[0].add(mesh0)
+scenes[1].add(mesh1)
+scenes[2].add(mesh2)
+scenes[3].add(morpher.world_objects)
+scenes[3].add(camera3.add(gfx.DirectionalLight()))
 
 # %% Functions to modify the mesh
+
+
+def show_scene():
+    scene = scenes[3]
+    camera0.show_object(scene, view_dir=(0, 0, -1), up=(0, 1, 0))
+    camera1.show_object(scene, view_dir=(0, -1, 0), up=(0, 0, 1))
+    camera2.show_object(scene, view_dir=(-1, 0, 0), up=(0, 0, 1))
+    camera3.show_object(scene)
+    x, y, z, _ = scene.get_bounding_sphere()
+    look_at(x, y, z)
+    renderer.request_draw()
+
+
+def look_at(x, y, z):
+    mesh0.material.plane = 0, 0, -1, z  # xy
+    mesh1.material.plane = 0, -1, 0, y  # xz
+    mesh2.material.plane = -1, 0, 0, x  # yz
 
 
 def add_sphere(dx=0, dy=0, dz=0):
@@ -401,9 +507,20 @@ def add_sphere(dx=0, dy=0, dz=0):
 
     morpher.m.add_mesh(positions, faces)
     morpher.commit()
+    show_scene()
 
-    camera.show_object(scene)
-    renderer.request_draw()
+
+def add_bone(name):
+    filename = os.path.join(DATA_DIR, name)
+    if not os.path.isfile(filename):
+        raise RuntimeError(f"Invalid bone dataset '{name}'.")
+
+    geo = gfx.geometry_from_trimesh(trimesh.load(filename))
+    # meshes = gfx.load_scene(filename)
+    # geo = meshes[0].geometry
+    morpher.m.add_mesh(geo.positions.data, geo.indices.data)
+    morpher.commit()
+    show_scene()
 
 
 # %% Create key and mouse bindings
@@ -412,9 +529,9 @@ print(__doc__)
 
 
 # Create controller, also bind it to shift, so we can always hit shift and use the camera
-controller = gfx.OrbitController(camera, register_events=renderer)
-for k in list(controller.controls.keys()):
-    controller.controls["shift+" + k] = controller.controls[k]
+for contr in [controller0, controller1, controller2, controller3]:
+    for k in list(contr.controls.keys()):
+        contr.controls["shift+" + k] = contr.controls[k]
 
 
 @renderer.add_event_handler("key_down")
@@ -442,7 +559,75 @@ def on_key(e):
     "pointer_leave",
     "wheel",
 )
-def on_mouse(e):
+def on_mouse_3d(e):
+    if "Shift" in e.modifiers:
+        # Don't react when shift is down, so that the controller can work
+        morpher.highlight(None)
+        renderer.request_draw()
+    elif e.type == "pointer_down" and e.button == 1:
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+        if "Control" in e.modifiers or "Meta" in e.modifiers:
+            vii = morpher.m.faces[face_index]
+            coord_vec = np.array(face_coord).reshape(3, 1)
+            pos = (morpher.m.positions[vii] * coord_vec).sum(axis=0) / np.sum(
+                face_coord
+            )
+            look_at(*pos)
+        else:
+            morpher.start_morph_from_face((e.x, e.y), face_index, face_coord, True)
+            renderer.request_draw()
+            e.target.set_pointer_capture(e.pointer_id, e.root)
+    elif e.type == "pointer_down" and e.button == 2:
+        face_index = e.pick_info["face_index"]
+        face_coord = e.pick_info["face_coord"]
+        morpher.start_smooth((e.x, e.y), face_index, face_coord)
+        renderer.request_draw()
+        e.target.set_pointer_capture(e.pointer_id, e.root)
+    elif e.type == "pointer_up":
+        morpher.finish()
+        renderer.request_draw()
+    elif e.type == "pointer_move":
+        if morpher.state:
+            morpher.move((e.x, e.y))
+        else:
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            morpher.show_morph_grab(face_index, face_coord)
+        renderer.request_draw()
+    elif e.type == "pointer_enter":
+        morpher.highlight(True)
+        renderer.request_draw()
+    elif e.type == "pointer_leave":
+        morpher.highlight(False)
+        renderer.request_draw()
+    elif e.type == "wheel":
+        if not morpher.state:
+            morpher.radius *= 2 ** (e.dy / 500)
+            face_index = e.pick_info["face_index"]
+            face_coord = e.pick_info["face_coord"]
+            morpher.show_morph_grab(face_index, face_coord)
+            renderer.request_draw()
+            e.cancel()
+
+
+def get_directions_for_mesh(mesh):
+    # Get the corresponding camera
+    if mesh == mesh0:
+        cam = camera0
+        size = viewport0.logical_size
+    elif mesh == mesh1:
+        cam = camera1
+        size = viewport1.logical_size
+    elif mesh == mesh2:
+        cam = camera2
+        size = viewport2.logical_size
+    # Determine vector that maps xy mouse movement to movement in world space
+    movement_scale = max(cam.width / size[0], cam.height / size[1])
+    return mesh.xdirection * movement_scale, mesh.ydirection * movement_scale
+
+
+def on_mouse_2d(e):
     if "Shift" in e.modifiers:
         # Don't react when shift is down, so that the controller can work
         morpher.highlight(None)
@@ -451,6 +636,8 @@ def on_mouse(e):
         face_index = e.pick_info["face_index"]
         face_coord = e.pick_info["face_coord"]
         morpher.start_morph_from_face((e.x, e.y), face_index, face_coord)
+        dir = get_directions_for_mesh(e.target)
+        morpher.state["xdirection"], morpher.state["ydirection"] = dir
         renderer.request_draw()
         e.target.set_pointer_capture(e.pointer_id, e.root)
     elif e.type == "pointer_down" and e.button == 2:
@@ -486,16 +673,69 @@ def on_mouse(e):
             e.cancel()
 
 
+for m in [mesh0, mesh1, mesh2]:
+    m.add_event_handler(
+        on_mouse_2d,
+        "pointer_down",
+        "pointer_up",
+        "pointer_move",
+        "pointer_enter",
+        "pointer_leave",
+        "wheel",
+    )
+
+
+@renderer.add_event_handler("wheel")
+def slice_scroll(e):
+    if "Shift" in e.modifiers:
+        return
+    elif "Control" in e.modifiers or "Meta" in e.modifiers:
+        mesh = None
+        if viewport0.is_inside(e.x, e.y):
+            mesh = mesh0
+        elif viewport1.is_inside(e.x, e.y):
+            mesh = mesh1
+        elif viewport2.is_inside(e.x, e.y):
+            mesh = mesh2
+        if mesh is not None:
+            step = mesh.material.plane[-1]
+            mesh.material.plane = mesh.material.plane[:3] + (step + np.sign(e.dy),)
+            renderer.request_draw()
+            e.cancel()
+
+
 # %% Run
 
-add_sphere()
-add_sphere(3, 0, 0)
+
+@renderer.add_event_handler("resize")
+def layout(event=None):
+    w, h = renderer.logical_size
+    w2, h2 = (w - 30) / 2, (h - 30) / 2
+    viewport0.rect = 10, 10, w2, h2
+    viewport1.rect = w / 2 + 5, 10, w2, h2
+    viewport2.rect = 10, h / 2 + 5, w2, h2
+    viewport3.rect = w / 2 + 5, h / 2 + 5, w2, h2
 
 
 def animate():
-    renderer.render(scene, camera)
+    viewport0.render(scenes[0], camera0)
+    viewport1.render(scenes[1], camera1)
+    viewport2.render(scenes[2], camera2)
+    viewport3.render(scenes[3], camera3)
+    renderer.flush()
 
 
-renderer.request_draw(animate)
+layout()
 
-run()
+
+if __name__ == "__main__":
+    print(INSTRUCTIONS)
+
+    # add_sphere(0, 0, 0)
+    # add_sphere(3, 0, 0)
+    add_bone("coxae.stl")
+
+    morpher.calibrate_scale()
+
+    renderer.request_draw(animate)
+    run()
