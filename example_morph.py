@@ -392,7 +392,6 @@ class Morpher:
             new_positions = np.zeros((len(s_indices), 3), np.float32)
             for i in range(len(s_indices)):
                 vi = s_indices[i]
-                p = positions[vi]
                 vii = list(vertex_get_neighbours(faces, vertex2faces, vi))
                 neighbour_positions = positions[vii]
                 new_positions[i] = neighbour_positions.mean(axis=0)
