@@ -549,7 +549,7 @@ class DynamicMesh(BaseDynamicMesh):
         if not faces_to_remove:
             # This is a standalone vertex
             return vertices_to_remove, [], []
-        elif len(faces_to_remove) <= 3:
+        elif len(faces_to_remove) < 3:
             # This vertex is on a boundary, we can just remove the faces!
             return vertices_to_remove, faces_to_remove, []
 
