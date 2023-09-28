@@ -328,7 +328,6 @@ class Morpher:
                 self.state["xdirection"] * dxy[0] + self.state["ydirection"] * dxy[1]
             )
         else:
-            print("zz")
             return
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
@@ -383,7 +382,7 @@ class Morpher:
             for vi in s_indices
         ]
         s_curvatures = np.asarray(s_curvatures, np.float32)
-        print(s_curvatures.min(), s_curvatures.max())
+        # print(s_curvatures.min(), s_curvatures.max())
         curvature_smooth_factor = 100  # pretty arbitrary
         s_weights += np.abs(s_curvatures)[:, None] / curvature_smooth_factor
 
@@ -638,6 +637,10 @@ def on_mouse_3d(e):
     elif e.type == "wheel":
         if not morpher.state:
             morpher.radius *= 2 ** (e.dy / 500)
+            morpher.radius = min(
+                max(morpher.radius, 0.5 * morpher.ref_edge_length),
+                morpher.ref_edge_length * 20,
+            )
             face_index = e.pick_info["face_index"]
             face_coord = e.pick_info["face_coord"]
             morpher.show_morph_grab(face_index, face_coord)
