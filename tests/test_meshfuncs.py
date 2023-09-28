@@ -46,6 +46,91 @@ def test_vertex_get_neighbours():
     assert vii == set()
 
 
+def test_vertex_get_gaussian_curvature():
+    # top view
+    # o-----o
+    # |\   /|
+    # | \ / |
+    # |  o  |
+    # | / \ |
+    # |/   \|
+    # o-----o
+
+    positions = [
+        # top tip
+        [0, 0, 0],
+        # square
+        [-1, -1, 0],
+        [1, -1, 0],
+        [1, 1, 0],
+        [-1, 1, 0],
+        # bottom tip
+        [0, 0, -3],
+    ]
+    faces = [
+        # top
+        [0, 1, 2],
+        [0, 2, 3],
+        [0, 3, 4],
+        [0, 4, 1],
+        # bottom
+        [5, 2, 1],
+        [5, 3, 2],
+        [5, 4, 3],
+        [5, 1, 4],
+    ]
+
+    m = DynamicMesh(positions, faces)
+    assert m.is_manifold
+    assert m.is_closed
+    assert m.is_oriented
+
+    get_curvature = meshfuncs.vertex_get_gaussian_curvature
+
+    # The top region is flat, and the bottom is convex
+    c1 = get_curvature(m.positions, m.faces, m.vertex2faces, 0)
+    c2 = get_curvature(m.positions, m.faces, m.vertex2faces, 5)
+    assert -0.000001 < c1 < 0.000001
+    assert 0.9 < c2 < 0.91
+
+    # Lower the square
+    m.update_vertices([1, 2, 3, 4], m.positions[1:-1] + (0, 0, -1))
+
+    # The top region is now also convex, bottom is less convex
+    c1 = get_curvature(m.positions, m.faces, m.vertex2faces, 0)
+    c2 = get_curvature(m.positions, m.faces, m.vertex2faces, 5)
+    assert 0.7 < c1 < 0.75
+    # assert 0.9 < c2 < 0.91
+
+    # Lower the square to the level of the bottom tip
+    m.update_vertices([1, 2, 3, 4], m.positions[1:-1] + (0, 0, -2))
+
+    # The top region is more convex, bottom is flat
+    c1 = get_curvature(m.positions, m.faces, m.vertex2faces, 0)
+    c2 = get_curvature(m.positions, m.faces, m.vertex2faces, 5)
+    assert 0.9 < c1 < 0.91
+    assert -0.000001 < c2 < 0.000001
+
+    # lower the square to BELOW the level of the bottom tip
+    m.update_vertices([1, 2, 3, 4], m.positions[1:-1] + (0, 0, -2))
+
+    # The top region is even more convex, bottom is concave
+    # But Gaussian curvature is positive in both cases!
+    c1 = get_curvature(m.positions, m.faces, m.vertex2faces, 0)
+    c2 = get_curvature(m.positions, m.faces, m.vertex2faces, 5)
+    assert 0.69 < c1 < 0.70
+    assert 0.97 < c2 < 0.99
+
+    # Make the square into a saddle
+    m.update_vertices([1, 3], m.positions[[1, 3]] + (0, 0, +4))
+
+    # The bottom is a saddle, so the curvature is negative!
+    c1 = get_curvature(m.positions, m.faces, m.vertex2faces, 0)
+    c2 = get_curvature(m.positions, m.faces, m.vertex2faces, 5)
+    assert 0.45 < c1 < 0.50
+    assert -1.00 < c2 < -0.95
+
+
 def test_mesh_boundaries():
     # An empty mesg has no boundaries (but should not fail)
     assert meshfuncs.mesh_get_boundaries([]) == []
