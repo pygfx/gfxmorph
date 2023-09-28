@@ -377,24 +377,23 @@ class Morpher:
         s_positions = positions[s_indices]
         s_weights = self.state["weights"].copy()
 
-        if False:
-            # Calculate contribution of Gaussian curvature
-            s_curvatures = [
-                vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi)
-                for vi in s_indices
-            ]
-            s_curvatures = np.asarray(s_curvatures, np.float32)
-            s_weights += np.abs(s_curvatures)[:, None] / 10
+        # Calculate contribution of Gaussian curvature
+        s_curvatures = [
+            vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi)
+            for vi in s_indices
+        ]
+        s_curvatures = np.asarray(s_curvatures, np.float32)
+        print(s_curvatures.min(), s_curvatures.max())
+        curvature_smooth_factor = 100  # pretty arbitrary
+        s_weights += np.abs(s_curvatures)[:, None] / curvature_smooth_factor
 
-        if True:
-            # Laplacian smoothing
-
-            new_positions = np.zeros((len(s_indices), 3), np.float32)
-            for i in range(len(s_indices)):
-                vi = s_indices[i]
-                vii = list(vertex_get_neighbours(faces, vertex2faces, vi))
-                neighbour_positions = positions[vii]
-                new_positions[i] = neighbour_positions.mean(axis=0)
+        # Laplacian smoothing
+        new_positions = np.zeros((len(s_indices), 3), np.float32)
+        for i in range(len(s_indices)):
+            vi = s_indices[i]
+            vii = list(vertex_get_neighbours(faces, vertex2faces, vi))
+            neighbour_positions = positions[vii]
+            new_positions[i] = neighbour_positions.mean(axis=0)
 
         s_weights[s_weights > 1] = 1
         self.m.update_vertices(
