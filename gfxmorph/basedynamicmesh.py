@@ -551,7 +551,7 @@ class BaseDynamicMesh:
                 vertex2faces[face[2]].append(fi)
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -598,7 +598,7 @@ class BaseDynamicMesh:
             self._deallocate_faces(n)
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -663,7 +663,7 @@ class BaseDynamicMesh:
                 a[indices1], a[indices2] = a[indices2], a[indices1]
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -717,7 +717,7 @@ class BaseDynamicMesh:
             self._update_face_normals(indices)
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -753,7 +753,7 @@ class BaseDynamicMesh:
             vertex2faces.extend([] for i in range(n))
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -798,7 +798,7 @@ class BaseDynamicMesh:
             vertex2faces[nverts2:] = []
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -855,7 +855,7 @@ class BaseDynamicMesh:
                 )
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify
@@ -897,7 +897,7 @@ class BaseDynamicMesh:
             self._update_face_normals(list(face_indices))
 
         except Exception:  # pragma: no cover
-            logger.warn(EXCEPTION_IN_ATOMIC_CODE)
+            logger.warning(EXCEPTION_IN_ATOMIC_CODE)
             raise
 
         # --- Notify

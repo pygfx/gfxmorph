@@ -142,6 +142,82 @@ def vertex_get_incident_face_groups(
     return groups
 
 
+def vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi_check):
+    """Get the gaussian curvature for the given vertex.
+
+    It is assumed that the mesh is manifold, closed, and oriented (at
+    least in the direct surrounding of the given vertex).
+    """
+
+    # To calculate the Gaussian curvature, one takes the vertices around
+    # the given vertex, in order so they form a convex shape around the
+    # vertex. We call this the contour. Then we calculate the angles
+    # that the (vectors to the) contour vertices have with respect to
+    # each-other. If the contour is flat, the sum of angles would be
+    # 2*pi. If its not, the angle will be smaller. This contributes to
+    # the Gaussian curvature, weighted by the area of the surrounding
+    # faces.
+
+    # Get a contour map
+    contour_map = {}  # vi -> vi
+    for fi in vertex2faces[vi_check]:
+        vi1, vi2, vi3 = faces[fi]
+        if vi1 == vi_check:
+            contour_map[vi2] = vi3
+        elif vi2 == vi_check:
+            contour_map[vi3] = vi1
+        elif vi3 == vi_check:
+            contour_map[vi1] = vi2
+        else:
+            raise RuntimeError("Unexpected face winding for contour?")
+
+    # Get list of vertices
+    vi = next(iter(contour_map))  # start anywhere (should not matter)
+    contour_list = [vi]
+    while len(contour_list) < len(contour_map):
+        vi = contour_map.get(vi, -1)
+        contour_list.append(vi)
+        if vi < 0:
+            raise RuntimeError("Unexpected error while tracing the contour.")
+
+    # Checks
+    if len(contour_list) < 3:
+        raise RuntimeError("Unexpected contour too short.")
+    if contour_map[contour_list[-1]] != contour_list[0]:
+        raise RuntimeError("Unexpected contour not circular or has a shortcut.")
+
+    # Sum the angles and areas
+    angle_sum = 0
+    area_sum = 0
+    p0 = positions[vi_check]
+    for i in range(len(contour_list)):
+        if i > 0:
+            i1 = contour_list[i - 1]
+            i2 = contour_list[i]
+        else:
+            i1 = contour_list[0]
+            i2 = contour_list[len(contour_list) - 1]
+        p1 = positions[i1]
+        p2 = positions[i2]
+        p01 = p1 - p0
+        p02 = p2 - p0
+        dot_prod = np.dot(p01, p02)
+        abs_prod = np.linalg.norm(p01) * np.linalg.norm(p02)
+        abs_prod = abs_prod or 1e-6
+        angle = np.arccos(dot_prod / abs_prod)
+        area = 0.5 * abs_prod * np.sin(angle)
+        angle_sum += angle
+        area_sum += area
+
+    # Calculate final curvature. Add guard for nan values slipping in.
+    barycentric_cell_area = area_sum / 3
+    curvature = (2 * np.pi - angle_sum) / barycentric_cell_area
+    if np.isfinite(curvature):
+        return curvature
+    else:
+        return 0.0
+
+
 def mesh_is_edge_manifold_and_closed(faces):
     """Check whether the mesh is edge-manifold, and whether it is closed.
 

@@ -12,7 +12,7 @@ import pygfx as gfx
 import pylinalg as la
 from gfxmorph.maybe_pygfx import smooth_sphere_geometry, DynamicMeshGeometry
 from gfxmorph import DynamicMesh, MeshUndoTracker
-from gfxmorph.meshfuncs import vertex_get_neighbours
+from gfxmorph.meshfuncs import vertex_get_neighbours, vertex_get_gaussian_curvature
 from gfxmorph.utils import logger
 
 
@@ -328,7 +328,6 @@ class Morpher:
                 self.state["xdirection"] * dxy[0] + self.state["ydirection"] * dxy[1]
             )
         else:
-            print("zz")
             return
 
         # Limit the displacement, so it can never be pulled beyond the vertices participarting in the morph.
@@ -374,19 +373,31 @@ class Morpher:
         vertex2faces = self.m.vertex2faces
 
         s_indices = self.state["indices"]
-        s_weights = self.state["weights"]
+        s_positions = positions[s_indices]
+        s_weights = self.state["weights"].copy()
 
+        # Calculate contribution of Gaussian curvature
+        s_curvatures = [
+            vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi)
+            for vi in s_indices
+        ]
+        s_curvatures = np.asarray(s_curvatures, np.float32)
+        # print(s_curvatures.min(), s_curvatures.max())
+        curvature_smooth_factor = 100  # pretty arbitrary
+        s_weights += np.abs(s_curvatures)[:, None] / curvature_smooth_factor
+
+        # Laplacian smoothing
         new_positions = np.zeros((len(s_indices), 3), np.float32)
         for i in range(len(s_indices)):
             vi = s_indices[i]
-            w = s_weights[i]
-            p = positions[vi]
             vii = list(vertex_get_neighbours(faces, vertex2faces, vi))
-            p_delta = (positions[vii] - p).sum(axis=0) / len(vii)
-            new_positions[i] = p + p_delta * (w * smooth_factor)
+            neighbour_positions = positions[vii]
+            new_positions[i] = neighbour_positions.mean(axis=0)
 
-        # Apply new positions
-        self.m.update_vertices(s_indices, new_positions)
+        s_weights[s_weights > 1] = 1
+        self.m.update_vertices(
+            s_indices, new_positions * s_weights + s_positions * (1 - s_weights)
+        )
 
     def finish(self):
         """Stop the morph or smooth action and commit the result."""
@@ -400,29 +411,51 @@ class Morpher:
             # self.geometry.sizes.data[indices] = 0
             # self.geometry.sizes.update_range(first, last - first + 1)
             # Commit or cancel
-            if self.m.is_manifold:
+            action = self.state["action"]
+            problems = self._get_mesh_problems()
+            if not problems:
                 self._smooth_some(0.1)
                 self.commit()
             else:
                 self.cancel()
+                logger.warn(f"Discarding {action} since it made the mesh {problems}.")
             # Post-processing
-            if self.state["action"] == "morph" and self.m.is_manifold:
+            if not self._get_mesh_problems():
                 self.m.resample_selection(
                     self.state["indices"], self.state["weights"], self.ref_edge_length
                 )
-                if self.m.is_manifold:
+                problems = self._get_mesh_problems()
+                if not problems:
                     self.undo_tracker.commit_amend()
                 else:
-                    # Ideally this never happens, but it's a failsafe. At time of writing, it actually happens sometimes.
+                    # Ideally this never happens, but it's a failsafe.
+                    # At time of writing, it actually happens sometimes. In
+                    # particular for needle-like structures. This is anoying, since
+                    # these therefore don't get resampled, so the mesh stays very
+                    # fine-grained, and the smoothing has little effect, which
+                    # contributes to needle-like objects being hard to get rid off.
                     self.cancel()
                     logger.warn(
-                        "Discarding resampling step because it made the mesh non-manifold"
+                        f"Discarding resampling after {action} since it made the mesh {problems}."
                     )
             # todo: sometimes faces are missing or weird faces occur, due to the faces data not being synced correctlty
             # -> I've looked into why this happens but have not been able to find the cause.
             # -> Let's revisit when we implement a more efficient way to do the updates.
             self.geometry.indices.update_range()
             self.state = None
+
+    def _get_mesh_problems(self):
+        problems = []
+        if not self.m.is_manifold:
+            problems.append("non-manifold")
+        if not self.m.is_closed:
+            problems.append("not-closed")
+        if not self.m.is_oriented:
+            problems.append("not-oriented")
+        if problems:
+            return ", ".join(problems)
+        else:
+            return None
 
 
 morpher = Morpher()
@@ -604,6 +637,10 @@ def on_mouse_3d(e):
     elif e.type == "wheel":
         if not morpher.state:
             morpher.radius *= 2 ** (e.dy / 500)
+            morpher.radius = min(
+                max(morpher.radius, 0.5 * morpher.ref_edge_length),
+                morpher.ref_edge_length * 20,
+            )
             face_index = e.pick_info["face_index"]
             face_coord = e.pick_info["face_coord"]
             morpher.show_morph_grab(face_index, face_coord)

@@ -224,7 +224,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         """
 
-        # todo: I've observed this algorithm to sometimes produces a non-manifold mesh for small components.
+        # todo: I've observed this algorithm to sometimes produces a non-manifold mesh for small/pointy components.
 
         positions = self.positions
         faces = self.faces
@@ -250,7 +250,7 @@ class DynamicMesh(BaseDynamicMesh):
         # X---------X---------X
         #
         # Note that the loosen factor (depending on weight) helps
-        # prevent near-degenerate triangles that can normally can occur
+        # prevent near-degenerate triangles that can normally occur
         # near the boundary of the selection.
 
         # Note: A method that we could have used but don't, is to pop
@@ -289,28 +289,17 @@ class DynamicMesh(BaseDynamicMesh):
         too_long.sort(key=lambda x: -x[0])
         too_short.sort(key=lambda x: x[0])
 
-        # Next, we take a few steps to determine what edges we split,
-        # and what vertices we will pop. In this process, we keep track
-        # of the faces that effected by the planned changes so far.
-        # This is to prevent changes to clash and create a corrupt mesh.
+        # Next, we take a few steps to determine what edges we want to
+        # split, and what vertices we want to pop.
         #
-        # This means that some edges which are too short or too long
-        # are not handled in this call. Though the worst cases are
-        # prioritized. It is somewhat assumed that this method is called
-        # in an interactive setting. If necessary, a new subset can be
-        # selected and resampled.
-        #
-        # Another solution is to apply each change separetely, but this
-        # results in relatively large undo stacks.
-        affected_faces = set()
+        # Note that not all changes may be actually applied, see below.
+
+        vertices_to_pop = []
+        edges_to_split = []
 
         # Determine vertices incident to edges that are too long.
-        edges_to_split = []
         for d, vi1, vi2 in too_long:
-            touched_faces = set(vertex2faces[vi1]) & set(vertex2faces[vi2])
-            if not (touched_faces & affected_faces):
-                affected_faces.update(touched_faces)
-                edges_to_split.append((vi1, vi2))
+            edges_to_split.append((vi1, vi2))
 
         # Determine vertices that connect multiple edges that are too short.
         too_short_vertices = {}
@@ -323,12 +312,8 @@ class DynamicMesh(BaseDynamicMesh):
         hot_vertices.sort(reverse=True)
 
         # We will pop the ones that we can
-        vertices_to_pop = []
         for _, vi in hot_vertices:
-            touched_faces = set(vertex2faces[vi])
-            if not (touched_faces & affected_faces):
-                affected_faces.update(touched_faces)
-                vertices_to_pop.append(vi)
+            vertices_to_pop.append(vi)
 
         # And we also pop one vertex of the other too-short-edges, preferring
         # the ones with the most neighbours, to avoid star-like structures.
@@ -338,44 +323,54 @@ class DynamicMesh(BaseDynamicMesh):
             vii = vi1, vi2
             if len(vertex2faces[vi1]) < len(vertex2faces[vi2]):
                 vii = vi2, vi1
-            for vi in vii:
-                touched_faces = set(vertex2faces[vi])
-                if not (touched_faces & affected_faces):
-                    affected_faces.update(touched_faces)
-                    vertices_to_pop.append(vi)
-                    break
+            vertices_to_pop.extend(vii)
 
         # Next we collect the changes, so we can apply them in one go...
-        vertices_to_remove = []
+        #
+        # Changes that affect vertices or faces that were already
+        # affected by earlier changes are discarded. This means that
+        # some edges which are too short or too long are not handled
+        # in this call. Though the worst cases are prioritized. It is
+        # somewhat assumed that this method is called in an interactive
+        # setting. If necessary, a new subset can be selected and
+        # resampled.
+
+        vertices_to_remove = set()
         vertices_to_add = []
-        faces_to_remove = []
+        faces_to_remove = set()
         faces_to_add = []
+
+        # Changes to make the mesh more coarse
+        for vi in vertices_to_pop:
+            try:
+                r_verts, r_faces, a_faces = self._erase_vertex(vi, faces_to_remove)
+            except RuntimeError as err:
+                logger.warning(str(err))
+                continue
+            if vertices_to_remove.intersection(r_verts):
+                continue
+            if faces_to_remove.intersection(r_faces):
+                continue
+            vertices_to_remove.update(r_verts)
+            faces_to_remove.update(r_faces)
+            faces_to_add.extend(a_faces)
 
         # Changes to make the mesh more detailed
         for vi1, vi2 in edges_to_split:
             new_index = len(self.positions) + len(vertices_to_add)
             a_verts, r_faces, a_faces = self._split_edge(vi1, vi2, new_index)
-            vertices_to_add.extend(a_verts)
-            faces_to_remove.extend(r_faces)
-            faces_to_add.extend(a_faces)
-
-        # Changes to make the mesh more coarse
-        for vi in vertices_to_pop:
-            try:
-                r_verts, r_faces, a_faces = self._erase_vertex(vi)
-            except RuntimeError as err:
-                logger.warn(str(err))
+            if faces_to_remove.intersection(r_faces):
                 continue
-            vertices_to_remove.extend(r_verts)
-            faces_to_remove.extend(r_faces)
+            vertices_to_add.extend(a_verts)
+            faces_to_remove.update(r_faces)
             faces_to_add.extend(a_faces)
 
         # Apply changes
         if len(vertices_to_add) > 0:
             self.add_vertices(vertices_to_add)
-        self.delete_and_add_faces(faces_to_remove, faces_to_add)
+        self.delete_and_add_faces(list(faces_to_remove), faces_to_add)
         if len(vertices_to_remove) > 0:
-            self.delete_vertices(vertices_to_remove)
+            self.delete_vertices(list(vertices_to_remove))
 
     def split_edge(self, vi1, vi2):
         """Add a vertex on the give edge.
@@ -500,7 +495,7 @@ class DynamicMesh(BaseDynamicMesh):
         try:
             vertices_to_remove, faces_to_remove, faces_to_add = self._erase_vertex(vi)
         except RuntimeError as err:
-            logger.warn(str(err))
+            logger.warning(str(err))
             return
 
         # Apply changes
@@ -511,7 +506,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_remove) > 0:
             self.delete_vertices(vertices_to_remove)
 
-    def _erase_vertex(self, vi):
+    def _erase_vertex(self, vi, _faces_that_no_longer_exist=None):
         # This code:
         #
         # - Obtains the faces incident to the vertex to remove.
@@ -531,6 +526,8 @@ class DynamicMesh(BaseDynamicMesh):
         faces = self.faces
         vertex2faces = self.vertex2faces
 
+        faces_that_no_longer_exist = _faces_that_no_longer_exist or set()
+
         vi_to_remove = int(vi)
         vertices_to_remove = [vi_to_remove]
         faces_to_remove = list(vertex2faces[vi_to_remove])
@@ -542,7 +539,7 @@ class DynamicMesh(BaseDynamicMesh):
         nearby_faces = set()
         for vi in vii:
             nearby_faces.update(vertex2faces[vi])
-        context_faces = nearby_faces - set(faces_to_remove)
+        context_faces = nearby_faces - set(faces_to_remove) - faces_that_no_longer_exist
 
         # If no faces remain in this component, we dont pop the vertex
         if not context_faces:
@@ -552,7 +549,7 @@ class DynamicMesh(BaseDynamicMesh):
         if not faces_to_remove:
             # This is a standalone vertex
             return vertices_to_remove, [], []
-        elif len(faces_to_remove) <= 2:
+        elif len(faces_to_remove) < 3:
             # This vertex is on a boundary, we can just remove the faces!
             return vertices_to_remove, faces_to_remove, []
 
@@ -562,7 +559,7 @@ class DynamicMesh(BaseDynamicMesh):
         # face means that we have a tetrahedron which we dont want to
         # reduce. This rule means that if (this component of) the mesh
         # is not closed, we cannot reduce components further than 4
-        # faces, but that's probably fine (deteting this case is
+        # faces, but that's probably fine (detecting this case is
         # relatively expensive).
         if len(context_faces) <= 1:
             return [], [], []
