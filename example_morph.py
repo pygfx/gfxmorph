@@ -372,16 +372,19 @@ class Morpher:
         positions = self.m.positions
         vertex2faces = self.m.vertex2faces
 
+        # Calculate curvaturs, but only once to safe time
+        if "curvatures" not in self.state:
+            s_curvatures = [
+                vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi)
+                for vi in self.state["indices"]
+            ]
+            self.state["curvatures"] = np.asarray(s_curvatures, np.float32)
+
         s_indices = self.state["indices"]
         s_positions = positions[s_indices]
         s_weights = self.state["weights"].copy()
+        s_curvatures = self.state["curvatures"]
 
-        # Calculate contribution of Gaussian curvature
-        s_curvatures = [
-            vertex_get_gaussian_curvature(positions, faces, vertex2faces, vi)
-            for vi in s_indices
-        ]
-        s_curvatures = np.asarray(s_curvatures, np.float32)
         # print(s_curvatures.min(), s_curvatures.max())
         curvature_smooth_factor = 100  # pretty arbitrary
         s_weights += np.abs(s_curvatures)[:, None] / curvature_smooth_factor
