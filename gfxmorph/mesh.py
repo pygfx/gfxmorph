@@ -15,6 +15,7 @@
 import heapq
 
 import numpy as np
+import pylinalg as la
 
 from .basedynamicmesh import BaseDynamicMesh
 from .utils import logger
@@ -295,35 +296,39 @@ class DynamicMesh(BaseDynamicMesh):
         # Note that not all changes may be actually applied, see below.
 
         vertices_to_pop = []
+        edges_to_merge = []
         edges_to_split = []
 
         # Determine vertices incident to edges that are too long.
         for d, vi1, vi2 in too_long:
             edges_to_split.append((vi1, vi2))
 
-        # Determine vertices that connect multiple edges that are too short.
-        too_short_vertices = {}
         for d, vi1, vi2 in too_short:
-            too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
-            too_short_vertices[vi2] = too_short_vertices.get(vi2, 0) + 1
-        hot_vertices = [
-            (count, vi) for vi, count in too_short_vertices.items() if count > 1
-        ]
-        hot_vertices.sort(reverse=True)
+            edges_to_merge.append((vi1, vi2))
 
-        # We will pop the ones that we can
-        for _, vi in hot_vertices:
-            vertices_to_pop.append(vi)
-
-        # And we also pop one vertex of the other too-short-edges, preferring
-        # the ones with the most neighbours, to avoid star-like structures.
-        for d, vi1, vi2 in too_short:
-            if vi1 in vertices_to_pop or vi2 in vertices_to_pop:
-                continue
-            vii = vi1, vi2
-            if len(vertex2faces[vi1]) < len(vertex2faces[vi2]):
-                vii = vi2, vi1
-            vertices_to_pop.extend(vii)
+        # # Determine vertices that connect multiple edges that are too short.
+        # too_short_vertices = {}
+        # for d, vi1, vi2 in too_short:
+        #     too_short_vertices[vi1] = too_short_vertices.get(vi1, 0) + 1
+        #     too_short_vertices[vi2] = too_short_vertices.get(vi2, 0) + 1
+        # hot_vertices = [
+        #     (count, vi) for vi, count in too_short_vertices.items() if count > 1
+        # ]
+        # hot_vertices.sort(reverse=True)
+        #
+        # # We will pop the ones that we can
+        # for _, vi in hot_vertices:
+        #     vertices_to_pop.append(vi)
+        #
+        # # And we also pop one vertex of the other too-short-edges, preferring
+        # # the ones with the most neighbours, to avoid star-like structures.
+        # for d, vi1, vi2 in too_short:
+        #     if vi1 in vertices_to_pop or vi2 in vertices_to_pop:
+        #         continue
+        #     vii = vi1, vi2
+        #     if len(vertex2faces[vi1]) < len(vertex2faces[vi2]):
+        #         vii = vi2, vi1
+        #     vertices_to_pop.extend(vii)
 
         # Next we collect the changes, so we can apply them in one go...
         #
@@ -355,10 +360,22 @@ class DynamicMesh(BaseDynamicMesh):
             faces_to_remove.update(r_faces)
             faces_to_add.extend(a_faces)
 
+        for vi1, vi2 in edges_to_merge:
+            r_verts, r_faces, a_faces = self._merge_edge(vi1, vi2)
+            if vertices_to_remove.intersection(r_verts):
+                continue
+            if faces_to_remove.intersection(r_faces):
+                continue
+            vertices_to_remove.update(r_verts)
+            faces_to_remove.update(r_faces)
+            faces_to_add.extend(a_faces)
+
         # Changes to make the mesh more detailed
         for vi1, vi2 in edges_to_split:
             new_index = len(self.positions) + len(vertices_to_add)
-            a_verts, r_faces, a_faces = self._split_edge(vi1, vi2, new_index)
+            a_verts, r_faces, a_faces = self._split_edge(
+                vi1, vi2, new_index, vertices_to_remove
+            )
             if faces_to_remove.intersection(r_faces):
                 continue
             vertices_to_add.extend(a_verts)
@@ -393,7 +410,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
-    def _split_edge(self, vi1, vi2, new_index):
+    def _split_edge(self, vi1, vi2, new_index, _forbidden_faces=None):
         # This code:
         #
         # - place a vertex on the given edge
@@ -414,6 +431,8 @@ class DynamicMesh(BaseDynamicMesh):
         faces = self.faces
         vertex2faces = self.vertex2faces
 
+        forbidden_faces = _forbidden_faces or set()
+
         # Get what faces to split in two
         faces1 = vertex2faces[vi1]
         faces2 = vertex2faces[vi2]
@@ -422,6 +441,8 @@ class DynamicMesh(BaseDynamicMesh):
             raise ValueError("Given vertices do not make an edge.")
         elif len(faces2split) > 2:
             raise ValueError("Cannot split edge on a non-manifold piece of the mesh.")
+        elif forbidden_faces.intersection(faces2split):
+            return [], [], []
 
         # Position it right in between
         p1, p2 = positions[vi1], positions[vi2]
@@ -474,6 +495,116 @@ class DynamicMesh(BaseDynamicMesh):
             new_faces.append(face2)
 
         return [new_position], faces2split, new_faces
+
+    def merge_edge(self, vi1, vi2):
+        """Remove the given edge.
+
+        This removes the edge between vi1 and vi2, and the two faces
+        that contain that edge. Results in 1 less vertex, 2 less faces,
+        3 less edges.
+        """
+        # Do the algorithmic
+        vertices_to_remove, faces_to_remove, faces_to_add = self._merge_edge(
+            vi1, vi2, len(self.positions)
+        )
+
+        # Apply changes
+        if len(vertices_to_remove) > 0:
+            self.remove_vertices(vertices_to_remove)
+        if len(faces_to_add) > 0:
+            self.add_faces(faces_to_add)
+        if len(faces_to_remove) > 0:
+            self.delete_faces(faces_to_remove)
+
+    def _merge_edge(self, vi1, vi2, _forbidden_faces=None):
+        positions = self.positions
+        faces = self.faces
+        vertex2faces = self.vertex2faces
+
+        forbidden_faces = _forbidden_faces or set()
+
+        fii1 = set(vertex2faces[vi1])
+        fii2 = set(vertex2faces[vi2])
+
+        if fii1.intersection(forbidden_faces) or fii2.intersection(forbidden_faces):
+            return [], [], []
+
+        faces_overlap = fii1 & fii2
+        faces_to_adjust1 = fii1 - faces_overlap
+        faces_to_adjust2 = fii2 - faces_overlap
+
+        # Vertices that are on an edge with the two vertices to merge
+        secondary_verts1 = meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi1)
+        secondary_verts2 = meshfuncs.vertex_get_neighbours(faces, vertex2faces, vi2)
+
+        # Edges (represented here as vertices) that get collapsed
+        edges_being_collapsed = set(secondary_verts1) & set(secondary_verts2)
+
+        if len(faces_overlap) != 2:
+            return [], [], []
+        if len(edges_being_collapsed) != 2:
+            return [], [], []
+
+        def get_face_normals(sub_faces):
+            r1 = positions[sub_faces[:, 0], :]
+            r2 = positions[sub_faces[:, 1], :]
+            r3 = positions[sub_faces[:, 2], :]
+            face_normals = np.cross((r2 - r1), (r3 - r1))  # assumes CCW
+            norms = np.linalg.norm(face_normals, axis=1)
+            (zeros,) = np.where(norms == 0)
+            norms[zeros] = 1.0  # prevent divide-by-zero
+            face_normals /= norms[:, np.newaxis]
+            face_normals[zeros] = 0.0
+            return face_normals
+
+        normals1 = get_face_normals(faces[list(faces_to_adjust1)])
+        normals2 = get_face_normals(faces[list(faces_to_adjust2)])
+
+        options = []
+
+        # Option 1: remove vi1
+        vertices_to_remove = [vi1]
+        faces_to_remove = list(fii1)
+        face_to_add = []
+        for fi in faces_to_adjust1:
+            a, b, c = faces[fi]
+            if a == vi1:
+                face_to_add.append((vi2, b, c))
+            elif b == vi1:
+                face_to_add.append((a, vi2, c))
+            elif c == vi1:
+                face_to_add.append((a, b, vi2))
+            else:
+                assert False, "WTF"
+        # Measure score
+        normals1_new = get_face_normals(np.array(face_to_add, np.int32))
+        score = 1 / (la.vec_angle(normals1, normals1_new).max() + 1e-9)
+        options.append((score, vertices_to_remove, faces_to_remove, face_to_add))
+
+        # Option 2: remove vi2
+        vertices_to_remove = [vi2]
+        faces_to_remove = list(fii2)
+        face_to_add = []
+        for fi in faces_to_adjust2:
+            a, b, c = faces[fi]
+            if a == vi2:
+                face_to_add.append((vi1, b, c))
+            elif b == vi2:
+                face_to_add.append((a, vi1, c))
+            elif c == vi2:
+                face_to_add.append((a, b, vi1))
+            else:
+                assert False, "WTF"
+        # Measure score
+        normals2_new = get_face_normals(np.array(face_to_add, np.int32))
+        score = 1 / (la.vec_angle(normals2, normals2_new).max() + 1e-9)
+        options.append((score, vertices_to_remove, faces_to_remove, face_to_add))
+
+        # todo: Option 3: pick a point (somewhere) in between vi1 and vi2
+
+        # Select the best option (with the highest score)
+        options.sort()
+        return options[-1][1:]
 
     # todo: naming things .. we already have pop_vertices!
 
