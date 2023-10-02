@@ -26,13 +26,13 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     def new_faces_buffer(self, mesh):
         self.indices = gfx.Buffer(mesh.faces.base)
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         old_n = self._nfaces
         self._nfaces += len(faces)
         self.indices.update_range(old_n, len(faces))
         self.indices.draw_range = 0, self._nfaces
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         self._nfaces -= n
         self.indices.draw_range = 0, self._nfaces
 
@@ -46,12 +46,12 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         first, last = indices.min(), indices.max()
         self.indices.update_range(first, last - first + 1)
 
-    def add_vertices(self, positions):
+    def create_vertices(self, positions):
         old_n = self._nverts
         self._nverts += len(positions)
         self.positions.update_range(old_n, len(positions))
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         self._nverts -= n
 
     def swap_vertices(self, indices1, indices2):

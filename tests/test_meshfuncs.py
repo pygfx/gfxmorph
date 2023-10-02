@@ -345,7 +345,7 @@ def test_mesh_fill_holes_tricky():
             new_faces = meshfuncs.mesh_fill_hole(
                 m.positions, m.faces, m.vertex2faces, contour, method
             )
-            m.add_faces(new_faces)
+            m.create_faces(new_faces)
 
             assert m.is_edge_manifold
             # is not vertex-manifold, because we added a loose face
@@ -363,7 +363,7 @@ def test_mesh_fill_holes_tricky():
             new_faces = meshfuncs.mesh_fill_hole(
                 m.positions, m.faces, m.vertex2faces, contour, method
             )
-            m.add_faces(new_faces)
+            m.create_faces(new_faces)
 
             assert m.is_edge_manifold
             # is not vertex-manifold, because we added a lose face

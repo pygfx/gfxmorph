@@ -40,14 +40,14 @@ class CustomChangeTracker(MeshChangeTracker):
         self.normals_buf1 = mesh.normals.base
         self.normals_buf2 = self.normals_buf1.copy()
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         new_n = len(self.faces) + len(faces)
         self.faces = self.faces_buf2[:new_n]
         self.faces[-len(faces) :] = faces
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         assert isinstance(n, int)
         new_n = len(self.faces) - n
         self.faces = self.faces_buf2[:new_n]
@@ -66,7 +66,7 @@ class CustomChangeTracker(MeshChangeTracker):
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def add_vertices(self, positions):
+    def create_vertices(self, positions):
         old_n = len(self.positions)
         new_n = old_n + len(positions)
         self.positions = self.positions_buf2[:new_n]
@@ -76,7 +76,7 @@ class CustomChangeTracker(MeshChangeTracker):
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         assert isinstance(n, int)
         new_len = len(self.positions) - n
         self.positions = self.positions_buf2[:new_len]
@@ -168,14 +168,14 @@ def test_dynamicmesh_init():
     check_mesh(m, 0, 0)
 
     # Add data
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     check_mesh(m, len(vertices), len(faces))
 
     # Add another mesh
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     check_mesh(m, len(vertices) * 2, len(faces) * 2)
 
@@ -196,14 +196,14 @@ def test_dynamicmesh_broken_tracker():
     check_mesh(m, 0, 0)
 
     # Add data
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     check_mesh(m, len(vertices), len(faces))
 
     # Add another mesh
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     # Update some verts and faces
     m.update_vertices([0, 1], m.positions[[0, 1]] * 1.1)
@@ -234,11 +234,11 @@ def test_dynamicmesh_tracker_mechanics():
         def init(self, mesh):
             self.nvertices = len(mesh.positions)
 
-        def add_vertices(self, indices):
+        def create_vertices(self, indices):
             self.count += 1
             self.nvertices += len(indices)
 
-        def pop_vertices(self, n):
+        def delete_last_vertices(self, n):
             self.nvertices -= n
 
     t1 = Tracker()
@@ -247,8 +247,8 @@ def test_dynamicmesh_tracker_mechanics():
     # Add t1
     m.track_changes(t1)
 
-    m.add_vertices([(1, 1, 1)])
-    m.add_vertices([(1, 1, 1)])
+    m.create_vertices([(1, 1, 1)])
+    m.create_vertices([(1, 1, 1)])
     assert t1.count == 2
     assert t2.count == 0
     assert t1.nvertices == 2
@@ -257,7 +257,7 @@ def test_dynamicmesh_tracker_mechanics():
     # Also add t2
     m.track_changes(t2)
 
-    m.add_vertices([(2, 2, 2), (2, 2, 2)])
+    m.create_vertices([(2, 2, 2), (2, 2, 2)])
     assert t1.count == 3
     assert t2.count == 1
     assert t1.nvertices == 4
@@ -266,7 +266,7 @@ def test_dynamicmesh_tracker_mechanics():
     # Remove t1, so only tracking with t2
     m.track_changes(t1, remove=True)
 
-    m.add_vertices([(3, 3, 3), (3, 3, 3)])
+    m.create_vertices([(3, 3, 3), (3, 3, 3)])
     assert t1.count == 3
     assert t2.count == 2
     assert t1.nvertices == 4
@@ -276,7 +276,7 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t1)
     m.track_changes(t1)
 
-    m.add_vertices([(4, 4, 4), (4, 4, 4)])
+    m.create_vertices([(4, 4, 4), (4, 4, 4)])
     assert t1.count == 4
     assert t2.count == 3
     assert t1.nvertices == 8
@@ -286,7 +286,7 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t1, remove=True)
     m.track_changes(t2, remove=True)
 
-    m.add_vertices([(5, 5, 5), (5, 5, 5)])
+    m.create_vertices([(5, 5, 5), (5, 5, 5)])
     assert t1.count == 4
     assert t2.count == 3
     assert t1.nvertices == 8
@@ -305,7 +305,7 @@ def test_dynamicmesh_reset():
 
     # Modify
     m.delete_faces([1, 2, 3])
-    m.add_vertices([(0, 0, 0), (1, 1, 1)])
+    m.create_vertices([(0, 0, 0), (1, 1, 1)])
 
     # Make a snapshot
     vertices2 = m.positions.copy()
@@ -324,8 +324,8 @@ def test_dynamicmesh_readonly():
     vertices, faces, _ = get_sphere()
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     with pytest.raises(ValueError):
         m.faces[0] = (0, 0, 0)
@@ -362,11 +362,11 @@ def test_dynamicmesh_verts_before_faces():
     # Cannot load faces before vertices
     m = DynamicMesh()
     with pytest.raises(ValueError):
-        m.add_faces(faces)
+        m.create_faces(faces)
 
     # Vertices first!
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
 
     # Cannot remove vertices before faces
     with pytest.raises(ValueError):
@@ -385,21 +385,21 @@ def test_dynamicmesh_add_and_delete_faces1():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
     check_mesh(m, 9, 3)
 
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
 
     # Fail add
     with pytest.raises(ValueError):
-        m.add_faces([1, 2, 3, 4])  # Must be (castable to) Nx3
+        m.create_faces([1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
-        m.add_faces([(0, -1, 2)])  # Out of bounds
+        m.create_faces([(0, -1, 2)])  # Out of bounds
     with pytest.raises(ValueError):
-        m.add_faces([(0, 999, 2)])  # Out of bounds
+        m.create_faces([(0, 999, 2)])  # Out of bounds
     with pytest.raises(ValueError):
-        m.add_faces(np.zeros((0, 3), np.int32))  # Cannot add zero faces
+        m.create_faces(np.zeros((0, 3), np.int32))  # Cannot add zero faces
 
     # Fail delete
     with pytest.raises(TypeError):
@@ -415,11 +415,11 @@ def test_dynamicmesh_add_and_delete_faces1():
 
     # Fail pop
     with pytest.raises(ValueError):
-        m.pop_faces(-1)  # Must be positive
+        m.delete_last_faces(-1)  # Must be positive
     with pytest.raises(ValueError):
-        m.pop_faces(0)  # and nonzero
+        m.delete_last_faces(0)  # and nonzero
     with pytest.raises(ValueError):
-        m.pop_faces(999)  # and within bounds
+        m.delete_last_faces(999)  # and within bounds
 
     # Fail swap
     with pytest.raises(ValueError):
@@ -436,7 +436,7 @@ def test_dynamicmesh_add_and_delete_faces1():
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (3, 4, 5)]
 
-    m.add_faces([(0, 1, 2)])
+    m.create_faces([(0, 1, 2)])
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (3, 4, 5), (0, 1, 2)]
 
@@ -446,7 +446,7 @@ def test_dynamicmesh_add_and_delete_faces1():
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (0, 1, 2)]
 
-    m.add_faces([(3, 4, 5)])
+    m.create_faces([(3, 4, 5)])
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (0, 1, 2), (3, 4, 5)]
 
@@ -456,7 +456,7 @@ def test_dynamicmesh_add_and_delete_faces1():
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (0, 1, 2)]
 
-    m.add_faces([(3, 4, 5)])
+    m.create_faces([(3, 4, 5)])
 
     assert [tuple(x) for x in m.faces] == [(6, 7, 8), (0, 1, 2), (3, 4, 5)]
 
@@ -475,49 +475,49 @@ def test_dynamicmesh_add_and_delete_faces2():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
     check_mesh(m, 20, 3)
 
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
 
     # Fail add
     with pytest.raises(ValueError):
-        m.delete_and_add_faces([], [1, 2, 3, 4])  # Must be (castable to) Nx3
+        m.delete_and_create_faces([], [1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
-        m.delete_and_add_faces([], [(0, -1, 2)])  # Out of bounds
+        m.delete_and_create_faces([], [(0, -1, 2)])  # Out of bounds
     with pytest.raises(ValueError):
-        m.delete_and_add_faces([], [(0, 999, 2)])  # Out of bounds
+        m.delete_and_create_faces([], [(0, 999, 2)])  # Out of bounds
 
     # Fail delete
     with pytest.raises(TypeError):
-        m.delete_and_add_faces({1, 2, 3}, [])  # Need list or ndarray
+        m.delete_and_create_faces({1, 2, 3}, [])  # Need list or ndarray
     with pytest.raises(ValueError):
-        m.delete_and_add_faces([0, -1], [])  # Out of bounds
+        m.delete_and_create_faces([0, -1], [])  # Out of bounds
     with pytest.raises(ValueError):
-        m.delete_and_add_faces([0, 999], [])  # Out of bounds
+        m.delete_and_create_faces([0, 999], [])  # Out of bounds
 
     # But we can delete / add zero faces!!
-    m.delete_and_add_faces([], np.zeros((0, 3), np.int32))
-    m.delete_and_add_faces(np.zeros((0,), np.int32), [])
-    m.delete_and_add_faces([], [])
+    m.delete_and_create_faces([], np.zeros((0, 3), np.int32))
+    m.delete_and_create_faces(np.zeros((0,), np.int32), [])
+    m.delete_and_create_faces([], [])
 
     # Should still be the same (or atomicity would be broken)
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
 
     # delete one, add one
 
-    m.delete_and_add_faces([0], [(11, 12, 13)])
+    m.delete_and_create_faces([0], [(11, 12, 13)])
     assert [tuple(x) for x in m.faces] == [(11, 12, 13), (3, 4, 5), (6, 7, 8)]
 
     # delete two, add one (duplicates don't matter)
 
-    m.delete_and_add_faces([0, 0, 1, 1], [(14, 15, 16)])
+    m.delete_and_create_faces([0, 0, 1, 1], [(14, 15, 16)])
     assert [tuple(x) for x in m.faces] == [(14, 15, 16), (6, 7, 8)]
 
     # delete one, add two
 
-    m.delete_and_add_faces([0], [(0, 1, 2), (3, 4, 5)])  # int is allowed
+    m.delete_and_create_faces([0], [(0, 1, 2), (3, 4, 5)])  # int is allowed
     assert [tuple(x) for x in m.faces] == [(0, 1, 2), (6, 7, 8), (3, 4, 5)]
 
 
@@ -526,8 +526,8 @@ def test_dynamicmesh_update_faces():
     faces = [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
     check_mesh(m, 12, 4)
 
     m.update_faces([1, 3], [(7, 7, 7), (8, 8, 8)])
@@ -557,7 +557,7 @@ def test_dynamicmesh_update_vertices():
     vertices = [[i, i, i] for i in range(10)]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     check_mesh(m, 10, 0)
 
     assert [x[0] for x in m.positions] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -584,17 +584,17 @@ def test_dynamicmesh_add_and_delete_verts():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
-    m.add_faces(faces)
+    m.create_vertices(vertices)
+    m.create_faces(faces)
     check_mesh(m, 10, 3)
 
     assert [x[0] for x in m.positions] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     # Fail add
     with pytest.raises(ValueError):
-        m.add_vertices([1, 2, 3, 4])  # Must be (castable to) Nx3
+        m.create_vertices([1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
-        m.add_vertices(np.zeros((0, 3), np.float32))  # Cannot add zero verts
+        m.create_vertices(np.zeros((0, 3), np.float32))  # Cannot add zero verts
 
     # Fail delete
     with pytest.raises(TypeError):
@@ -610,11 +610,11 @@ def test_dynamicmesh_add_and_delete_verts():
 
     # Fail pop
     with pytest.raises(ValueError):
-        m.pop_vertices(-1)  # Must be positive
+        m.delete_last_vertices(-1)  # Must be positive
     with pytest.raises(ValueError):
-        m.pop_vertices(0)  # and nonzero
+        m.delete_last_vertices(0)  # and nonzero
     with pytest.raises(ValueError):
-        m.pop_vertices(999)  # and within bounds
+        m.delete_last_vertices(999)  # and within bounds
 
     # Fail swap
     with pytest.raises(ValueError):
@@ -635,7 +635,7 @@ def test_dynamicmesh_add_and_delete_verts():
     with pytest.raises(ValueError):
         m.delete_vertices([8])
     with pytest.raises(ValueError):
-        m.pop_vertices(3)
+        m.delete_last_vertices(3)
 
     m.delete_faces([0, 1, 2])
 
@@ -654,30 +654,30 @@ def test_dynamicmesh_alloc_and_dealloc_vertices():
 
     # Put in a few vertices
     for i in range(8):
-        m.add_vertices([(i, i, i)])
+        m.create_vertices([(i, i, i)])
 
     assert len(m.positions) == 8
     assert len(m._positions_buf) == 8
 
     # It uses factors of 2
-    m.add_vertices([(0, 0, 0)])
+    m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 9
     assert len(m._positions_buf) == 16
 
     # Another round
     for i in range(8):
-        m.add_vertices([(0, 0, 0)])
+        m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 17
     assert len(m._positions_buf) == 32
 
     # Fill it all the way up ...
     for i in range(15):
-        m.add_vertices([(0, 0, 0)])
+        m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 32
     assert len(m._positions_buf) == 32
 
     # Now it re-allocates
-    m.add_vertices([(0, 0, 0)])
+    m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 33
     assert len(m._positions_buf) == 64
 
@@ -718,34 +718,34 @@ def test_dynamicmesh_alloc_and_dealloc_faces():
     m = DynamicMesh()
 
     # Add some vertices to reference in the faces
-    m.add_vertices([(0, 0, 0) for i in range(100)])
+    m.create_vertices([(0, 0, 0) for i in range(100)])
 
     # Put in a few faces
     for i in range(8):
-        m.add_faces([(i, i, i)])
+        m.create_faces([(i, i, i)])
 
     assert len(m.faces) == 8
     assert len(m._faces_buf) == 8
 
     # It uses factors of 2
-    m.add_faces([(0, 0, 0)])
+    m.create_faces([(0, 0, 0)])
     assert len(m.faces) == 9
     assert len(m._faces_buf) == 16
 
     # Another round
     for i in range(8):
-        m.add_faces([(0, 0, 0)])
+        m.create_faces([(0, 0, 0)])
     assert len(m.faces) == 17
     assert len(m._faces_buf) == 32
 
     # Fill it all the way up ...
     for i in range(15):
-        m.add_faces([(0, 0, 0)])
+        m.create_faces([(0, 0, 0)])
     assert len(m.faces) == 32
     assert len(m._faces_buf) == 32
 
     # Now it re-allocates
-    m.add_faces([(0, 0, 0)])
+    m.create_faces([(0, 0, 0)])
     assert len(m.faces) == 33
     assert len(m._faces_buf) == 64
 

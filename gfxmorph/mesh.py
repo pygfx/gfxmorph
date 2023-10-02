@@ -204,8 +204,8 @@ class DynamicMesh(BaseDynamicMesh):
                 )
 
         vertex_index_offset = len(self._positions)
-        self.add_vertices(positions)
-        self.add_faces(faces + vertex_index_offset)
+        self.create_vertices(positions)
+        self.create_faces(faces + vertex_index_offset)
 
     # %% Low level modifications
 
@@ -348,7 +348,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Changes to make the mesh more coarse
         for vi in vertices_to_pop:
             try:
-                r_verts, r_faces, a_faces = self._erase_vertex(vi, faces_to_remove)
+                r_verts, r_faces, a_faces = self._remove_vertex(vi, faces_to_remove)
             except RuntimeError as err:
                 logger.warning(str(err))
                 continue
@@ -361,7 +361,7 @@ class DynamicMesh(BaseDynamicMesh):
             faces_to_add.extend(a_faces)
 
         for vi1, vi2 in edges_to_merge:
-            r_verts, r_faces, a_faces = self._merge_edge(vi1, vi2)
+            r_verts, r_faces, a_faces = self._collapse_edge(vi1, vi2)
             if vertices_to_remove.intersection(r_verts):
                 continue
             if faces_to_remove.intersection(r_faces):
@@ -384,8 +384,8 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Apply changes
         if len(vertices_to_add) > 0:
-            self.add_vertices(vertices_to_add)
-        self.delete_and_add_faces(list(faces_to_remove), faces_to_add)
+            self.create_vertices(vertices_to_add)
+        self.delete_and_create_faces(list(faces_to_remove), faces_to_add)
         if len(vertices_to_remove) > 0:
             self.delete_vertices(list(vertices_to_remove))
 
@@ -404,9 +404,9 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Apply changes
         if len(vertices_to_add) > 0:
-            self.add_vertices(vertices_to_add)
+            self.create_vertices(vertices_to_add)
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
@@ -496,15 +496,15 @@ class DynamicMesh(BaseDynamicMesh):
 
         return [new_position], faces2split, new_faces
 
-    def merge_edge(self, vi1, vi2):
-        """Remove the given edge.
+    def collapse_edge(self, vi1, vi2):
+        """Remove the given edge by merging vi1 and vi2.
 
         This removes the edge between vi1 and vi2, and the two faces
         that contain that edge. Results in 1 less vertex, 2 less faces,
         3 less edges.
         """
         # Do the algorithmic
-        vertices_to_remove, faces_to_remove, faces_to_add = self._merge_edge(
+        vertices_to_remove, faces_to_remove, faces_to_add = self._collapse_edge(
             vi1, vi2, len(self.positions)
         )
 
@@ -512,11 +512,11 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_remove) > 0:
             self.remove_vertices(vertices_to_remove)
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
-    def _merge_edge(self, vi1, vi2, _forbidden_faces=None):
+    def _collapse_edge(self, vi1, vi2, _forbidden_faces=None):
         positions = self.positions
         faces = self.faces
         vertex2faces = self.vertex2faces
@@ -606,9 +606,7 @@ class DynamicMesh(BaseDynamicMesh):
         options.sort()
         return options[-1][1:]
 
-    # todo: naming things .. we already have pop_vertices!
-
-    def erase_vertex(self, vi, delete_vertex=True):
+    def remove_vertex(self, vi, delete_vertex=True):
         """Remove the given vertex and fill up the hole.
 
         If removing the vertex creates a hole (i.e. it is not on a
@@ -624,20 +622,20 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Do the algorithmic
         try:
-            vertices_to_remove, faces_to_remove, faces_to_add = self._erase_vertex(vi)
+            vertices_to_remove, faces_to_remove, faces_to_add = self._remove_vertex(vi)
         except RuntimeError as err:
             logger.warning(str(err))
             return
 
         # Apply changes
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
         if len(vertices_to_remove) > 0:
             self.delete_vertices(vertices_to_remove)
 
-    def _erase_vertex(self, vi, _faces_that_no_longer_exist=None):
+    def _remove_vertex(self, vi, _faces_that_no_longer_exist=None):
         # This code:
         #
         # - Obtains the faces incident to the vertex to remove.
@@ -821,7 +819,7 @@ class DynamicMesh(BaseDynamicMesh):
                 assert len(groups) >= 2
                 for face_indices in groups[1:]:
                     # Add vertex
-                    self.add_vertices([self._positions[vi]])
+                    self.create_vertices([self._positions[vi]])
                     vi2 = len(self._positions) - 1
                     # Update faces
                     faces = self.faces[face_indices, :]
@@ -949,7 +947,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Apply
         if new_faces_list:
             new_faces = np.concatenate(new_faces_list)
-            self.add_faces(new_faces)
+            self.create_faces(new_faces)
             return len(new_faces)
         else:
             return 0
