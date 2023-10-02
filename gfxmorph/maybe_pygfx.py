@@ -26,7 +26,7 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
     def new_faces_buffer(self, mesh):
         self.indices = gfx.Buffer(mesh.faces.base)
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         old_n = self._nfaces
         self._nfaces += len(faces)
         self.indices.update_range(old_n, len(faces))

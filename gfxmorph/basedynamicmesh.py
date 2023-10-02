@@ -386,9 +386,9 @@ class BaseDynamicMesh:
         if positions is not None:
             self.add_vertices(positions)
         if faces is not None:
-            self.add_faces(faces)
+            self.create_faces(faces)
 
-    def delete_and_add_faces(self, face_indices, new_faces):
+    def delete_and_create_faces(self, face_indices, new_faces):
         """Delete and add faces.
 
         The faces with indices `face_indices` are deleted, and the `new_faces`
@@ -415,7 +415,7 @@ class BaseDynamicMesh:
         if n_delete - n_reuse > 0:
             self.delete_faces(indices[n_reuse:])
         if n_add - n_reuse > 0:
-            self.add_faces(faces[n_reuse:])
+            self.create_faces(faces[n_reuse:])
 
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
@@ -513,7 +513,7 @@ class BaseDynamicMesh:
 
     # %% The core API
 
-    def add_faces(self, new_faces):
+    def create_faces(self, new_faces):
         """Add the given faces to the mesh.
 
         The faces must reference existing vertices.
@@ -560,7 +560,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.add_faces(faces)
+                tracker.create_faces(faces)
         self._after_change()
 
     def delete_last_faces(self, n, _old=None):

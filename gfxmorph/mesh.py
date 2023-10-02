@@ -205,7 +205,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         vertex_index_offset = len(self._positions)
         self.add_vertices(positions)
-        self.add_faces(faces + vertex_index_offset)
+        self.create_faces(faces + vertex_index_offset)
 
     # %% Low level modifications
 
@@ -385,7 +385,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Apply changes
         if len(vertices_to_add) > 0:
             self.add_vertices(vertices_to_add)
-        self.delete_and_add_faces(list(faces_to_remove), faces_to_add)
+        self.delete_and_create_faces(list(faces_to_remove), faces_to_add)
         if len(vertices_to_remove) > 0:
             self.delete_vertices(list(vertices_to_remove))
 
@@ -406,7 +406,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_add) > 0:
             self.add_vertices(vertices_to_add)
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
@@ -512,7 +512,7 @@ class DynamicMesh(BaseDynamicMesh):
         if len(vertices_to_remove) > 0:
             self.remove_vertices(vertices_to_remove)
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
 
@@ -629,7 +629,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Apply changes
         if len(faces_to_add) > 0:
-            self.add_faces(faces_to_add)
+            self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
             self.delete_faces(faces_to_remove)
         if len(vertices_to_remove) > 0:
@@ -947,7 +947,7 @@ class DynamicMesh(BaseDynamicMesh):
         # Apply
         if new_faces_list:
             new_faces = np.concatenate(new_faces_list)
-            self.add_faces(new_faces)
+            self.create_faces(new_faces)
             return len(new_faces)
         else:
             return 0

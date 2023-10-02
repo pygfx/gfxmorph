@@ -28,10 +28,10 @@ class MeshChangeTracker:
 
     # API that is the same as changes to BaseDynamicMesh, except for the `old` argument
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         """Called when faces are added to the mesh.
 
-        Same signature as ``DynamicMesh.add_faces``.
+        Same signature as ``DynamicMesh.create_faces``.
         """
         pass
 
@@ -134,7 +134,7 @@ class MeshLogger(MeshChangeTracker):
     def __init__(self, print_func):
         self.print = print_func
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         self.print(f"Adding {len(faces)} faces.")
 
     def delete_last_faces(self, n, old):
@@ -180,11 +180,11 @@ class MeshUndoTracker(MeshChangeTracker):
             self._stack_level = 0
             self.commit()
 
-    def add_faces(self, faces):
+    def create_faces(self, faces):
         self._append(("delete_last_faces", len(faces)))
 
     def delete_last_faces(self, n, old):
-        self._append(("add_faces", old))
+        self._append(("create_faces", old))
 
     def swap_faces(self, indices1, indices2):
         self._append(("swap_faces", indices2, indices1))
@@ -356,11 +356,11 @@ class MeshUndoTracker(MeshChangeTracker):
 #                     self._redo.clear()
 #                 self._stack = None
 #
-#     def add_faces(self, faces):
+#     def create_faces(self, faces):
 #         self._append(("delete_last_faces", len(faces)))
 #
 #     def delete_last_faces(self, n, old):
-#         self._append(("add_faces", old))
+#         self._append(("create_faces", old))
 #
 #     def swap_faces(self, indices1, indices2):
 #         self._append(("swap_faces", indices2, indices1))

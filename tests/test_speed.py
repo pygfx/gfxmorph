@@ -96,7 +96,7 @@ def benchmark():
             m.add_vertices(vertices)
             t.toc(f"add vertices")
             t.tic()
-            m.add_faces(faces)
+            m.create_faces(faces)
             t.toc(f"add faces")
 
             t.tic()
