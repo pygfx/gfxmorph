@@ -518,6 +518,10 @@ class BaseDynamicMesh:
 
     # %% The core API
 
+    # These are low-level methods. Let's keep the terminology clear and simple,
+    # to avoid confution with higher-level methods in subclasses:
+    # create, delete, swap, update.
+
     def create_faces(self, new_faces):
         """Create new faces for the mesh.
 
