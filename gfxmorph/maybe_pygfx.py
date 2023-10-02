@@ -46,7 +46,7 @@ class DynamicMeshGeometry(gfx.Geometry, MeshChangeTracker):
         first, last = indices.min(), indices.max()
         self.indices.update_range(first, last - first + 1)
 
-    def add_vertices(self, positions):
+    def create_vertices(self, positions):
         old_n = self._nverts
         self._nverts += len(positions)
         self.positions.update_range(old_n, len(positions))

@@ -384,7 +384,7 @@ class BaseDynamicMesh:
         """Reset the vertices and faces, e.g. from an export."""
         self.clear()
         if positions is not None:
-            self.add_vertices(positions)
+            self.create_vertices(positions)
         if faces is not None:
             self.create_faces(faces)
 
@@ -728,7 +728,7 @@ class BaseDynamicMesh:
                 tracker.update_faces(indices, faces, old_faces)
         self._after_change()
 
-    def add_vertices(self, new_positions):
+    def create_vertices(self, new_positions):
         """Add the given vertices to the mesh."""
         vertex2faces = self._vertex2faces
 
@@ -761,7 +761,7 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.add_vertices(positions)
+                tracker.create_vertices(positions)
         self._after_change()
 
     def delete_last_vertices(self, n, _old=None):

@@ -93,7 +93,7 @@ def benchmark():
             m.delete_last_vertices(len(m.positions))
             t.toc(f"pop vertices")
             t.tic()
-            m.add_vertices(vertices)
+            m.create_vertices(vertices)
             t.toc(f"add vertices")
             t.tic()
             m.create_faces(faces)

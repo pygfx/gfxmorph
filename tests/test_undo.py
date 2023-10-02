@@ -15,11 +15,11 @@ def test_undo_single_changes():
 
     # Three actions
     with undo:
-        m.add_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
     with undo:
-        m.add_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
     with undo:
-        m.add_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
 
     # Undo
     assert len(m.positions) == 3
@@ -59,9 +59,9 @@ def test_undo_with_context():
 
     # Three actions resulting in one undo
     with undo:
-        m.add_vertices([[0, 0, 0]])
-        m.add_vertices([[0, 0, 0]])
-        m.add_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
 
     # Undo / redo
     assert len(m.positions) == 3
@@ -78,10 +78,10 @@ def test_undo_with_context():
 
     # Can be stacked ...
     with undo:
-        m.add_vertices([[0, 0, 0]])
+        m.create_vertices([[0, 0, 0]])
         with undo:
-            m.add_vertices([[0, 0, 0]])
-            m.add_vertices([[0, 0, 0]])
+            m.create_vertices([[0, 0, 0]])
+            m.create_vertices([[0, 0, 0]])
             undo.commit()  # <--  See a commit here
 
     # ... but ignores anything but the top level, including (accidental) commits
@@ -110,15 +110,15 @@ def test_undo_cancel():
     m.track_changes(undo)
 
     # Commit 2 actions
-    m.add_vertices([[0, 0, 0]])
-    m.add_vertices([[0, 0, 0]])
+    m.create_vertices([[0, 0, 0]])
+    m.create_vertices([[0, 0, 0]])
     v = undo.commit()
     assert v == 1
     assert undo.get_version() == 1
     assert not undo.has_pending_changes()
 
     # Make an action, no commit
-    m.add_vertices([[0, 0, 0]])
+    m.create_vertices([[0, 0, 0]])
 
     assert undo.get_version() == 1
     assert undo.has_pending_changes()
@@ -129,13 +129,13 @@ def test_undo_cancel():
     assert not undo.has_pending_changes()
 
     # Undo discarts pending changes
-    m.add_vertices([[0, 0, 0]])
+    m.create_vertices([[0, 0, 0]])
     undo.undo(m)
     assert undo.get_version() == 0
     assert not undo.has_pending_changes()
 
     # Redo does too
-    m.add_vertices([[0, 0, 0]])
+    m.create_vertices([[0, 0, 0]])
     undo.redo(m)
     assert undo.get_version() == 1
     assert not undo.has_pending_changes()
@@ -248,7 +248,7 @@ def test_undo_repeated_vertex_updates():
     m.track_changes(undo)
 
     # Add some vertices
-    m.add_vertices([[1, 1, 1] for i in range(10)])
+    m.create_vertices([[1, 1, 1] for i in range(10)])
     v = undo.commit()
     assert v == 1
 

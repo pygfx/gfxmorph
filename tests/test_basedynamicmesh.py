@@ -66,7 +66,7 @@ class CustomChangeTracker(MeshChangeTracker):
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def add_vertices(self, positions):
+    def create_vertices(self, positions):
         old_n = len(self.positions)
         new_n = old_n + len(positions)
         self.positions = self.positions_buf2[:new_n]
@@ -168,13 +168,13 @@ def test_dynamicmesh_init():
     check_mesh(m, 0, 0)
 
     # Add data
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     check_mesh(m, len(vertices), len(faces))
 
     # Add another mesh
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     check_mesh(m, len(vertices) * 2, len(faces) * 2)
@@ -196,13 +196,13 @@ def test_dynamicmesh_broken_tracker():
     check_mesh(m, 0, 0)
 
     # Add data
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     check_mesh(m, len(vertices), len(faces))
 
     # Add another mesh
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     # Update some verts and faces
@@ -234,7 +234,7 @@ def test_dynamicmesh_tracker_mechanics():
         def init(self, mesh):
             self.nvertices = len(mesh.positions)
 
-        def add_vertices(self, indices):
+        def create_vertices(self, indices):
             self.count += 1
             self.nvertices += len(indices)
 
@@ -247,8 +247,8 @@ def test_dynamicmesh_tracker_mechanics():
     # Add t1
     m.track_changes(t1)
 
-    m.add_vertices([(1, 1, 1)])
-    m.add_vertices([(1, 1, 1)])
+    m.create_vertices([(1, 1, 1)])
+    m.create_vertices([(1, 1, 1)])
     assert t1.count == 2
     assert t2.count == 0
     assert t1.nvertices == 2
@@ -257,7 +257,7 @@ def test_dynamicmesh_tracker_mechanics():
     # Also add t2
     m.track_changes(t2)
 
-    m.add_vertices([(2, 2, 2), (2, 2, 2)])
+    m.create_vertices([(2, 2, 2), (2, 2, 2)])
     assert t1.count == 3
     assert t2.count == 1
     assert t1.nvertices == 4
@@ -266,7 +266,7 @@ def test_dynamicmesh_tracker_mechanics():
     # Remove t1, so only tracking with t2
     m.track_changes(t1, remove=True)
 
-    m.add_vertices([(3, 3, 3), (3, 3, 3)])
+    m.create_vertices([(3, 3, 3), (3, 3, 3)])
     assert t1.count == 3
     assert t2.count == 2
     assert t1.nvertices == 4
@@ -276,7 +276,7 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t1)
     m.track_changes(t1)
 
-    m.add_vertices([(4, 4, 4), (4, 4, 4)])
+    m.create_vertices([(4, 4, 4), (4, 4, 4)])
     assert t1.count == 4
     assert t2.count == 3
     assert t1.nvertices == 8
@@ -286,7 +286,7 @@ def test_dynamicmesh_tracker_mechanics():
     m.track_changes(t1, remove=True)
     m.track_changes(t2, remove=True)
 
-    m.add_vertices([(5, 5, 5), (5, 5, 5)])
+    m.create_vertices([(5, 5, 5), (5, 5, 5)])
     assert t1.count == 4
     assert t2.count == 3
     assert t1.nvertices == 8
@@ -305,7 +305,7 @@ def test_dynamicmesh_reset():
 
     # Modify
     m.delete_faces([1, 2, 3])
-    m.add_vertices([(0, 0, 0), (1, 1, 1)])
+    m.create_vertices([(0, 0, 0), (1, 1, 1)])
 
     # Make a snapshot
     vertices2 = m.positions.copy()
@@ -324,7 +324,7 @@ def test_dynamicmesh_readonly():
     vertices, faces, _ = get_sphere()
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     with pytest.raises(ValueError):
@@ -365,7 +365,7 @@ def test_dynamicmesh_verts_before_faces():
         m.create_faces(faces)
 
     # Vertices first!
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
 
     # Cannot remove vertices before faces
@@ -385,7 +385,7 @@ def test_dynamicmesh_add_and_delete_faces1():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
     check_mesh(m, 9, 3)
 
@@ -475,7 +475,7 @@ def test_dynamicmesh_add_and_delete_faces2():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
     check_mesh(m, 20, 3)
 
@@ -526,7 +526,7 @@ def test_dynamicmesh_update_faces():
     faces = [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
     check_mesh(m, 12, 4)
 
@@ -557,7 +557,7 @@ def test_dynamicmesh_update_vertices():
     vertices = [[i, i, i] for i in range(10)]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     check_mesh(m, 10, 0)
 
     assert [x[0] for x in m.positions] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -584,7 +584,7 @@ def test_dynamicmesh_add_and_delete_verts():
     faces = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
 
     m = DynamicMesh()
-    m.add_vertices(vertices)
+    m.create_vertices(vertices)
     m.create_faces(faces)
     check_mesh(m, 10, 3)
 
@@ -592,9 +592,9 @@ def test_dynamicmesh_add_and_delete_verts():
 
     # Fail add
     with pytest.raises(ValueError):
-        m.add_vertices([1, 2, 3, 4])  # Must be (castable to) Nx3
+        m.create_vertices([1, 2, 3, 4])  # Must be (castable to) Nx3
     with pytest.raises(ValueError):
-        m.add_vertices(np.zeros((0, 3), np.float32))  # Cannot add zero verts
+        m.create_vertices(np.zeros((0, 3), np.float32))  # Cannot add zero verts
 
     # Fail delete
     with pytest.raises(TypeError):
@@ -654,30 +654,30 @@ def test_dynamicmesh_alloc_and_dealloc_vertices():
 
     # Put in a few vertices
     for i in range(8):
-        m.add_vertices([(i, i, i)])
+        m.create_vertices([(i, i, i)])
 
     assert len(m.positions) == 8
     assert len(m._positions_buf) == 8
 
     # It uses factors of 2
-    m.add_vertices([(0, 0, 0)])
+    m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 9
     assert len(m._positions_buf) == 16
 
     # Another round
     for i in range(8):
-        m.add_vertices([(0, 0, 0)])
+        m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 17
     assert len(m._positions_buf) == 32
 
     # Fill it all the way up ...
     for i in range(15):
-        m.add_vertices([(0, 0, 0)])
+        m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 32
     assert len(m._positions_buf) == 32
 
     # Now it re-allocates
-    m.add_vertices([(0, 0, 0)])
+    m.create_vertices([(0, 0, 0)])
     assert len(m.positions) == 33
     assert len(m._positions_buf) == 64
 
@@ -718,7 +718,7 @@ def test_dynamicmesh_alloc_and_dealloc_faces():
     m = DynamicMesh()
 
     # Add some vertices to reference in the faces
-    m.add_vertices([(0, 0, 0) for i in range(100)])
+    m.create_vertices([(0, 0, 0) for i in range(100)])
 
     # Put in a few faces
     for i in range(8):

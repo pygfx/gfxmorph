@@ -204,7 +204,7 @@ class DynamicMesh(BaseDynamicMesh):
                 )
 
         vertex_index_offset = len(self._positions)
-        self.add_vertices(positions)
+        self.create_vertices(positions)
         self.create_faces(faces + vertex_index_offset)
 
     # %% Low level modifications
@@ -384,7 +384,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Apply changes
         if len(vertices_to_add) > 0:
-            self.add_vertices(vertices_to_add)
+            self.create_vertices(vertices_to_add)
         self.delete_and_create_faces(list(faces_to_remove), faces_to_add)
         if len(vertices_to_remove) > 0:
             self.delete_vertices(list(vertices_to_remove))
@@ -404,7 +404,7 @@ class DynamicMesh(BaseDynamicMesh):
 
         # Apply changes
         if len(vertices_to_add) > 0:
-            self.add_vertices(vertices_to_add)
+            self.create_vertices(vertices_to_add)
         if len(faces_to_add) > 0:
             self.create_faces(faces_to_add)
         if len(faces_to_remove) > 0:
@@ -819,7 +819,7 @@ class DynamicMesh(BaseDynamicMesh):
                 assert len(groups) >= 2
                 for face_indices in groups[1:]:
                     # Add vertex
-                    self.add_vertices([self._positions[vi]])
+                    self.create_vertices([self._positions[vi]])
                     vi2 = len(self._positions) - 1
                     # Update faces
                     faces = self.faces[face_indices, :]
