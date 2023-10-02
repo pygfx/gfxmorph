@@ -374,7 +374,7 @@ class BaseDynamicMesh:
     # %% Convenience methods to modify the mesh
 
     def clear(self):
-        """Clear the mesh, removing all vertices and faces."""
+        """Clear the mesh, deleting all vertices and faces."""
         if len(self._faces):
             self.delete_last_faces(len(self._faces))
         if len(self._positions):
@@ -391,9 +391,12 @@ class BaseDynamicMesh:
     def delete_and_create_faces(self, face_indices, new_faces):
         """Delete and add faces.
 
-        The faces with indices `face_indices` are deleted, and the `new_faces`
-        are added. This convenience method re-uses slots of the faces to
-        delete, thereby minimizing the amount of changes to the mesh.
+        A convenient combination of ``delete_faces()``  and ``create_faces()``.
+        This is a low-level method to modify the mesh.
+
+        The faces with indices `face_indices` are deleted, and the
+        `new_faces` are added. This method re-uses slots of the faces
+        to delete, thereby minimizing the amount of changes to the mesh.
         """
 
         # --- Prepare / checks
@@ -420,6 +423,7 @@ class BaseDynamicMesh:
     def delete_faces(self, face_indices):
         """Delete the faces indicated by the given face indices.
 
+        This is a low-level method to modify the mesh.
         The deleted faces are replaced with faces from the end of the
         array (except for deleted faces that leave no holes because
         they are already at the end).
@@ -456,6 +460,7 @@ class BaseDynamicMesh:
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
 
+        This is a low-level method to modify the mesh.
         The deleted vertices are replaced with vertices from the end of the
         array (except for deleted vertices that leave no holes because
         they are already at the end).
@@ -514,8 +519,9 @@ class BaseDynamicMesh:
     # %% The core API
 
     def create_faces(self, new_faces):
-        """Add the given faces to the mesh.
+        """Create new faces for the mesh.
 
+        This is a low-level method to modify the mesh.
         The faces must reference existing vertices.
         """
         vertex2faces = self._vertex2faces
@@ -564,7 +570,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def delete_last_faces(self, n, _old=None):
-        """Delete the last n faces from the mesh."""
+        """Delete the last n faces from the mesh.
+
+        This is a low-level method to modify the mesh.
+        """
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -613,8 +622,8 @@ class BaseDynamicMesh:
     def swap_faces(self, face_indices1, face_indices2):
         """Swap the faces indicated by the given indices.
 
-        This is a low-level method used by e.g. ``delete_faces()`` to
-        move faces to the end of the array.
+        This is a low-level method to modify the mesh, used by e.g.
+        ``delete_faces()`` to move faces to the end of the array.
         """
 
         # Technically this can also be done with update_faces, but
@@ -675,7 +684,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def update_faces(self, face_indices, new_faces, _old=None):
-        """Update the value of the given faces."""
+        """Update the vertex-indices of the given faces.
+
+        This is a low-level method to modify the mesh.
+        """
 
         vertex2faces = self._vertex2faces
 
@@ -729,7 +741,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def create_vertices(self, new_positions):
-        """Add the given vertices to the mesh."""
+        """Create vertices at the given positions.
+
+        This is a low-level method to modify the mesh.
+        """
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -765,7 +780,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def delete_last_vertices(self, n, _old=None):
-        """Delete the last n vertices from the mesh."""
+        """Delete the last n vertices from the mesh.
+
+        This is a low-level method to modify the mesh.
+        """
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -810,10 +828,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def swap_vertices(self, vertex_indices1, vertex_indices2):
-        """Move the vertices indicated by the given indices.
+        """Swap the vertices indicated by the given indices.
 
-        This is a low-level method used by e.g. ``delete_vertices()`` to
-        move vertices to the end of the array.
+        This is a low-level method to modify the mesh, used by e.g.
+        ``delete_vertices()`` to move vertices to the end of the array.
         """
 
         vertex2faces = self._vertex2faces
@@ -866,7 +884,10 @@ class BaseDynamicMesh:
         self._after_change()
 
     def update_vertices(self, vertex_indices, new_positions, _old=None):
-        """Update the position of the given vertices."""
+        """Update the position of the given vertices.
+
+        This is a low-level method to modify the mesh.
+        """
 
         vertex2faces = self._vertex2faces
 
