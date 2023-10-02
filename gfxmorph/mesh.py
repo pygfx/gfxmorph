@@ -606,8 +606,6 @@ class DynamicMesh(BaseDynamicMesh):
         options.sort()
         return options[-1][1:]
 
-    # todo: naming things .. we already have pop_vertices!
-
     def erase_vertex(self, vi, delete_vertex=True):
         """Remove the given vertex and fill up the hole.
 

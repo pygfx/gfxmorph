@@ -87,10 +87,10 @@ def benchmark():
             t.toc(f"reset")
 
             t.tic()
-            m.pop_faces(len(m.faces))
+            m.delete_last_faces(len(m.faces))
             t.toc(f"pop faces")
             t.tic()
-            m.pop_vertices(len(m.positions))
+            m.delete_last_vertices(len(m.positions))
             t.toc(f"pop vertices")
             t.tic()
             m.add_vertices(vertices)

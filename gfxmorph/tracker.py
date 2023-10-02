@@ -35,12 +35,12 @@ class MeshChangeTracker:
         """
         pass
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         """Called when faces are are removed from the mesh.
 
-        Same signature as ``DynamicMesh.pop_faces``, except for the ``old`` arg.
+        Same signature as ``DynamicMesh.delete_last_faces``, except for the ``old`` arg.
         Note that calling ``delete_faces()`` on the mesh results in a
-        ``swap_faces()`` and a ``pop_faces()``.
+        ``swap_faces()`` and a ``delete_last_faces()``.
         """
         pass
 
@@ -65,12 +65,12 @@ class MeshChangeTracker:
         """
         pass
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         """Called when vertices are are removed from the mesh.
 
-        Same signature as ``DynamicMesh.pop_vertices``, except for the ``old`` arg.
+        Same signature as ``DynamicMesh.delete_last_vertices``, except for the ``old`` arg.
         Note that calling ``delete_vertices()`` on the mesh results in a
-        ``swap_vertices()`` and a ``pop_vertices()``.
+        ``swap_vertices()`` and a ``delete_last_vertices()``.
         """
         pass
 
@@ -137,7 +137,7 @@ class MeshLogger(MeshChangeTracker):
     def add_faces(self, faces):
         self.print(f"Adding {len(faces)} faces.")
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         self.print(f"Removing {n} faces.")
 
     def update_faces(self, indices, faces, old):
@@ -146,7 +146,7 @@ class MeshLogger(MeshChangeTracker):
     def add_vertices(self, positions):
         self.print(f"Adding {len(positions)} vertices.")
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         self.print(f"Removing {n} vertices.")
 
     def update_vertices(self, indices, positions, old):
@@ -181,9 +181,9 @@ class MeshUndoTracker(MeshChangeTracker):
             self.commit()
 
     def add_faces(self, faces):
-        self._append(("pop_faces", len(faces)))
+        self._append(("delete_last_faces", len(faces)))
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         self._append(("add_faces", old))
 
     def swap_faces(self, indices1, indices2):
@@ -193,9 +193,9 @@ class MeshUndoTracker(MeshChangeTracker):
         self._append(("update_faces", indices, old))
 
     def add_vertices(self, positions):
-        self._append(("pop_vertices", len(positions)))
+        self._append(("delete_last_vertices", len(positions)))
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         self._append(("add_vertices", old))
 
     def swap_vertices(self, indices1, indices2):
@@ -357,9 +357,9 @@ class MeshUndoTracker(MeshChangeTracker):
 #                 self._stack = None
 #
 #     def add_faces(self, faces):
-#         self._append(("pop_faces", len(faces)))
+#         self._append(("delete_last_faces", len(faces)))
 #
-#     def pop_faces(self, n, old):
+#     def delete_last_faces(self, n, old):
 #         self._append(("add_faces", old))
 #
 #     def swap_faces(self, indices1, indices2):
@@ -369,9 +369,9 @@ class MeshUndoTracker(MeshChangeTracker):
 #         self._append(("update_faces", indices, old))
 #
 #     def add_vertices(self, positions):
-#         self._append(("pop_vertices", len(positions)))
+#         self._append(("delete_last_vertices", len(positions)))
 #
-#     def pop_vertices(self, n, old):
+#     def delete_last_vertices(self, n, old):
 #         self._append(("add_vertices", old))
 #
 #     def swap_vertices(self, indices1, indices2):

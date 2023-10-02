@@ -47,7 +47,7 @@ class CustomChangeTracker(MeshChangeTracker):
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def pop_faces(self, n, old):
+    def delete_last_faces(self, n, old):
         assert isinstance(n, int)
         new_n = len(self.faces) - n
         self.faces = self.faces_buf2[:new_n]
@@ -76,7 +76,7 @@ class CustomChangeTracker(MeshChangeTracker):
         if self.BROKEN_TRACKER:
             raise IntendedRuntimeError()
 
-    def pop_vertices(self, n, old):
+    def delete_last_vertices(self, n, old):
         assert isinstance(n, int)
         new_len = len(self.positions) - n
         self.positions = self.positions_buf2[:new_len]
@@ -238,7 +238,7 @@ def test_dynamicmesh_tracker_mechanics():
             self.count += 1
             self.nvertices += len(indices)
 
-        def pop_vertices(self, n):
+        def delete_last_vertices(self, n):
             self.nvertices -= n
 
     t1 = Tracker()
@@ -415,11 +415,11 @@ def test_dynamicmesh_add_and_delete_faces1():
 
     # Fail pop
     with pytest.raises(ValueError):
-        m.pop_faces(-1)  # Must be positive
+        m.delete_last_faces(-1)  # Must be positive
     with pytest.raises(ValueError):
-        m.pop_faces(0)  # and nonzero
+        m.delete_last_faces(0)  # and nonzero
     with pytest.raises(ValueError):
-        m.pop_faces(999)  # and within bounds
+        m.delete_last_faces(999)  # and within bounds
 
     # Fail swap
     with pytest.raises(ValueError):
@@ -610,11 +610,11 @@ def test_dynamicmesh_add_and_delete_verts():
 
     # Fail pop
     with pytest.raises(ValueError):
-        m.pop_vertices(-1)  # Must be positive
+        m.delete_last_vertices(-1)  # Must be positive
     with pytest.raises(ValueError):
-        m.pop_vertices(0)  # and nonzero
+        m.delete_last_vertices(0)  # and nonzero
     with pytest.raises(ValueError):
-        m.pop_vertices(999)  # and within bounds
+        m.delete_last_vertices(999)  # and within bounds
 
     # Fail swap
     with pytest.raises(ValueError):
@@ -635,7 +635,7 @@ def test_dynamicmesh_add_and_delete_verts():
     with pytest.raises(ValueError):
         m.delete_vertices([8])
     with pytest.raises(ValueError):
-        m.pop_vertices(3)
+        m.delete_last_vertices(3)
 
     m.delete_faces([0, 1, 2])
 

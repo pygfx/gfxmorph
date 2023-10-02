@@ -376,9 +376,9 @@ class BaseDynamicMesh:
     def clear(self):
         """Clear the mesh, removing all vertices and faces."""
         if len(self._faces):
-            self.pop_faces(len(self._faces))
+            self.delete_last_faces(len(self._faces))
         if len(self._positions):
-            self.pop_vertices(len(self._positions))
+            self.delete_last_vertices(len(self._positions))
 
     def reset(self, positions, faces):
         """Reset the vertices and faces, e.g. from an export."""
@@ -451,7 +451,7 @@ class BaseDynamicMesh:
             self.swap_faces(indices1, indices2)
 
         # Pop from the end
-        self.pop_faces(len(to_delete))
+        self.delete_last_faces(len(to_delete))
 
     def delete_vertices(self, vertex_indices):
         """Delete the vertices indicated by the given vertex indices.
@@ -496,7 +496,7 @@ class BaseDynamicMesh:
         assert len(indices1) == len(indices2), "Internal error"
 
         # Check that none of the vertices are in use. Note that this
-        # check is done in pop_vertices, but we also perform it here
+        # check is done in delete_last_vertices, but we also perform it here
         # to avoid swapping faces when the test fails (keep it atomic).
         # The overhead for doing the test twice is not that bad.
         if any(len(vertex2faces[vi]) > 0 for vi in to_delete):
@@ -509,7 +509,7 @@ class BaseDynamicMesh:
             self.swap_vertices(indices1, indices2)
 
         # Pop from the end
-        self.pop_vertices(len(to_delete))
+        self.delete_last_vertices(len(to_delete))
 
     # %% The core API
 
@@ -563,8 +563,8 @@ class BaseDynamicMesh:
                 tracker.add_faces(faces)
         self._after_change()
 
-    def pop_faces(self, n, _old=None):
-        """Remove the last n faces from the mesh."""
+    def delete_last_faces(self, n, _old=None):
+        """Delete the last n faces from the mesh."""
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -607,15 +607,14 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.pop_faces(n, old_faces)
+                tracker.delete_last_faces(n, old_faces)
         self._after_change()
 
     def swap_faces(self, face_indices1, face_indices2):
         """Swap the faces indicated by the given indices.
 
-        This method is public, but likely not generally useful by
-        itself. The ``delete_faces()`` method is a convenience
-        combination of ``swap_faces()`` and ``pop_faces()``.
+        This is a low-level method used by e.g. ``delete_faces()`` to
+        move faces to the end of the array.
         """
 
         # Technically this can also be done with update_faces, but
@@ -765,8 +764,8 @@ class BaseDynamicMesh:
                 tracker.add_vertices(positions)
         self._after_change()
 
-    def pop_vertices(self, n, _old=None):
-        """Remove the last n vertices from the mesh."""
+    def delete_last_vertices(self, n, _old=None):
+        """Delete the last n vertices from the mesh."""
         vertex2faces = self._vertex2faces
 
         # --- Prepare / checks
@@ -807,15 +806,14 @@ class BaseDynamicMesh:
         self._cache_depending_on_verts_and_faces = {}
         for tracker in self._change_trackers.values():
             with Safecall():
-                tracker.pop_vertices(n, old_positions)
+                tracker.delete_last_vertices(n, old_positions)
         self._after_change()
 
     def swap_vertices(self, vertex_indices1, vertex_indices2):
         """Move the vertices indicated by the given indices.
 
-        This method is public, but likely not generally useful by
-        itself. The ``delete_vertices()`` method is a convenience
-        combination of ``swap_vertices()`` and ``pop_vertices()``.
+        This is a low-level method used by e.g. ``delete_vertices()`` to
+        move vertices to the end of the array.
         """
 
         vertex2faces = self._vertex2faces
@@ -868,7 +866,7 @@ class BaseDynamicMesh:
         self._after_change()
 
     def update_vertices(self, vertex_indices, new_positions, _old=None):
-        """Update the value of the given vertices."""
+        """Update the position of the given vertices."""
 
         vertex2faces = self._vertex2faces
 
