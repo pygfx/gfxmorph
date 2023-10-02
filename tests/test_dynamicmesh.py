@@ -116,7 +116,7 @@ def test_split_edge():
         m.split_edge(5, 28)
 
 
-def test_erase_vertex1():
+def test_remove_vertex1():
     # Create a silly mesh consisting of a quad
     quad = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]
     m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
@@ -127,7 +127,7 @@ def test_erase_vertex1():
     # Remove a vertex
     for i in (1, 3):
         m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
-        m.erase_vertex(i)
+        m.remove_vertex(i)
         assert len(m.positions) == 3
         assert len(m.faces) == 1
         assert m.is_manifold
@@ -143,14 +143,14 @@ def test_erase_vertex1():
     # Remove a vertex
     for i in (0, 5, 21, 22, 28, 31):
         m = DynamicMesh(geo.positions.data, geo.indices.data)
-        m.erase_vertex(i)
+        m.remove_vertex(i)
         assert len(m.positions) == 31
         assert len(m.faces) == 58
         assert m.is_manifold
         assert m.is_closed
 
 
-def test_erase_vertex2():
+def test_remove_vertex2():
     # Create a shape that I expect will be present at the end of a needle-like object.
     # Basically a triangular base, with a prism on top.
     positions = [
@@ -189,28 +189,28 @@ def test_erase_vertex2():
     assert m.is_oriented
 
     # Remove a vertex near the tip. The tip now moves to position 3
-    m.erase_vertex(3)
+    m.remove_vertex(3)
     assert len(m.positions) == 6
     assert m.is_manifold
     assert m.is_closed
     assert m.is_oriented
 
     # Another one
-    m.erase_vertex(5)
+    m.remove_vertex(5)
     assert len(m.positions) == 5
     assert m.is_manifold
     assert m.is_closed
     assert m.is_oriented
 
     # And remove the tip ...
-    m.erase_vertex(3)
+    m.remove_vertex(3)
     assert len(m.positions) == 4
     assert m.is_manifold
     assert m.is_closed
     assert m.is_oriented
 
 
-def test_erase_vertex3():
+def test_remove_vertex3():
     positions = [
         # left tip
         [0, 0.5, 0.5],
@@ -241,21 +241,21 @@ def test_erase_vertex3():
     assert m.is_oriented
 
     # Remove close to tip
-    m.erase_vertex(3)
+    m.remove_vertex(3)
     assert len(m.positions) == 4
     assert m.is_manifold
     assert m.is_closed
     assert m.is_oriented
 
     # Removing the tip does not work, otherwise it'd collapse
-    m.erase_vertex(3)
+    m.remove_vertex(3)
     assert len(m.positions) == 4
     assert m.is_manifold
     assert m.is_closed
     assert m.is_oriented
 
 
-def test_erase_vertex_does_not_remove_a_component():
+def test_remove_vertex_does_not_remove_a_component():
     # Popping a vertex from a triangle does not do anything.
 
     triangle = [[0, 0, 0], [0, 0, 1], [0, 1, 0]]
@@ -266,7 +266,7 @@ def test_erase_vertex_does_not_remove_a_component():
 
     for i in (0, 1, 2):
         m = DynamicMesh(triangle, [[0, 1, 2]])
-        m.erase_vertex(i)
+        m.remove_vertex(i)
         assert len(m.positions) == 3
         assert len(m.faces) == 1
         assert m.is_manifold
@@ -281,7 +281,7 @@ def test_erase_vertex_does_not_remove_a_component():
 
     for i in (0, 2):
         m = DynamicMesh(quad, [[0, 1, 2], [0, 2, 3]])
-        m.erase_vertex(i)
+        m.remove_vertex(i)
         assert len(m.positions) == 4
         assert len(m.faces) == 2
         assert m.is_manifold
@@ -297,7 +297,7 @@ def test_erase_vertex_does_not_remove_a_component():
     assert len(m.faces) == 4
 
     for i in range(4):
-        m.erase_vertex(i)
+        m.remove_vertex(i)
         assert len(m.positions) == 4
         assert len(m.faces) == 4
 
